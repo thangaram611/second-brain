@@ -477,4 +477,71 @@ export function registerWriteTools(mcp: McpServer, brain: Brain): void {
       ],
     };
   });
+
+  // --- resolve_contradiction ---
+  mcp.registerTool('resolve_contradiction', {
+    description:
+      'Resolve a contradiction by picking a winner. Creates a "supersedes" relation from winner to loser, sets loser confidence to 0, and deletes the contradicts relation.',
+    inputSchema: {
+      relationId: z.string().describe('ID of the contradicts relation'),
+      winnerId: z.string().describe('ID of the entity that should win (survive)'),
+    },
+  }, async (args) => {
+    try {
+      const rel = brain.relations.get(args.relationId);
+      if (!rel) {
+        return {
+          content: [{ type: 'text', text: `Relation not found: ${args.relationId}` }],
+          isError: true,
+        };
+      }
+
+      const loserId = rel.sourceId === args.winnerId ? rel.targetId : rel.sourceId;
+      const winner = brain.entities.get(args.winnerId);
+      const loser = brain.entities.get(loserId);
+
+      brain.contradictions.resolve(args.relationId, args.winnerId);
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Contradiction resolved: "${winner?.name ?? args.winnerId}" supersedes "${loser?.name ?? loserId}".`,
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [{ type: 'text', text: `Error: ${(err as Error).message}` }],
+        isError: true,
+      };
+    }
+  });
+
+  // --- dismiss_contradiction ---
+  mcp.registerTool('dismiss_contradiction', {
+    description:
+      'Dismiss a contradiction without resolving it. Deletes the contradicts relation but leaves both entities unchanged.',
+    inputSchema: {
+      relationId: z.string().describe('ID of the contradicts relation to dismiss'),
+    },
+  }, async (args) => {
+    try {
+      brain.contradictions.dismiss(args.relationId);
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Contradiction dismissed (relation ${args.relationId} deleted).`,
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [{ type: 'text', text: `Error: ${(err as Error).message}` }],
+        isError: true,
+      };
+    }
+  });
 }

@@ -67,6 +67,12 @@ const CREATE_TABLES_SQL = `
     model TEXT NOT NULL,
     created_at TEXT NOT NULL
   );
+
+  -- Temporal indexes for bitemporal queries
+  CREATE INDEX IF NOT EXISTS idx_entities_event_time ON entities(event_time);
+  CREATE INDEX IF NOT EXISTS idx_entities_ingest_time ON entities(ingest_time);
+  CREATE INDEX IF NOT EXISTS idx_entities_created_at ON entities(created_at);
+  CREATE INDEX IF NOT EXISTS idx_relations_type ON relations(type);
 `;
 
 /**

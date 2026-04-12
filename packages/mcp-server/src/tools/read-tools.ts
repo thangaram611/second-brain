@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Brain } from '@second-brain/core';
 import { ENTITY_TYPES, RELATION_TYPES } from '@second-brain/types';
-import type { EntityType, RelationType } from '@second-brain/types';
+import type { EntityType, RelationType, TimelineEntry } from '@second-brain/types';
 
 export function registerReadTools(mcp: McpServer, brain: Brain): void {
   // --- search_brain ---
@@ -373,6 +373,164 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
 
     return {
       content: [{ type: 'text', text: lines.join('\n') }],
+    };
+  });
+
+  // --- get_contradictions ---
+  mcp.registerTool('get_contradictions', {
+    description:
+      'List unresolved contradictions in the knowledge graph — entities linked by "contradicts" relations where neither has been superseded.',
+    inputSchema: {
+      namespace: z.string().optional().describe('Filter by namespace'),
+    },
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false,
+    },
+  }, async (args) => {
+    const contradictions = brain.contradictions.getUnresolved(args.namespace);
+
+    if (contradictions.length === 0) {
+      return {
+        content: [{ type: 'text', text: 'No unresolved contradictions.' }],
+      };
+    }
+
+    const text = contradictions
+      .map((c, i) => {
+        const lines = [
+          `## Contradiction ${i + 1}`,
+          `Relation ID: ${c.relation.id}`,
+          ``,
+          `**Entity A**: [${c.entityA.type}] ${c.entityA.name} (confidence: ${c.entityA.confidence})`,
+        ];
+        for (const obs of c.entityA.observations) {
+          lines.push(`  - ${obs}`);
+        }
+        lines.push(`  id: ${c.entityA.id}`);
+        lines.push(``);
+        lines.push(`**Entity B**: [${c.entityB.type}] ${c.entityB.name} (confidence: ${c.entityB.confidence})`);
+        for (const obs of c.entityB.observations) {
+          lines.push(`  - ${obs}`);
+        }
+        lines.push(`  id: ${c.entityB.id}`);
+        return lines.join('\n');
+      })
+      .join('\n\n---\n\n');
+
+    return {
+      content: [{ type: 'text', text: `Found ${contradictions.length} unresolved contradiction(s):\n\n${text}` }],
+    };
+  });
+
+  // --- get_timeline ---
+  mcp.registerTool('get_timeline', {
+    description:
+      'View knowledge changes over a time range. Shows entities created or updated within the period.',
+    inputSchema: {
+      from: z.string().describe('Start of range (ISO 8601)'),
+      to: z.string().describe('End of range (ISO 8601)'),
+      namespace: z.string().optional().describe('Filter by namespace'),
+      types: z
+        .array(z.enum(ENTITY_TYPES))
+        .optional()
+        .describe('Filter by entity types'),
+      limit: z.number().int().min(1).max(500).optional().describe('Max results (default 100)'),
+    },
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false,
+    },
+  }, async (args) => {
+    const entries = brain.temporal.getTimeline({
+      from: args.from,
+      to: args.to,
+      namespace: args.namespace,
+      types: args.types as EntityType[] | undefined,
+      limit: args.limit,
+    });
+
+    if (entries.length === 0) {
+      return {
+        content: [{ type: 'text', text: 'No activity in this time range.' }],
+      };
+    }
+
+    // Group by date
+    const grouped = new Map<string, TimelineEntry[]>();
+    for (const entry of entries) {
+      const date = entry.timestamp.split('T')[0];
+      const group = grouped.get(date) ?? [];
+      group.push(entry);
+      grouped.set(date, group);
+    }
+
+    const lines: string[] = [`Timeline (${entries.length} event(s)):\n`];
+    for (const [date, group] of grouped) {
+      lines.push(`## ${date}`);
+      for (const entry of group) {
+        const tag = entry.changeType === 'created' ? '+' : '~';
+        lines.push(`  ${tag} [${entry.entityType}] ${entry.entityName} (confidence: ${entry.confidence})`);
+      }
+      lines.push('');
+    }
+
+    return {
+      content: [{ type: 'text', text: lines.join('\n') }],
+    };
+  });
+
+  // --- get_stale ---
+  mcp.registerTool('get_stale', {
+    description:
+      'Find entities with decayed confidence below a threshold. Confidence decays based on time since last access and entity type.',
+    inputSchema: {
+      threshold: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe('Confidence threshold (default 0.5). Entities below this are stale.'),
+      namespace: z.string().optional().describe('Filter by namespace'),
+      types: z
+        .array(z.enum(ENTITY_TYPES))
+        .optional()
+        .describe('Filter by entity types'),
+      limit: z.number().int().min(1).max(100).optional().describe('Max results (default 50)'),
+    },
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false,
+    },
+  }, async (args) => {
+    const stale = brain.decay.getStaleEntities({
+      threshold: args.threshold,
+      namespace: args.namespace,
+      types: args.types as EntityType[] | undefined,
+      limit: args.limit,
+    });
+
+    if (stale.length === 0) {
+      return {
+        content: [{ type: 'text', text: 'No stale entities found.' }],
+      };
+    }
+
+    const text = stale
+      .map((e) => {
+        const lines = [
+          `[${e.type}] ${e.name}`,
+          `  id: ${e.id}`,
+          `  base confidence: ${e.confidence} → effective: ${e.effectiveConfidence.toFixed(3)}`,
+          `  last accessed: ${e.lastAccessedAt}`,
+          `  namespace: ${e.namespace}`,
+        ];
+        return lines.join('\n');
+      })
+      .join('\n\n');
+
+    return {
+      content: [{ type: 'text', text: `Found ${stale.length} stale entity(ies):\n\n${text}` }],
     };
   });
 }

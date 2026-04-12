@@ -5,6 +5,9 @@ import { SearchPage } from './components/pages/search.js';
 import { GraphExplorer } from './components/pages/graph-explorer.js';
 import { EntityPage } from './components/pages/entity-page.js';
 import { SettingsPage } from './components/pages/settings.js';
+import { TimelinePage } from './components/pages/timeline.js';
+import { DecisionsPage } from './components/pages/decisions.js';
+import { ContradictionsPage } from './components/pages/contradictions.js';
 import { useWebSocket } from './hooks/use-websocket.js';
 
 export function App() {
@@ -21,6 +24,9 @@ export function App() {
           <Route path="/search" element={<SearchPage />} />
           <Route path="/entities/:id" element={<EntityPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/timeline" element={<TimelinePage />} />
+          <Route path="/decisions" element={<DecisionsPage />} />
+          <Route path="/contradictions" element={<ContradictionsPage />} />
         </Routes>
       </main>
     </div>

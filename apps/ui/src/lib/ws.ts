@@ -6,7 +6,9 @@ export type WsEvent =
   | { type: 'entity:updated'; entity: Entity }
   | { type: 'entity:deleted'; id: string }
   | { type: 'relation:created'; relation: Relation }
-  | { type: 'relation:deleted'; id: string };
+  | { type: 'relation:deleted'; id: string }
+  | { type: 'contradiction:resolved'; relationId: string; winnerId: string; loserId: string }
+  | { type: 'contradiction:dismissed'; relationId: string };
 
 type WsListener = (event: WsEvent) => void;
 

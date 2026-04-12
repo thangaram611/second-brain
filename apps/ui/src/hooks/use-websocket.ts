@@ -1,26 +1,33 @@
 import { useEffect } from 'react';
 import { subscribe } from '../lib/ws.js';
 import { useGraphStore } from '../store/graph-store.js';
+import { useContradictionsStore } from '../store/contradictions-store.js';
 
 export function useWebSocket(): void {
   useEffect(() => {
-    const store = useGraphStore.getState();
+    const graphStore = useGraphStore.getState();
     const unsubscribe = subscribe((event) => {
       switch (event.type) {
         case 'entity:created':
-          store.handleEntityCreated(event.entity);
+          graphStore.handleEntityCreated(event.entity);
           break;
         case 'entity:updated':
-          store.handleEntityUpdated(event.entity);
+          graphStore.handleEntityUpdated(event.entity);
           break;
         case 'entity:deleted':
-          store.handleEntityDeleted(event.id);
+          graphStore.handleEntityDeleted(event.id);
           break;
         case 'relation:created':
-          store.handleRelationCreated(event.relation);
+          graphStore.handleRelationCreated(event.relation);
           break;
         case 'relation:deleted':
-          store.handleRelationDeleted(event.id);
+          graphStore.handleRelationDeleted(event.id);
+          break;
+        case 'contradiction:resolved':
+          useContradictionsStore.getState().handleContradictionResolved(event.relationId);
+          break;
+        case 'contradiction:dismissed':
+          useContradictionsStore.getState().handleContradictionDismissed(event.relationId);
           break;
       }
     });

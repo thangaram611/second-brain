@@ -79,3 +79,25 @@ export interface NeighborResult {
   entities: Entity[];
   relations: Relation[];
 }
+
+// --- Temporal types (Phase 5) ---
+
+export interface TimelineEntry {
+  entityId: string;
+  entityName: string;
+  entityType: EntityType;
+  changeType: 'created' | 'updated';
+  timestamp: string;
+  confidence: number;
+  namespace: string;
+}
+
+export interface Contradiction {
+  relation: Relation;
+  entityA: Entity;
+  entityB: Entity;
+}
+
+export interface StaleEntity extends Entity {
+  effectiveConfidence: number;
+}

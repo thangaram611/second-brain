@@ -5,6 +5,9 @@ import type {
   SearchResult,
   GraphStats,
   NeighborResult,
+  TimelineEntry,
+  Contradiction,
+  StaleEntity,
 } from './types.js';
 
 class ApiError extends Error {
@@ -136,5 +139,54 @@ export const api = {
   stats(namespace?: string) {
     const qs = namespace ? `?namespace=${namespace}` : '';
     return request<GraphStats>(`/stats${qs}`);
+  },
+
+  // --- Temporal API (Phase 5) ---
+
+  timeline(params: { from: string; to: string; types?: string; namespace?: string; limit?: number }) {
+    const qs = new URLSearchParams();
+    qs.set('from', params.from);
+    qs.set('to', params.to);
+    if (params.types) qs.set('types', params.types);
+    if (params.namespace) qs.set('namespace', params.namespace);
+    if (params.limit) qs.set('limit', String(params.limit));
+    return request<TimelineEntry[]>(`/timeline?${qs.toString()}`);
+  },
+
+  contradictions: {
+    list() {
+      return request<Contradiction[]>(`/contradictions`);
+    },
+
+    resolve(relationId: string, winnerId: string) {
+      return request<{ resolved: boolean; winnerId: string; loserId: string }>(
+        `/contradictions/${relationId}/resolve`,
+        { method: 'POST', body: JSON.stringify({ winnerId }) },
+      );
+    },
+
+    dismiss(relationId: string) {
+      return request<void>(`/contradictions/${relationId}`, { method: 'DELETE' });
+    },
+  },
+
+  decisions(params?: { namespace?: string; limit?: number; offset?: number; sort?: string }) {
+    const qs = new URLSearchParams();
+    if (params?.namespace) qs.set('namespace', params.namespace);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    if (params?.offset) qs.set('offset', String(params.offset));
+    if (params?.sort) qs.set('sort', params.sort);
+    const q = qs.toString();
+    return request<Entity[]>(`/decisions${q ? `?${q}` : ''}`);
+  },
+
+  stale(params?: { threshold?: number; namespace?: string; types?: string; limit?: number }) {
+    const qs = new URLSearchParams();
+    if (params?.threshold != null) qs.set('threshold', String(params.threshold));
+    if (params?.namespace) qs.set('namespace', params.namespace);
+    if (params?.types) qs.set('types', params.types);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const q = qs.toString();
+    return request<StaleEntity[]>(`/stale${q ? `?${q}` : ''}`);
   },
 };

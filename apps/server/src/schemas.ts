@@ -57,3 +57,46 @@ export const NeighborsQuerySchema = z.object({
   depth: z.coerce.number().int().positive().max(5).optional(),
   relationTypes: z.string().optional(), // comma-separated
 });
+
+// --- Temporal schemas (Phase 5) ---
+
+export const TimelineQuerySchema = z.object({
+  from: z.string().min(1),
+  to: z.string().min(1),
+  namespace: z.string().optional(),
+  types: z.string().optional(), // comma-separated
+  limit: z.coerce.number().int().positive().max(500).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+});
+
+export const ContradictionsQuerySchema = z.object({
+  namespace: z.string().optional(),
+});
+
+export const ResolveContradictionSchema = z.object({
+  winnerId: z.string().min(1),
+});
+
+export const StaleQuerySchema = z.object({
+  threshold: z.coerce.number().min(0).max(1).optional(),
+  namespace: z.string().optional(),
+  types: z.string().optional(), // comma-separated
+  limit: z.coerce.number().int().positive().max(500).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+});
+
+export const DecisionLogQuerySchema = z.object({
+  namespace: z.string().optional(),
+  limit: z.coerce.number().int().positive().max(500).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+  sort: z.enum(['newest', 'oldest', 'confidence']).optional(),
+});
+
+export const TemporalEntityQuerySchema = z.object({
+  asOfEventTime: z.string().optional(),
+  asOfIngestTime: z.string().optional(),
+  namespace: z.string().optional(),
+  types: z.string().optional(), // comma-separated
+  limit: z.coerce.number().int().positive().max(500).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+});

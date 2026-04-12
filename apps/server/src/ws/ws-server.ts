@@ -1,13 +1,16 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Server as HttpServer } from 'node:http';
-import type { Entity, Relation } from '@second-brain/types';
+import type { Entity, Relation, DecayRunResult } from '@second-brain/types';
 
 export type WsEvent =
   | { type: 'entity:created'; entity: Entity }
   | { type: 'entity:updated'; entity: Entity }
   | { type: 'entity:deleted'; id: string }
   | { type: 'relation:created'; relation: Relation }
-  | { type: 'relation:deleted'; id: string };
+  | { type: 'relation:deleted'; id: string }
+  | { type: 'contradiction:resolved'; relationId: string; winnerId: string; loserId: string }
+  | { type: 'contradiction:dismissed'; relationId: string }
+  | { type: 'decay:run'; result: DecayRunResult };
 
 let wss: WebSocketServer | null = null;
 

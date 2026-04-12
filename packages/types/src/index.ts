@@ -21,3 +21,13 @@ export type {
   GraphTraversalOptions,
   GraphStats,
 } from './search.js';
+
+export type {
+  TemporalQueryOptions,
+  TimelineEntry,
+  TimelineOptions,
+  Contradiction,
+  StaleEntityOptions,
+  DecayEngineConfig,
+  DecayRunResult,
+} from './temporal.js';

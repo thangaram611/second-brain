@@ -8,3 +8,5 @@ export type { DatabaseOptions, DrizzleDB } from './storage/index.js';
 export { entities, relations, embeddings } from './schema/index.js';
 export { reciprocalRankFusion } from './search/fusion.js';
 export type { RankedResult } from './search/fusion.js';
+export { BitemporalQueries, DecayEngine, ContradictionDetector } from './temporal/index.js';
+export { rawRowToEntity, rawRowToRelation } from './temporal/index.js';
