@@ -9,6 +9,7 @@ import {
   Scale,
   AlertTriangle,
 } from 'lucide-react';
+import { useSyncStore } from '../../store/sync-store.js';
 
 const mainNavItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -27,6 +28,8 @@ const bottomNavItems = [
 ];
 
 export function Sidebar() {
+  const totalPeers = useSyncStore(s => s.statuses.reduce((sum, st) => sum + st.connectedPeers, 0));
+
   return (
     <aside className="flex h-screen w-56 flex-col border-r border-zinc-800 bg-zinc-900/50">
       <div className="flex items-center gap-2 border-b border-zinc-800 px-4 py-4">
@@ -97,6 +100,12 @@ export function Sidebar() {
       </nav>
 
       <div className="border-t border-zinc-800 px-4 py-3">
+        {totalPeers > 0 && (
+          <div className="mb-1 flex items-center gap-1.5 text-xs text-zinc-400">
+            <span className="h-2 w-2 rounded-full bg-emerald-400" />
+            {totalPeers} peer{totalPeers !== 1 ? 's' : ''} connected
+          </div>
+        )}
         <p className="text-xs text-zinc-600">v0.1.0</p>
       </div>
     </aside>

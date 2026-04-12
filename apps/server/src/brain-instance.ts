@@ -1,8 +1,10 @@
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { Brain } from '@second-brain/core';
+import { SyncManager } from '@second-brain/sync';
 
 let brainInstance: Brain | null = null;
+let syncManagerInstance: SyncManager | null = null;
 
 export function getBrain(): Brain {
   if (brainInstance) return brainInstance;
@@ -19,5 +21,19 @@ export function closeBrain(): void {
   if (brainInstance) {
     brainInstance.close();
     brainInstance = null;
+  }
+}
+
+export function getSyncManager(): SyncManager {
+  if (syncManagerInstance) return syncManagerInstance;
+  const brain = getBrain();
+  syncManagerInstance = new SyncManager(brain.entities, brain.relations);
+  return syncManagerInstance;
+}
+
+export function closeSyncManager(): void {
+  if (syncManagerInstance) {
+    syncManagerInstance.destroy();
+    syncManagerInstance = null;
   }
 }

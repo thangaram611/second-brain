@@ -1,10 +1,11 @@
 import express from 'express';
 import type { Brain } from '@second-brain/core';
+import type { SyncManager } from '@second-brain/sync';
 import { cors } from './middleware/cors.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { registerRoutes } from './routes/index.js';
 
-export function createApp(brain: Brain): express.Express {
+export function createApp(brain: Brain, syncManager?: SyncManager): express.Express {
   const app = express();
 
   app.use(cors);
@@ -15,7 +16,7 @@ export function createApp(brain: Brain): express.Express {
     res.json({ status: 'ok', version: '0.1.0' });
   });
 
-  registerRoutes(app, brain);
+  registerRoutes(app, brain, syncManager);
 
   app.use(errorHandler);
 

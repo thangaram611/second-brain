@@ -1,4 +1,4 @@
-import type { Entity, Relation } from './types.js';
+import type { Entity, Relation, PeerInfo, SyncConflict } from './types.js';
 
 export type WsEvent =
   | { type: 'connected' }
@@ -8,7 +8,12 @@ export type WsEvent =
   | { type: 'relation:created'; relation: Relation }
   | { type: 'relation:deleted'; id: string }
   | { type: 'contradiction:resolved'; relationId: string; winnerId: string; loserId: string }
-  | { type: 'contradiction:dismissed'; relationId: string };
+  | { type: 'contradiction:dismissed'; relationId: string }
+  | { type: 'sync:connected'; namespace: string; peers: number }
+  | { type: 'sync:disconnected'; namespace: string }
+  | { type: 'sync:peer-joined'; namespace: string; peer: PeerInfo }
+  | { type: 'sync:peer-left'; namespace: string; peerId: number }
+  | { type: 'sync:conflict'; namespace: string; conflict: SyncConflict };
 
 type WsListener = (event: WsEvent) => void;
 

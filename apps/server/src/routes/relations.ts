@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import type { Brain } from '@second-brain/core';
+import type { SyncManager } from '@second-brain/sync';
 import type { RelationType } from '@second-brain/types';
 import { CreateRelationSchema } from '../schemas.js';
 import { broadcast } from '../ws/ws-server.js';
 
-export function relationRoutes(brain: Brain): Router {
+export function relationRoutes(brain: Brain, syncManager?: SyncManager): Router {
   const router = Router();
 
   // Create relation
@@ -36,6 +37,9 @@ export function relationRoutes(brain: Brain): Router {
     });
 
     broadcast({ type: 'relation:created', relation });
+    if (syncManager?.isSynced(relation.namespace)) {
+      syncManager.onLocalRelationChange(relation);
+    }
     res.status(201).json(relation);
   });
 
@@ -51,6 +55,12 @@ export function relationRoutes(brain: Brain): Router {
 
   // Delete relation
   router.delete('/api/relations/:id', (req, res) => {
+    const relation = brain.relations.get(req.params.id);
+    if (!relation) {
+      res.status(404).json({ error: 'Relation not found' });
+      return;
+    }
+
     const deleted = brain.relations.delete(req.params.id);
     if (!deleted) {
       res.status(404).json({ error: 'Relation not found' });
@@ -58,6 +68,9 @@ export function relationRoutes(brain: Brain): Router {
     }
 
     broadcast({ type: 'relation:deleted', id: req.params.id });
+    if (syncManager?.isSynced(relation.namespace)) {
+      syncManager.onLocalRelationDelete(req.params.id, relation.namespace);
+    }
     res.status(204).end();
   });
 

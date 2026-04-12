@@ -1,12 +1,19 @@
 import { createServer } from 'node:http';
-import { getBrain, closeBrain } from './brain-instance.js';
+import { getBrain, closeBrain, getSyncManager, closeSyncManager } from './brain-instance.js';
 import { createApp } from './app.js';
-import { createWsServer } from './ws/ws-server.js';
+import { createWsServer, broadcast } from './ws/ws-server.js';
 
 const PORT = Number(process.env.BRAIN_API_PORT ?? 7430);
 
 const brain = getBrain();
-const app = createApp(brain);
+const syncManager = getSyncManager();
+
+// Wire sync events to WS broadcast
+syncManager.onSyncEvent = (event) => {
+  broadcast(event);
+};
+
+const app = createApp(brain, syncManager);
 const server = createServer(app);
 
 createWsServer(server);
@@ -19,6 +26,7 @@ server.listen(PORT, () => {
 function shutdown() {
   console.log('\n[second-brain] Shutting down...');
   server.close();
+  closeSyncManager();
   closeBrain();
   process.exit(0);
 }

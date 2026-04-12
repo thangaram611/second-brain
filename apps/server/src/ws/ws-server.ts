@@ -1,6 +1,6 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Server as HttpServer } from 'node:http';
-import type { Entity, Relation, DecayRunResult } from '@second-brain/types';
+import type { Entity, Relation, DecayRunResult, PeerInfo, SyncConflict } from '@second-brain/types';
 
 export type WsEvent =
   | { type: 'entity:created'; entity: Entity }
@@ -10,7 +10,12 @@ export type WsEvent =
   | { type: 'relation:deleted'; id: string }
   | { type: 'contradiction:resolved'; relationId: string; winnerId: string; loserId: string }
   | { type: 'contradiction:dismissed'; relationId: string }
-  | { type: 'decay:run'; result: DecayRunResult };
+  | { type: 'decay:run'; result: DecayRunResult }
+  | { type: 'sync:connected'; namespace: string; peers: number }
+  | { type: 'sync:disconnected'; namespace: string }
+  | { type: 'sync:peer-joined'; namespace: string; peer: PeerInfo }
+  | { type: 'sync:peer-left'; namespace: string; peerId: number }
+  | { type: 'sync:conflict'; namespace: string; conflict: SyncConflict };
 
 let wss: WebSocketServer | null = null;
 

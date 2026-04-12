@@ -1,10 +1,9 @@
 {
-  "name": "@second-brain/server",
+  "name": "@second-brain/relay",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "main": "./dist/index.mjs",
-  "types": "./dist/index.d.mts",
   "scripts": {
     "build": "tsdown src/index.ts --format esm --dts",
     "dev": "tsx --watch src/index.ts",
@@ -14,15 +13,18 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@second-brain/core": "workspace:*",
-    "@second-brain/sync": "workspace:*",
+    "@hocuspocus/server": "^2.13.0",
     "@second-brain/types": "workspace:*",
     "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.0",
     "ws": "^8.18.0",
+    "y-protocols": "^1.0.0",
+    "yjs": "^13.6.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/express": "^5.0.2",
+    "@types/jsonwebtoken": "^9.0.0",
     "@types/supertest": "^7.2.0",
     "@types/ws": "^8.18.0",
     "supertest": "^7.1.0",

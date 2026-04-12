@@ -31,3 +31,12 @@ export type {
   DecayEngineConfig,
   DecayRunResult,
 } from './temporal.js';
+
+export type {
+  SyncConfig,
+  SyncConnectionState,
+  SyncStatus,
+  PeerInfo,
+  SyncConflict,
+  RelayAuthPayload,
+} from './sync.js';

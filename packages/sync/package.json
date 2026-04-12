@@ -1,33 +1,33 @@
 {
-  "name": "@second-brain/server",
+  "name": "@second-brain/sync",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "main": "./dist/index.mjs",
   "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    }
+  },
   "scripts": {
     "build": "tsdown src/index.ts --format esm --dts",
-    "dev": "tsx --watch src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "check-types": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@second-brain/core": "workspace:*",
-    "@second-brain/sync": "workspace:*",
     "@second-brain/types": "workspace:*",
-    "express": "^5.1.0",
-    "ws": "^8.18.0",
-    "zod": "^4.3.6"
+    "@second-brain/core": "workspace:*",
+    "yjs": "^13.6.0",
+    "y-protocols": "^1.0.0",
+    "lib0": "^0.2.0",
+    "@hocuspocus/provider": "^2.13.0"
   },
   "devDependencies": {
-    "@types/express": "^5.0.2",
-    "@types/supertest": "^7.2.0",
-    "@types/ws": "^8.18.0",
-    "supertest": "^7.1.0",
     "tsdown": "^0.21.0",
-    "tsx": "^4.19.0",
     "typescript": "^6.0.2",
     "vitest": "^4.1.4"
   }

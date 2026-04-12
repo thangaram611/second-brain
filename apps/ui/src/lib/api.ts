@@ -8,6 +8,8 @@ import type {
   TimelineEntry,
   Contradiction,
   StaleEntity,
+  SyncStatus,
+  PeerInfo,
 } from './types.js';
 
 class ApiError extends Error {
@@ -188,5 +190,35 @@ export const api = {
     if (params?.limit) qs.set('limit', String(params.limit));
     const q = qs.toString();
     return request<StaleEntity[]>(`/stale${q ? `?${q}` : ''}`);
+  },
+
+  // --- Sync API (Phase 6) ---
+
+  sync: {
+    status() {
+      return request<SyncStatus[]>('/sync/status');
+    },
+
+    statusFor(namespace: string) {
+      return request<SyncStatus>(`/sync/status/${encodeURIComponent(namespace)}`);
+    },
+
+    join(config: { namespace: string; relayUrl: string; token: string }) {
+      return request<SyncStatus>('/sync/join', {
+        method: 'POST',
+        body: JSON.stringify(config),
+      });
+    },
+
+    leave(namespace: string) {
+      return request<{ left: string }>('/sync/leave', {
+        method: 'POST',
+        body: JSON.stringify({ namespace }),
+      });
+    },
+
+    peers(namespace: string) {
+      return request<PeerInfo[]>(`/sync/peers/${encodeURIComponent(namespace)}`);
+    },
   },
 };

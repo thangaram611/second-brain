@@ -101,3 +101,32 @@ export interface Contradiction {
 export interface StaleEntity extends Entity {
   effectiveConfidence: number;
 }
+
+// --- Sync types (Phase 6) ---
+
+export type SyncConnectionState = 'disconnected' | 'connecting' | 'connected' | 'syncing';
+
+export interface SyncStatus {
+  namespace: string;
+  state: SyncConnectionState;
+  connectedPeers: number;
+  lastSyncedAt: string | null;
+  pendingChanges: number;
+  error: string | null;
+}
+
+export interface PeerInfo {
+  clientId: number;
+  name: string;
+  color: string;
+  connectedAt: string;
+}
+
+export interface SyncConflict {
+  entityId: string;
+  entityName: string;
+  field: string;
+  localValue: unknown;
+  remoteValue: unknown;
+  resolvedAt: string | null;
+}

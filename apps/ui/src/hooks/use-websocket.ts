@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { subscribe } from '../lib/ws.js';
 import { useGraphStore } from '../store/graph-store.js';
 import { useContradictionsStore } from '../store/contradictions-store.js';
+import { useSyncStore } from '../store/sync-store.js';
 
 export function useWebSocket(): void {
   useEffect(() => {
@@ -28,6 +29,18 @@ export function useWebSocket(): void {
           break;
         case 'contradiction:dismissed':
           useContradictionsStore.getState().handleContradictionDismissed(event.relationId);
+          break;
+        case 'sync:connected':
+          useSyncStore.getState().handleSyncConnected(event.namespace, event.peers);
+          break;
+        case 'sync:disconnected':
+          useSyncStore.getState().handleSyncDisconnected(event.namespace);
+          break;
+        case 'sync:peer-joined':
+          useSyncStore.getState().handlePeerJoined(event.namespace, event.peer);
+          break;
+        case 'sync:peer-left':
+          useSyncStore.getState().handlePeerLeft(event.namespace, event.peerId);
           break;
       }
     });

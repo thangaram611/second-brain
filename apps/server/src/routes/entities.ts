@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import type { Brain } from '@second-brain/core';
+import type { SyncManager } from '@second-brain/sync';
 import type { EntityType, RelationType } from '@second-brain/types';
 import {
   CreateEntitySchema,
@@ -10,7 +11,7 @@ import {
 } from '../schemas.js';
 import { broadcast } from '../ws/ws-server.js';
 
-export function entityRoutes(brain: Brain): Router {
+export function entityRoutes(brain: Brain, syncManager?: SyncManager): Router {
   const router = Router();
 
   // List entities
@@ -74,6 +75,9 @@ export function entityRoutes(brain: Brain): Router {
     });
 
     broadcast({ type: 'entity:created', entity });
+    if (syncManager?.isSynced(entity.namespace)) {
+      syncManager.onLocalEntityChange(entity);
+    }
     res.status(201).json(entity);
   });
 
@@ -87,11 +91,20 @@ export function entityRoutes(brain: Brain): Router {
     }
 
     broadcast({ type: 'entity:updated', entity });
+    if (syncManager?.isSynced(entity.namespace)) {
+      syncManager.onLocalEntityChange(entity);
+    }
     res.json(entity);
   });
 
   // Delete entity
   router.delete('/api/entities/:id', (req, res) => {
+    const entity = brain.entities.get(req.params.id);
+    if (!entity) {
+      res.status(404).json({ error: 'Entity not found' });
+      return;
+    }
+
     const deleted = brain.entities.delete(req.params.id);
     if (!deleted) {
       res.status(404).json({ error: 'Entity not found' });
@@ -99,6 +112,9 @@ export function entityRoutes(brain: Brain): Router {
     }
 
     broadcast({ type: 'entity:deleted', id: req.params.id });
+    if (syncManager?.isSynced(entity.namespace)) {
+      syncManager.onLocalEntityDelete(req.params.id, entity.namespace);
+    }
     res.status(204).end();
   });
 
@@ -112,6 +128,9 @@ export function entityRoutes(brain: Brain): Router {
     }
 
     broadcast({ type: 'entity:updated', entity });
+    if (syncManager?.isSynced(entity.namespace)) {
+      syncManager.onLocalEntityChange(entity);
+    }
     res.json(entity);
   });
 
@@ -128,6 +147,9 @@ export function entityRoutes(brain: Brain): Router {
     }
 
     broadcast({ type: 'entity:updated', entity });
+    if (syncManager?.isSynced(entity.namespace)) {
+      syncManager.onLocalEntityChange(entity);
+    }
     res.json(entity);
   });
 

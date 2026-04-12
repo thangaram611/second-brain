@@ -100,3 +100,17 @@ export const TemporalEntityQuerySchema = z.object({
   limit: z.coerce.number().int().positive().max(500).optional(),
   offset: z.coerce.number().int().min(0).optional(),
 });
+
+// --- Sync schemas (Phase 6) ---
+
+export const SyncJoinSchema = z.object({
+  namespace: z.string().min(1).refine(ns => ns !== 'personal', {
+    message: 'Cannot sync the personal namespace',
+  }),
+  relayUrl: z.string().url(),
+  token: z.string().min(1),
+});
+
+export const SyncLeaveSchema = z.object({
+  namespace: z.string().min(1),
+});
