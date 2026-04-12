@@ -1,0 +1,25 @@
+{
+  "name": "second-brain",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A developer's knowledge graph system that captures, connects, and surfaces everything you know",
+  "type": "module",
+  "scripts": {
+    "build": "turbo build",
+    "dev": "turbo dev",
+    "test": "turbo test",
+    "lint": "turbo lint",
+    "check-types": "turbo check-types",
+    "clean": "turbo clean"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "tsdown": "^0.21.0",
+    "turbo": "^2.5.0",
+    "typescript": "^6.0.2"
+  },
+  "packageManager": "pnpm@10.8.0",
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

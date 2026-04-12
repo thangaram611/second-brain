@@ -1,0 +1,26 @@
+{
+  "name": "@second-brain/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "brain": "./dist/index.mjs"
+  },
+  "scripts": {
+    "build": "tsdown src/index.ts --format esm --dts",
+    "dev": "tsx src/index.ts",
+    "check-types": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@second-brain/core": "workspace:*",
+    "@second-brain/ingestion": "workspace:*",
+    "@second-brain/types": "workspace:*",
+    "commander": "^14.0.3"
+  },
+  "devDependencies": {
+    "tsdown": "^0.21.0",
+    "tsx": "^4.19.0",
+    "typescript": "^6.0.2"
+  }
+}

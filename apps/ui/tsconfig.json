@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "es2025",
+    "lib": ["es2025", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "declaration": false
+  },
+  "include": ["src"]
+}
