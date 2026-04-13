@@ -286,14 +286,34 @@ export interface InstallGitHooksResult {
   sidecarPath: string;
 }
 
+/**
+ * Single-quote a value for safe embedding in a POSIX shell script as a
+ * literal. `foo'bar` → `'foo'\''bar'`. The resulting token is a shell
+ * string literal — no variable expansion, no command substitution.
+ */
+function shSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 function gitHookBody(
   name: GitHookName,
   serverUrl: string,
   namespace: string,
 ): string {
-  // Shell script that POSTs the git event. Kept tiny and dependency-free so
-  // it works on any dev machine; the heavy lifting is server-side.
+  // Shell script that POSTs the git event. Kept tiny and dependency-free
+  // so it works on any dev machine; the heavy lifting is server-side.
+  //
+  // Security notes:
+  //   - `namespace` and `serverUrl` are embedded as SINGLE-QUOTED shell
+  //     literals so metacharacters (", $, `, \) never trigger expansion.
+  //   - All values that flow into the JSON body go through `escape()`
+  //     which JSON-escapes \, ", \n, \r, \t. We also sed out bytes
+  //     0x00-0x1F that are not already escaped (JSON forbids raw ctrl
+  //     chars in strings). Commit messages are truncated to 2000 bytes
+  //     to bound a malformed / gigantic input.
   const kind = name === 'post-commit' ? 'commit' : name === 'post-merge' ? 'merge' : 'checkout';
+  const nsLit = shSingleQuote(namespace);
+  const urlLit = shSingleQuote(serverUrl);
   return [
     '#!/bin/sh',
     '# Installed by second-brain `brain wire`. Safe to keep alongside other',
@@ -302,8 +322,8 @@ function gitHookBody(
     'set -e',
     '',
     `KIND=${kind}`,
-    `NAMESPACE=${JSON.stringify(namespace)}`,
-    `SERVER_URL="${serverUrl}"`,
+    `NAMESPACE=${nsLit}`,
+    `SERVER_URL=${urlLit}`,
     'REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"',
     'BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"',
     'HEAD_SHA="$(git rev-parse HEAD 2>/dev/null || echo unknown)"',
@@ -314,13 +334,13 @@ function gitHookBody(
     '  MESSAGE="$(git log -1 --pretty=%B 2>/dev/null | head -c 2000 || echo)"',
     'fi',
     '',
-    '# Build JSON body without jq (assume simple inputs; escape minimally).',
-    'escape() { printf "%s" "$1" | sed -e \'s/\\\\/\\\\\\\\/g\' -e \'s/"/\\\\"/g\' -e \'s/\\n/\\\\n/g\' -e \'s/\\r/\\\\r/g\' -e \'s/\\t/\\\\t/g\'; }',
+    '# Build JSON body without jq.',
+    "escape() { printf %s \"$1\" | tr -d '\\000-\\037' | sed -e 's/\\\\/\\\\\\\\/g' -e 's/\"/\\\\\"/g'; }",
     '',
     'BODY=$(cat <<JSON',
     '{',
     '  "repo": "$(escape "$REPO")",',
-    '  "namespace": "$NAMESPACE",',
+    '  "namespace": "$(escape "$NAMESPACE")",',
     '  "kind": "$KIND",',
     '  "branch": "$(escape "$BRANCH")",',
     '  "headSha": "$(escape "$HEAD_SHA")",',

@@ -53,7 +53,7 @@ describe('installGitHooks / uninstallGitHooks', () => {
       expect(fs.existsSync(hookPath)).toBe(true);
       const content = fs.readFileSync(hookPath, 'utf8');
       expect(content).toContain('Installed by second-brain `brain wire`');
-      expect(content).toContain('SERVER_URL="http://localhost:7430"');
+      expect(content).toContain("SERVER_URL='http://localhost:7430'");
       expect(content).toContain('/api/observe/git-event');
       // Executable mode bit should be set.
       const mode = fs.statSync(hookPath).mode & 0o777;
@@ -101,6 +101,26 @@ describe('installGitHooks / uninstallGitHooks', () => {
     const res = uninstallGitHooks(tmpDir);
     expect(res.removed).toEqual([]);
     expect(res.restored).toEqual([]);
+  });
+
+  it('safely escapes hostile namespace values (shell injection defense)', () => {
+    // Namespace chosen to exercise every metacharacter a naive template
+    // would break on: single-quote, double-quote, dollar, backtick,
+    // backslash, newline. The installed hook should contain a
+    // single-quoted literal that bash parses as an exact string.
+    const hostile = `evil'; rm -rf / #`;
+    installGitHooks({
+      repoRoot: tmpDir,
+      serverUrl: 'http://localhost:7430',
+      namespace: hostile,
+    });
+    const hook = fs.readFileSync(path.join(tmpDir, '.git', 'hooks', 'post-commit'), 'utf8');
+    // Must NOT see the raw `rm -rf` as part of a command — only inside a
+    // quoted literal. Our quoting scheme produces `'evil'\''; rm -rf / #'`.
+    expect(hook).toContain(`NAMESPACE='evil'\\''; rm -rf / #'`);
+    // Negative assertion: unquoted `rm -rf` at start of a line (would be a
+    // command) must not appear.
+    expect(hook).not.toMatch(/^rm -rf/m);
   });
 });
 
