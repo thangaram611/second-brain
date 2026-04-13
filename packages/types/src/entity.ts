@@ -52,6 +52,7 @@ export interface CreateEntityInput {
 
 export interface UpdateEntityInput {
   name?: string;
+  namespace?: string;
   observations?: string[];
   properties?: Record<string, unknown>;
   confidence?: number;

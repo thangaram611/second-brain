@@ -1,8 +1,75 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Brain } from '@second-brain/core';
-import { ENTITY_TYPES, RELATION_TYPES } from '@second-brain/types';
-import type { EntityType, RelationType, TimelineEntry } from '@second-brain/types';
+import { ENTITY_TYPES, RELATION_TYPES, sessionNamespace } from '@second-brain/types';
+import type { EntityType, RelationType, TimelineEntry, SearchResult } from '@second-brain/types';
+
+export interface RecallContextBlockOptions {
+  query?: string;
+  namespaces?: string[];
+  limit?: number;
+}
+
+/**
+ * Build a compact markdown context block summarizing entities relevant to the
+ * current session. Safe to call without a query — falls back to recently
+ * accessed entities in the requested namespaces.
+ */
+export async function buildRecallContextBlock(
+  brain: Brain,
+  options: RecallContextBlockOptions,
+): Promise<string> {
+  const limit = options.limit ?? 15;
+  const namespaces = options.namespaces && options.namespaces.length > 0
+    ? options.namespaces
+    : ['personal'];
+
+  let hits: SearchResult[] = [];
+  if (options.query && options.query.trim()) {
+    const perNs = Math.ceil(limit * 1.5);
+    for (const ns of namespaces) {
+      const res = await brain.search.searchMulti({
+        query: options.query,
+        namespace: ns,
+        limit: perNs,
+      });
+      hits.push(...res);
+    }
+    // Dedupe by id, keep highest score.
+    const byId = new Map<string, SearchResult>();
+    for (const h of hits) {
+      const prev = byId.get(h.entity.id);
+      if (!prev || h.score > prev.score) byId.set(h.entity.id, h);
+    }
+    hits = [...byId.values()].sort((a, b) => b.score - a.score).slice(0, limit);
+  } else {
+    // No query — surface most recently accessed entities across scoped namespaces.
+    const recent: SearchResult[] = [];
+    for (const ns of namespaces) {
+      const list = brain.entities.list({ namespace: ns, limit: limit * 2 });
+      list.sort(
+        (a, b) =>
+          new Date(b.lastAccessedAt).getTime() - new Date(a.lastAccessedAt).getTime(),
+      );
+      for (const entity of list.slice(0, limit)) {
+        recent.push({ entity, score: entity.confidence, matchChannel: 'fulltext' });
+      }
+    }
+    hits = recent.slice(0, limit);
+  }
+
+  if (hits.length === 0) return '';
+
+  const lines: string[] = ['## Prior context from second-brain'];
+  for (const h of hits) {
+    const e = h.entity;
+    lines.push(`- [${e.type}] **${e.name}** · ${e.id} · ns=${e.namespace}`);
+    if (e.observations.length > 0) {
+      lines.push(`  - ${e.observations[0]}`);
+    }
+  }
+  return lines.join('\n');
+}
 
 export function registerReadTools(mcp: McpServer, brain: Brain): void {
   // --- search_brain ---
@@ -478,6 +545,138 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
     return {
       content: [{ type: 'text', text: lines.join('\n') }],
     };
+  });
+
+  // --- recall_session_context ---
+  mcp.registerTool('recall_session_context', {
+    description:
+      'Surface memory relevant to the current session. Searches session:<id> (if given) and cross-session namespaces, merges hits, returns a compact context block.',
+    inputSchema: {
+      sessionId: z.string().optional().describe('Active session ID; session:<id> is added to the namespace scope'),
+      query: z.string().optional().describe('Optional free-text query. When absent, returns most-recently accessed entities.'),
+      namespaces: z
+        .array(z.string())
+        .optional()
+        .describe('Extra namespaces to include (default: ["personal"])'),
+      limit: z.number().int().min(1).max(50).optional().describe('Max entities (default 15)'),
+    },
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false,
+    },
+  }, async (args) => {
+    const limit = args.limit ?? 15;
+    const extra = args.namespaces ?? ['personal'];
+    const scopeNamespaces = Array.from(
+      new Set([
+        ...(args.sessionId ? [sessionNamespace(args.sessionId)] : []),
+        ...extra,
+      ]),
+    );
+
+    const block = await buildRecallContextBlock(brain, {
+      query: args.query,
+      namespaces: scopeNamespaces,
+      limit,
+    });
+    return {
+      content: [{ type: 'text', text: block || 'No prior context.' }],
+    };
+  });
+
+  // --- timeline_around ---
+  mcp.registerTool('timeline_around', {
+    description:
+      'Return entities whose eventTime falls within a window around a given anchor entity. Useful for "what else was happening when X was decided".',
+    inputSchema: {
+      entityId: z.string().describe('Anchor entity ID'),
+      windowMinutes: z
+        .number()
+        .int()
+        .positive()
+        .max(60 * 24 * 14)
+        .optional()
+        .describe('Half-width of the window in minutes (default 60)'),
+      namespace: z.string().optional().describe('Filter timeline to this namespace'),
+    },
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false,
+    },
+  }, async (args) => {
+    const anchor = brain.entities.get(args.entityId);
+    if (!anchor) {
+      return {
+        content: [{ type: 'text', text: `Entity not found: ${args.entityId}` }],
+        isError: true,
+      };
+    }
+    const windowMinutes = args.windowMinutes ?? 60;
+    const anchorMs = new Date(anchor.eventTime).getTime();
+    const from = new Date(anchorMs - windowMinutes * 60_000).toISOString();
+    const to = new Date(anchorMs + windowMinutes * 60_000).toISOString();
+
+    const entries = brain.temporal.getTimeline({
+      from,
+      to,
+      namespace: args.namespace ?? anchor.namespace,
+      limit: 200,
+    });
+
+    if (entries.length === 0) {
+      return {
+        content: [{ type: 'text', text: `No activity within ±${windowMinutes}min of "${anchor.name}".` }],
+      };
+    }
+
+    const lines = [
+      `Activity within ±${windowMinutes}min of [${anchor.type}] ${anchor.name}:`,
+      '',
+    ];
+    for (const entry of entries) {
+      if (entry.entityId === anchor.id) continue;
+      const tag = entry.changeType === 'created' ? '+' : '~';
+      lines.push(`  ${entry.timestamp}  ${tag} [${entry.entityType}] ${entry.entityName}  ${entry.entityId}`);
+    }
+    return {
+      content: [{ type: 'text', text: lines.join('\n') }],
+    };
+  });
+
+  // --- get_observations_by_ids ---
+  mcp.registerTool('get_observations_by_ids', {
+    description:
+      'Fetch full entity records for a set of IDs. Also bumps access count so decay is deferred for items the agent actually consulted.',
+    inputSchema: {
+      ids: z.array(z.string()).min(1).max(100).describe('Entity IDs'),
+    },
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false,
+    },
+  }, async (args) => {
+    const rows: string[] = [];
+    for (const id of args.ids) {
+      const e = brain.entities.get(id);
+      if (!e) {
+        rows.push(`(missing) ${id}`);
+        continue;
+      }
+      brain.entities.touch(id);
+      const obsPreview = e.observations.slice(0, 6).map((o) => `  - ${o}`).join('\n');
+      rows.push(
+        [
+          `[${e.type}] ${e.name}`,
+          `  id: ${e.id}`,
+          `  namespace: ${e.namespace}`,
+          `  confidence: ${e.confidence}`,
+          obsPreview,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      );
+    }
+    return { content: [{ type: 'text', text: rows.join('\n\n') }] };
   });
 
   // --- get_stale ---

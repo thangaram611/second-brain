@@ -1,6 +1,13 @@
 import { eq, and, or, sql } from 'drizzle-orm';
 import { ulid } from 'ulidx';
-import type { Relation, CreateRelationInput, RelationType, Entity, EntityType } from '@second-brain/types';
+import type {
+  Relation,
+  CreateRelationInput,
+  UpdateRelationInput,
+  RelationType,
+  Entity,
+  EntityType,
+} from '@second-brain/types';
 import { entities, relations } from '../schema/index.js';
 import type { DrizzleDB } from '../storage/index.js';
 
@@ -60,6 +67,34 @@ export class RelationManager {
   get(id: string): Relation | null {
     const row = this.db.select().from(relations).where(eq(relations.id, id)).get();
     return row ? rowToRelation(row) : null;
+  }
+
+  update(id: string, patch: UpdateRelationInput): Relation | null {
+    const existing = this.db.select().from(relations).where(eq(relations.id, id)).get();
+    if (!existing) return null;
+
+    const now = new Date().toISOString();
+    const updates: Partial<typeof relations.$inferInsert> = { updatedAt: now };
+
+    if (patch.namespace !== undefined) updates.namespace = patch.namespace;
+    if (patch.properties !== undefined) updates.properties = patch.properties;
+    if (patch.confidence !== undefined) updates.confidence = patch.confidence;
+    if (patch.weight !== undefined) updates.weight = patch.weight;
+    if (patch.bidirectional !== undefined) updates.bidirectional = patch.bidirectional;
+
+    this.db.update(relations).set(updates).where(eq(relations.id, id)).run();
+
+    const updated = this.db.select().from(relations).where(eq(relations.id, id)).get();
+    return updated ? rowToRelation(updated) : null;
+  }
+
+  listByNamespace(namespace: string): Relation[] {
+    return this.db
+      .select()
+      .from(relations)
+      .where(eq(relations.namespace, namespace))
+      .all()
+      .map(rowToRelation);
   }
 
   delete(id: string): boolean {

@@ -72,6 +72,7 @@ export class EntityManager {
     const updates: Partial<typeof entities.$inferInsert> = { updatedAt: now };
 
     if (patch.name !== undefined) updates.name = patch.name;
+    if (patch.namespace !== undefined) updates.namespace = patch.namespace;
     if (patch.observations !== undefined) updates.observations = patch.observations;
     if (patch.properties !== undefined) updates.properties = patch.properties;
     if (patch.confidence !== undefined) updates.confidence = patch.confidence;

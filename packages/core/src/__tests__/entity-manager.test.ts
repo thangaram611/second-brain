@@ -77,6 +77,20 @@ describe('EntityManager', () => {
     it('returns null for nonexistent id', () => {
       expect(brain.entities.update('nonexistent', { name: 'x' })).toBeNull();
     });
+
+    it('mutates namespace when patch.namespace is set', () => {
+      const entity = brain.entities.create({
+        ...makeConcept('Moved'),
+        namespace: 'session:abc',
+      });
+      const updated = brain.entities.update(entity.id, { namespace: 'personal' });
+
+      expect(updated!.namespace).toBe('personal');
+      expect(updated!.id).toBe(entity.id);
+      expect(new Date(updated!.updatedAt).getTime()).toBeGreaterThanOrEqual(
+        new Date(entity.updatedAt).getTime(),
+      );
+    });
   });
 
   describe('delete', () => {

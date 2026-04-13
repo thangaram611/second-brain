@@ -1,4 +1,5 @@
-import type { DecayEngineConfig } from '@second-brain/types';
+import type { DecayEngineConfig, EntityType } from '@second-brain/types';
+import { sessionNamespace } from '@second-brain/types';
 import { StorageDatabase, type DatabaseOptions } from './storage/index.js';
 import { EntityManager } from './graph/entity-manager.js';
 import { RelationManager } from './graph/relation-manager.js';
@@ -7,6 +8,17 @@ import { BitemporalQueries } from './temporal/bitemporal-queries.js';
 import { DecayEngine } from './temporal/decay-engine.js';
 import { ContradictionDetector } from './temporal/contradiction-detector.js';
 import { EmbeddingStore } from './embeddings/index.js';
+
+export interface PromoteSessionOptions {
+  /** Restrict which entity types get their namespace rewritten. */
+  entityTypeFilter?: EntityType[];
+}
+
+export interface PromoteSessionResult {
+  promotedEntities: number;
+  promotedRelations: number;
+  skipped: number;
+}
 
 export interface BrainOptions extends DatabaseOptions {
   decay?: DecayEngineConfig;
@@ -59,6 +71,58 @@ export class Brain {
     }
     if (this.embeddings === null) throw new Error('enableVectorSearch failed to initialize EmbeddingStore');
     return this.embeddings;
+  }
+
+  /**
+   * Rewrite the namespace of every entity (and surviving relations) in a
+   * session namespace to a target namespace (typically `personal` or a
+   * project ID). Dangling relations — whose endpoint never lived in the
+   * session namespace — are left in place for audit and counted as skipped.
+   *
+   * Runs in a single transaction. Fine for sessions of <1k entities; larger
+   * sessions would benefit from batched transactions (future optimization).
+   */
+  promoteSession(
+    sessionId: string,
+    to: string,
+    options?: PromoteSessionOptions,
+  ): PromoteSessionResult {
+    const fromNs = sessionNamespace(sessionId);
+    const filter = options?.entityTypeFilter;
+
+    let promotedEntities = 0;
+    let promotedRelations = 0;
+    let skipped = 0;
+
+    this.storage.sqlite.transaction(() => {
+      const entitiesInSession = this.entities.list({ namespace: fromNs, limit: 100_000 });
+      const promotedEntityIds = new Set<string>();
+
+      for (const entity of entitiesInSession) {
+        if (filter && !filter.includes(entity.type)) continue;
+        this.entities.update(entity.id, { namespace: to });
+        promotedEntityIds.add(entity.id);
+        promotedEntities++;
+      }
+
+      const relationsInSession = this.relations.listByNamespace(fromNs);
+      for (const rel of relationsInSession) {
+        // A relation is only promotable if both endpoints are now in the
+        // target namespace. Otherwise, leave it behind in session namespace
+        // so we retain an audit trail without creating a cross-namespace
+        // dangling edge.
+        const sourcePromoted = promotedEntityIds.has(rel.sourceId);
+        const targetPromoted = promotedEntityIds.has(rel.targetId);
+        if (sourcePromoted && targetPromoted) {
+          this.relations.update(rel.id, { namespace: to });
+          promotedRelations++;
+        } else {
+          skipped++;
+        }
+      }
+    })();
+
+    return { promotedEntities, promotedRelations, skipped };
   }
 
   close(): void {

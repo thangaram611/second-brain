@@ -48,3 +48,11 @@ export interface CreateRelationInput {
   source: EntitySource;
   eventTime?: string;
 }
+
+export interface UpdateRelationInput {
+  namespace?: string;
+  properties?: Record<string, unknown>;
+  confidence?: number;
+  weight?: number;
+  bidirectional?: boolean;
+}

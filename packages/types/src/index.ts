@@ -11,8 +11,16 @@ export type {
   RelationType,
   Relation,
   CreateRelationInput,
+  UpdateRelationInput,
 } from './relation.js';
 export { RELATION_TYPES } from './relation.js';
+
+export {
+  SESSION_NAMESPACE_PREFIX,
+  sessionNamespace,
+  isSessionNamespace,
+  extractSessionId,
+} from './namespace.js';
 
 export type {
   SearchChannel,

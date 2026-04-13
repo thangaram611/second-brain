@@ -7,7 +7,8 @@
   "license": "MIT",
   "bin": {
     "second-brain": "./dist/index.mjs",
-    "brain": "./dist/index.mjs"
+    "brain": "./dist/index.mjs",
+    "brain-hook": "./dist/hook-binary.mjs"
   },
   "files": [
     "dist",
@@ -26,7 +27,7 @@
     "provenance": false
   },
   "scripts": {
-    "build": "tsdown src/index.ts --format esm --dts",
+    "build": "tsdown src/index.ts src/hook-binary.ts --format esm --dts",
     "dev": "tsx src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",

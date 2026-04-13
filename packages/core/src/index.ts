@@ -1,5 +1,5 @@
 export { Brain } from './brain.js';
-export type { BrainOptions } from './brain.js';
+export type { BrainOptions, PromoteSessionOptions, PromoteSessionResult } from './brain.js';
 export { EntityManager } from './graph/index.js';
 export { RelationManager } from './graph/index.js';
 export { SearchEngine, VectorSearchChannel, fulltextToRanked } from './search/index.js';

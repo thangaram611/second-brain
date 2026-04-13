@@ -200,6 +200,9 @@ importers:
       '@second-brain/types':
         specifier: workspace:*
         version: link:../types
+      better-sqlite3:
+        specifier: ^12.0.0
+        version: 12.9.0
       chokidar:
         specifier: ^4.0.3
         version: 4.0.3
@@ -216,6 +219,9 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.13
+        version: 7.6.13
       ai:
         specifier: ^6.0.158
         version: 6.0.158(zod@4.3.6)

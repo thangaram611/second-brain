@@ -73,6 +73,42 @@ describe('RelationManager', () => {
       expect(brain.relations.delete(rel.id)).toBe(true);
       expect(brain.relations.get(rel.id)).toBeNull();
     });
+
+    it('updates relation namespace while preserving ID-based lookups', () => {
+      const rel = brain.relations.create({
+        type: 'depends_on',
+        sourceId: entityA.id,
+        targetId: entityB.id,
+        namespace: 'session:abc',
+        source: { type: 'conversation' },
+      });
+
+      const updated = brain.relations.update(rel.id, { namespace: 'personal' });
+      expect(updated!.namespace).toBe('personal');
+      // ID-based traversals still resolve
+      expect(brain.relations.getOutbound(entityA.id).map((r) => r.id)).toContain(rel.id);
+      expect(brain.relations.getInbound(entityB.id).map((r) => r.id)).toContain(rel.id);
+    });
+
+    it('listByNamespace returns only relations in the given namespace', () => {
+      brain.relations.create({
+        type: 'depends_on',
+        sourceId: entityA.id,
+        targetId: entityB.id,
+        namespace: 'session:one',
+        source: { type: 'manual' },
+      });
+      brain.relations.create({
+        type: 'uses',
+        sourceId: entityA.id,
+        targetId: entityC.id,
+        namespace: 'personal',
+        source: { type: 'manual' },
+      });
+
+      expect(brain.relations.listByNamespace('session:one')).toHaveLength(1);
+      expect(brain.relations.listByNamespace('personal')).toHaveLength(1);
+    });
   });
 
   describe('getOutbound / getInbound', () => {

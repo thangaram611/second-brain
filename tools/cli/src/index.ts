@@ -883,4 +883,190 @@ syncCmd
     }
   });
 
+// --- brain tail / brain poll (realtime adapters) ---
+program
+  .command('tail')
+  .description('Tail live sessions from a supported foreign AI CLI (Copilot, etc.)')
+  .option('-t, --tool <tool>', 'copilot | all', 'copilot')
+  .option('--include-sqlite', 'Also run the SQLite post-session poller (Copilot)')
+  .option('--idle <minutes>', 'Idle window before emitting session-end', '15')
+  .action(async (options: { tool: string; includeSqlite?: boolean; idle: string }) => {
+    const { createCopilotTailer, createCopilotSqlitePoller } = await import('@second-brain/collectors');
+    const handles: Array<{ close: () => void | Promise<void> }> = [];
+    const idleMs = Math.max(1, parseInt(options.idle, 10)) * 60_000;
+
+    if (options.tool === 'copilot' || options.tool === 'all') {
+      const tailer = createCopilotTailer({ idleMs });
+      handles.push(tailer);
+      console.log('[tail] copilot live tailer started');
+      if (options.includeSqlite) {
+        const poller = createCopilotSqlitePoller();
+        handles.push(poller);
+        console.log('[tail] copilot sqlite poller started');
+      }
+    }
+    const stop = async () => {
+      for (const h of handles) await h.close();
+      process.exit(0);
+    };
+    process.on('SIGINT', stop);
+    process.on('SIGTERM', stop);
+  });
+
+program
+  .command('poll')
+  .description('Poll a foreign SQLite store for new sessions (Codex)')
+  .option('-t, --tool <tool>', 'codex', 'codex')
+  .option('--interval <seconds>', 'Poll interval in seconds', '30')
+  .action(async (options: { tool: string; interval: string }) => {
+    const { createCodexSqlitePoller } = await import('@second-brain/collectors');
+    const handles: Array<{ close: () => void | Promise<void> }> = [];
+    const intervalMs = Math.max(5, parseInt(options.interval, 10)) * 1000;
+    if (options.tool === 'codex') {
+      let skipped = 0;
+      const poller = createCodexSqlitePoller({ intervalMs, onSkip: () => skipped++ });
+      handles.push(poller);
+      console.log('[poll] codex state poller started');
+      setInterval(() => {
+        if (skipped > 0) {
+          console.log(`[poll] codex_threads_skipped_memory_disabled=${skipped}`);
+        }
+      }, 60_000).unref();
+    }
+    const stop = async () => {
+      for (const h of handles) await h.close();
+      process.exit(0);
+    };
+    process.on('SIGINT', stop);
+    process.on('SIGTERM', stop);
+  });
+
+// --- brain co-ingest-claude-mem (optional) ---
+program
+  .command('co-ingest-claude-mem')
+  .description('One-shot import of claude-mem observations as reference entities (opt-in)')
+  .option('--db <path>', 'Override claude-mem DB path')
+  .option('--force', 'Bypass ENABLE_CLAUDE_MEM_INGEST gate')
+  .action(async (options: { db?: string; force?: boolean }) => {
+    if (!options.force && process.env.ENABLE_CLAUDE_MEM_INGEST !== 'true') {
+      console.error('Refusing to run: set ENABLE_CLAUDE_MEM_INGEST=true or pass --force');
+      process.exit(1);
+    }
+    const { ingestClaudeMemOnce } = await import('@second-brain/collectors');
+    const result = await ingestClaudeMemOnce({ dbPath: options.db });
+    if (result.disabled) {
+      console.log(`claude-mem ingest disabled: ${result.disabled}`);
+      return;
+    }
+    console.log(`imported ${result.importedReferences} observations from tables: ${result.tablesSeen.join(', ')}`);
+  });
+
+// --- brain recall ---
+program
+  .command('recall')
+  .description('Build a context block mimicking what SessionStart would inject')
+  .option('-s, --session <id>', 'Session ID to include session:<id> in scope')
+  .option('-q, --query <text>', 'Optional free-text query')
+  .option('-n, --namespace <ns>', 'Additional namespace (repeatable)', (val, prev: string[]) => [...(prev ?? []), val], [] as string[])
+  .option('-l, --limit <n>', 'Max entities', '15')
+  .action(async (options: { session?: string; query?: string; namespace: string[]; limit: string }) => {
+    const brain = openBrain();
+    try {
+      const namespaces = options.namespace.length > 0 ? options.namespace : ['personal'];
+      const scope = Array.from(
+        new Set([
+          ...(options.session ? [`session:${options.session}`] : []),
+          ...namespaces,
+        ]),
+      );
+      const limit = parseInt(options.limit, 10);
+
+      let hits: Array<{ entity: { id: string; type: string; name: string; namespace: string; observations: string[]; confidence: number; lastAccessedAt: string } }> = [];
+      if (options.query && options.query.trim()) {
+        const merged = new Map<string, { entity: { id: string; type: string; name: string; namespace: string; observations: string[]; confidence: number; lastAccessedAt: string }; score: number }>();
+        for (const ns of scope) {
+          const res = await brain.search.searchMulti({ query: options.query, namespace: ns, limit: limit * 2 });
+          for (const r of res) {
+            const prev = merged.get(r.entity.id);
+            if (!prev || r.score > prev.score) merged.set(r.entity.id, r);
+          }
+        }
+        hits = [...merged.values()].sort((a, b) => b.score - a.score).slice(0, limit).map((r) => ({ entity: r.entity }));
+      } else {
+        for (const ns of scope) {
+          const list = brain.entities.list({ namespace: ns, limit: limit * 2 });
+          list.sort((a, b) => new Date(b.lastAccessedAt).getTime() - new Date(a.lastAccessedAt).getTime());
+          for (const entity of list.slice(0, limit)) hits.push({ entity });
+        }
+        hits = hits.slice(0, limit);
+      }
+      if (hits.length === 0) {
+        console.log('No prior context.');
+        return;
+      }
+      console.log('## Prior context from second-brain');
+      for (const h of hits) {
+        const e = h.entity;
+        console.log(`- [${e.type}] ${e.name} · ${e.id} · ns=${e.namespace}`);
+        if (e.observations.length > 0) console.log(`  - ${e.observations[0]}`);
+      }
+    } finally {
+      brain.close();
+    }
+  });
+
+// --- brain install-hooks / uninstall-hooks ---
+program
+  .command('install-hooks')
+  .description('Install realtime hooks for supported AI CLIs (Claude Code, etc.)')
+  .option('-s, --scope <scope>', 'user | project', 'user')
+  .option('-t, --tool <tool>', 'claude | codex | copilot | gemini | all', 'claude')
+  .option('--exclusive', 'Remove claude-mem hooks (backup kept) instead of coexisting')
+  .option('--skip-if-claude-mem', 'Abort install when claude-mem is detected')
+  .option('--hook-command <cmd>', 'Override the brain-hook binary name/path')
+  .action(async (options: {
+    scope?: 'user' | 'project';
+    tool?: 'claude' | 'codex' | 'copilot' | 'gemini' | 'all';
+    exclusive?: boolean;
+    skipIfClaudeMem?: boolean;
+    hookCommand?: string;
+  }) => {
+    const { installClaudeHooks } = await import('./install-hooks.js');
+    const tool = options.tool ?? 'claude';
+    if (tool !== 'claude' && tool !== 'all') {
+      console.error(`Tool "${tool}" has no hook mechanism; use 'brain tail --tool ${tool}' instead.`);
+      process.exit(1);
+    }
+    const result = installClaudeHooks({
+      scope: options.scope ?? 'user',
+      tool: 'claude',
+      exclusive: options.exclusive,
+      skipIfClaudeMem: options.skipIfClaudeMem,
+      hookCommand: options.hookCommand,
+    });
+    if (result.skipped) {
+      console.log(`Skipped: ${result.skipped}`);
+      return;
+    }
+    console.log(`Wrote ${result.settingsPath}`);
+    console.log(`Hooks: ${result.addedHooks.length ? result.addedHooks.join(', ') : '(none — already present)'}`);
+    if (result.coexistedWithClaudeMem) {
+      console.log('Note: existing claude-mem hooks detected; coexisting (both will run).');
+    }
+    if (result.backupPath) {
+      console.log(`claude-mem hooks backed up to ${result.backupPath}`);
+    }
+  });
+
+program
+  .command('uninstall-hooks')
+  .description('Remove hooks installed by `brain install-hooks`')
+  .option('-s, --scope <scope>', 'user | project', 'user')
+  .action(async (options: { scope?: 'user' | 'project' }) => {
+    const { uninstallClaudeHooks } = await import('./install-hooks.js');
+    const result = uninstallClaudeHooks({ scope: options.scope ?? 'user' });
+    console.log(`Updated ${result.settingsPath}`);
+    console.log(`Removed: ${result.removed.length ? result.removed.join(', ') : '(none)'}`);
+  });
+
 program.parse();
