@@ -2,6 +2,7 @@ import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mc
 import { Brain } from '@second-brain/core';
 import { registerReadTools } from './tools/read-tools.js';
 import { registerWriteTools } from './tools/write-tools.js';
+import { registerPipelineTools } from './tools/pipeline-tools.js';
 import { registerResources } from './resources/brain-resources.js';
 
 export interface SecondBrainMcpOptions {
@@ -30,6 +31,7 @@ export function createMcpServer(options: SecondBrainMcpOptions): {
 
   registerReadTools(mcp, brain);
   registerWriteTools(mcp, brain);
+  registerPipelineTools(mcp, brain);
   registerResources(mcp, brain);
 
   return { mcp, brain };

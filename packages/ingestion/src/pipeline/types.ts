@@ -40,7 +40,12 @@ export type ProgressCallback = (progress: PipelineProgress) => void;
 /** Configuration shared across pipeline components */
 export interface PipelineConfig {
   namespace: string;
-  repoPath: string;
+  /**
+   * Filesystem root for collectors that scan a repository (git, AST, docs).
+   * Optional because some collectors (conversation, github) don't operate
+   * on a local repo. When unset, repo-scanning collectors default to `process.cwd()`.
+   */
+  repoPath?: string;
   ignorePatterns: string[];
   onProgress?: ProgressCallback;
 }

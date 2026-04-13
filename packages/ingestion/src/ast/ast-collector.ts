@@ -7,8 +7,9 @@ import type { Collector, ExtractionResult, PipelineConfig, PendingRelation } fro
 import { scanFiles } from './file-scanner.js';
 import { computeContentHash } from './content-hash.js';
 import { extractTypeScript } from './languages/typescript.js';
+import { extractGo } from './languages/go.js';
 
-const TS_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx']);
+const SUPPORTED_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.go']);
 
 /** Map file extension to grammar WASM filename */
 function grammarForExtension(ext: string): string | null {
@@ -20,6 +21,8 @@ function grammarForExtension(ext: string): string | null {
     case '.js':
     case '.jsx':
       return 'tree-sitter-javascript.wasm';
+    case '.go':
+      return 'tree-sitter-go.wasm';
     default:
       return null;
   }
@@ -62,15 +65,16 @@ export class ASTCollector implements Collector {
     const entities: CreateEntityInput[] = [];
     const relations: PendingRelation[] = [];
 
-    const files = await scanFiles(config.repoPath, {
-      extensions: TS_EXTENSIONS,
+    const repoPath = config.repoPath ?? process.cwd();
+    const files = await scanFiles(repoPath, {
+      extensions: SUPPORTED_EXTENSIONS,
       ignorePatterns: config.ignorePatterns,
     });
 
-    const source: EntitySource = { type: 'ast', ref: config.repoPath };
+    const source: EntitySource = { type: 'ast', ref: repoPath };
 
     for (const fullPath of files) {
-      const relPath = path.relative(config.repoPath, fullPath);
+      const relPath = path.relative(repoPath, fullPath);
       const ext = path.extname(fullPath);
       const grammarFile = grammarForExtension(ext);
       if (!grammarFile) continue;
@@ -106,7 +110,9 @@ export class ASTCollector implements Collector {
         parser.setLanguage(language);
         const tree = parser.parse(content);
 
-        const result = extractTypeScript(tree, relPath, config.namespace, source);
+        const result = ext === '.go'
+          ? extractGo(tree, relPath, config.namespace, source)
+          : extractTypeScript(tree, relPath, config.namespace, source);
         entities.push(...result.symbols);
         relations.push(...result.relations);
       } catch {
@@ -136,6 +142,7 @@ function classifyFileTags(relPath: string): string[] {
 
   if (ext === '.ts' || ext === '.tsx') tags.push('typescript');
   if (ext === '.js' || ext === '.jsx') tags.push('javascript');
+  if (ext === '.go') tags.push('go');
   if (lower.includes('test') || lower.includes('spec')) tags.push('test');
   if (lower.endsWith('.tsx') || lower.endsWith('.jsx')) tags.push('component');
 

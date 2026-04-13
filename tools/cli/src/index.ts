@@ -1,10 +1,21 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import { Brain } from '@second-brain/core';
+import { Brain, exportJson, exportJsonLd, exportDot, importGraph, VectorSearchChannel } from '@second-brain/core';
 import type { EntityType, CreateEntityInput } from '@second-brain/types';
 import { ENTITY_TYPES } from '@second-brain/types';
-import { PipelineRunner, GitCollector, ASTCollector } from '@second-brain/ingestion';
+import {
+  PipelineRunner,
+  GitCollector,
+  ASTCollector,
+  DocCollector,
+  ConversationCollector,
+  GitHubCollector,
+  LLMExtractor,
+  EmbeddingGenerator,
+  EmbedPipeline,
+  resolveLLMConfig,
+} from '@second-brain/ingestion';
 import type { PipelineProgress } from '@second-brain/ingestion';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -323,6 +334,267 @@ indexCmd
       }
     },
   );
+
+// --- brain index docs ---
+indexCmd
+  .command('docs')
+  .description('Index markdown documentation (headings → concepts, links → references)')
+  .option('-n, --namespace <namespace>', 'Namespace', 'personal')
+  .option('--repo <path>', 'Root directory', '.')
+  .option('--path <paths...>', 'Subdirectories to scan (relative to --repo)', ['.'])
+  .option('--enrich', 'Use LLM to extract decisions/facts/patterns from prose', false)
+  .action(async (options: { namespace: string; repo: string; path: string[]; enrich: boolean }) => {
+    const brain = openBrain();
+    try {
+      const repoPath = path.resolve(options.repo);
+      const runner = new PipelineRunner(brain);
+      const collector = options.enrich
+        ? new DocCollector({
+            watchPaths: options.path,
+            llmEnrich: true,
+            extractor: new LLMExtractor(resolveLLMConfig()),
+          })
+        : new DocCollector({ watchPaths: options.path });
+      runner.register(collector);
+
+      const summary = await runner.run({
+        namespace: options.namespace,
+        repoPath,
+        ignorePatterns: ['node_modules', 'dist', '.git', '.turbo'],
+        onProgress: (p: PipelineProgress) => console.log(`[${p.stage}] ${p.message}`),
+      });
+      console.log(`\nDocs indexing complete: ${summary.entitiesCreated} entities, ${summary.relationsCreated} relations (${summary.durationMs}ms)`);
+    } finally {
+      brain.close();
+    }
+  });
+
+// --- brain index conversation ---
+indexCmd
+  .command('conversation')
+  .description('Index AI conversation logs (Claude Code or generic JSONL)')
+  .option('-n, --namespace <namespace>', 'Namespace', 'personal')
+  .option('--source <path>', 'Conversations directory (default: ~/.claude/projects/)')
+  .option('--file <path>', 'Specific conversation file')
+  .option('--max <count>', 'Max conversations to process', '20')
+  .action(async (options: { namespace: string; source?: string; file?: string; max: string }) => {
+    const brain = openBrain();
+    try {
+      const runner = new PipelineRunner(brain);
+      runner.register(
+        new ConversationCollector({
+          source: options.source,
+          file: options.file,
+          extractor: new LLMExtractor(resolveLLMConfig()),
+          maxConversations: parseInt(options.max, 10),
+        }),
+      );
+      const summary = await runner.run({
+        namespace: options.namespace,
+        ignorePatterns: [],
+        onProgress: (p: PipelineProgress) => console.log(`[${p.stage}] ${p.message}`),
+      });
+      console.log(`\nConversation indexing complete: ${summary.entitiesCreated} entities, ${summary.relationsCreated} relations (${summary.durationMs}ms)`);
+    } finally {
+      brain.close();
+    }
+  });
+
+// --- brain index github ---
+indexCmd
+  .command('github')
+  .description('Index GitHub PRs/issues/reviews for a repository')
+  .requiredOption('--repo <owner/name>', 'GitHub repository in owner/name format')
+  .option('-n, --namespace <namespace>', 'Namespace', 'personal')
+  .option('--token <token>', 'GitHub PAT (or set GITHUB_TOKEN)')
+  .option('--max-prs <n>', 'Max PRs to fetch', '50')
+  .option('--max-issues <n>', 'Max issues to fetch', '50')
+  .option('--state <state>', 'PR/issue state filter (open|closed|all)', 'all')
+  .option('--enrich', 'Use LLM to extract decisions from PR descriptions', false)
+  .action(async (options: { namespace: string; repo: string; token?: string; maxPrs: string; maxIssues: string; state: string; enrich: boolean }) => {
+    const brain = openBrain();
+    try {
+      const runner = new PipelineRunner(brain);
+      const stateOpt = options.state === 'open' || options.state === 'closed' || options.state === 'all'
+        ? options.state
+        : 'all';
+      runner.register(
+        new GitHubCollector({
+          repo: options.repo,
+          token: options.token,
+          maxPRs: parseInt(options.maxPrs, 10),
+          maxIssues: parseInt(options.maxIssues, 10),
+          state: stateOpt,
+          extractor: options.enrich ? new LLMExtractor(resolveLLMConfig()) : undefined,
+        }),
+      );
+      const summary = await runner.run({
+        namespace: options.namespace,
+        ignorePatterns: [],
+        onProgress: (p: PipelineProgress) => console.log(`[${p.stage}] ${p.message}`),
+      });
+      console.log(`\nGitHub indexing complete: ${summary.entitiesCreated} entities, ${summary.relationsCreated} relations (${summary.durationMs}ms)`);
+    } finally {
+      brain.close();
+    }
+  });
+
+// --- brain embed ---
+program
+  .command('embed')
+  .description('Generate vector embeddings for entities (requires LLM config)')
+  .option('-n, --namespace <namespace>', 'Limit to namespace')
+  .option('--batch-size <n>', 'Embeddings per request', '64')
+  .option('--dimensions <n>', 'Embedding dimensions (e.g. 768 for nomic-embed-text)', '768')
+  .action(async (options: { namespace?: string; batchSize: string; dimensions: string }) => {
+    const dims = parseInt(options.dimensions, 10);
+    const brain = new Brain({ path: getDbPath(), vectorDimensions: dims });
+    try {
+      const cfg = resolveLLMConfig();
+      const generator = new EmbeddingGenerator(cfg);
+      const pipeline = new EmbedPipeline(brain, generator, {
+        namespace: options.namespace,
+        batchSize: parseInt(options.batchSize, 10),
+        onProgress: (p) => console.log(`embedded=${p.embedded} skipped=${p.skipped} errors=${p.errors}`),
+      });
+      const summary = await pipeline.run();
+      console.log(`\nEmbedding complete: ${summary.embedded} embedded, ${summary.skipped} unchanged, ${summary.errors} errors (${summary.durationMs}ms)`);
+    } finally {
+      brain.close();
+    }
+  });
+
+// --- brain export ---
+program
+  .command('export')
+  .description('Export the knowledge graph')
+  .requiredOption('--format <format>', 'json | json-ld | dot')
+  .option('-n, --namespace <namespace>', 'Filter by namespace')
+  .option('-o, --output <file>', 'Write to file (default: stdout)')
+  .action((options: { format: string; namespace?: string; output?: string }) => {
+    const format = options.format;
+    if (format !== 'json' && format !== 'json-ld' && format !== 'dot') {
+      console.error(`Invalid format: ${format}. Use json | json-ld | dot.`);
+      process.exit(1);
+    }
+    const brain = openBrain();
+    try {
+      const content =
+        format === 'json'
+          ? exportJson(brain, { format: 'json', namespace: options.namespace })
+          : format === 'json-ld'
+            ? exportJsonLd(brain, { format: 'json-ld', namespace: options.namespace })
+            : exportDot(brain, { format: 'dot', namespace: options.namespace });
+      if (options.output) {
+        fs.writeFileSync(options.output, content, 'utf-8');
+        console.log(`Wrote ${content.length} bytes to ${options.output}`);
+      } else {
+        process.stdout.write(content);
+      }
+    } finally {
+      brain.close();
+    }
+  });
+
+// --- brain import ---
+program
+  .command('import <file>')
+  .description('Import entities + relations from a graph file')
+  .option('--format <format>', 'json | json-ld (auto-detected from extension when omitted)')
+  .option('--strategy <strategy>', 'replace | merge | upsert', 'upsert')
+  .option('-n, --namespace <namespace>', 'Override namespace for imported items')
+  .action((file: string, options: { format?: string; strategy: string; namespace?: string }) => {
+    const filePath = path.resolve(file);
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const format = options.format ?? (filePath.endsWith('.jsonld') ? 'json-ld' : 'json');
+    if (format !== 'json' && format !== 'json-ld') {
+      console.error(`Invalid format: ${format}. Use json | json-ld.`);
+      process.exit(1);
+    }
+    const strategy = options.strategy;
+    if (strategy !== 'replace' && strategy !== 'merge' && strategy !== 'upsert') {
+      console.error(`Invalid strategy: ${strategy}. Use replace | merge | upsert.`);
+      process.exit(1);
+    }
+    const brain = openBrain();
+    try {
+      const result = importGraph(brain, content, {
+        format,
+        strategy,
+        namespace: options.namespace,
+      });
+      console.log(`Imported ${result.entitiesImported} entities, ${result.relationsImported} relations.`);
+      if (result.conflicts.length > 0) {
+        console.log(`${result.conflicts.length} conflict(s):`);
+        for (const c of result.conflicts.slice(0, 10)) {
+          console.log(`  - ${c.entityType}/${c.entityName}: ${c.reason}`);
+        }
+      }
+    } finally {
+      brain.close();
+    }
+  });
+
+// --- brain query ---
+program
+  .command('query <question...>')
+  .description('Natural-language query (uses LLM if configured, falls back to FTS)')
+  .option('-n, --namespace <namespace>', 'Filter by namespace')
+  .option('--limit <n>', 'Max results', '10')
+  .option('--vector', 'Run vector channel too (requires embeddings)', false)
+  .action(async (questionTokens: string[], options: { namespace?: string; limit: string; vector: boolean }) => {
+    const question = questionTokens.join(' ');
+    const dims = parseInt(process.env.BRAIN_EMBEDDING_DIMS ?? '768', 10);
+    const brain = options.vector
+      ? new Brain({ path: getDbPath(), vectorDimensions: dims })
+      : openBrain();
+    try {
+      let queryText = question;
+      let usedLlm = false;
+      try {
+        const cfg = resolveLLMConfig();
+        const extractor = new LLMExtractor(cfg, {
+          systemPrompt: 'Extract 1-3 short search keywords from this question as entity names.',
+          maxInputChars: 1000,
+        });
+        const probe = await extractor.extract(question, {
+          namespace: options.namespace,
+          source: { type: 'manual' },
+        });
+        if (probe.entities.length > 0) {
+          queryText = probe.entities.map((e) => e.name).join(' ');
+          usedLlm = true;
+        }
+        if (options.vector && brain.embeddings !== null && !brain.search.hasVectorChannel()) {
+          const generator = new EmbeddingGenerator(cfg);
+          brain.search.setVectorChannel(
+            new VectorSearchChannel(brain.embeddings, brain.entities, (q) =>
+              generator.generateOne(q),
+            ),
+          );
+        }
+      } catch {
+        // No LLM → plain FTS.
+      }
+
+      const results = await brain.search.searchMulti({
+        query: queryText,
+        namespace: options.namespace,
+        limit: parseInt(options.limit, 10),
+      });
+      if (results.length === 0) {
+        console.log(`No matches for "${question}"${usedLlm ? ` (interpreted as: ${queryText})` : ''}.`);
+        return;
+      }
+      console.log(`Top ${results.length} matches${usedLlm ? ` (interpreted as: ${queryText})` : ''}:`);
+      for (const r of results) {
+        console.log(`  [${r.entity.type}] ${r.entity.name} — ${r.matchChannel} (${r.score.toFixed(3)})`);
+        console.log(`    ${r.entity.id}`);
+      }
+    } finally {
+      brain.close();
+    }
+  });
 
 // --- brain sync ---
 const SERVER_URL = process.env.BRAIN_API_URL ?? 'http://localhost:7430';

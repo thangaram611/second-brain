@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import * as schema from '../schema/index.js';
+import { loadSqliteVec, createVecTable, recreateVecTable } from './vec-extension.js';
 
 export type DrizzleDB = ReturnType<typeof createDrizzle>;
 
@@ -136,11 +137,19 @@ export interface DatabaseOptions {
   path: string;
   /** Enable WAL mode for better concurrent read performance. Default: true */
   wal?: boolean;
+  /**
+   * If set, load the sqlite-vec extension and create the vec_embeddings
+   * virtual table with the given dimension at construction time.
+   * Omit to keep vector search opt-in (call `enableVectorSearch()` later).
+   */
+  vectorDimensions?: number;
 }
 
 export class StorageDatabase {
   readonly sqlite: Database.Database;
   readonly db: DrizzleDB;
+  /** Current vector embedding dimensions, or null when vector search is not enabled. */
+  vectorDimensions: number | null = null;
 
   constructor(options: DatabaseOptions) {
     this.sqlite = new Database(options.path);
@@ -158,6 +167,37 @@ export class StorageDatabase {
     // Initialize schema
     this.sqlite.exec(CREATE_TABLES_SQL);
     this.sqlite.exec(CREATE_FTS_SQL);
+
+    // Phase 7: idempotently add the content_hash column to embeddings.
+    // ALTER TABLE ADD COLUMN throws if the column already exists; swallow
+    // that specific error to keep the call idempotent for existing DBs.
+    try {
+      this.sqlite.exec(`ALTER TABLE embeddings ADD COLUMN content_hash TEXT`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/duplicate column name/i.test(message)) throw err;
+    }
+
+    if (typeof options.vectorDimensions === 'number') {
+      this.enableVectorSearch(options.vectorDimensions);
+    }
+  }
+
+  /**
+   * Load the sqlite-vec extension and create the vec_embeddings table.
+   * Idempotent for the same dimension; recreates the table if dimensions change.
+   */
+  enableVectorSearch(dimensions: number): void {
+    if (this.vectorDimensions === dimensions) return;
+    if (this.vectorDimensions === null) {
+      loadSqliteVec(this.sqlite);
+    }
+    if (this.vectorDimensions !== null && this.vectorDimensions !== dimensions) {
+      recreateVecTable(this.sqlite, dimensions);
+    } else {
+      createVecTable(this.sqlite, dimensions);
+    }
+    this.vectorDimensions = dimensions;
   }
 
   close(): void {

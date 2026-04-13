@@ -114,3 +114,31 @@ export const SyncJoinSchema = z.object({
 export const SyncLeaveSchema = z.object({
   namespace: z.string().min(1),
 });
+
+// --- Phase 7 admin schemas ---
+
+export const ExportGraphSchema = z.object({
+  format: z.enum(['json', 'json-ld', 'dot']),
+  namespace: z.string().optional(),
+  types: z.array(entityTypeEnum).optional(),
+  includeRelations: z.boolean().optional(),
+});
+
+export const ImportGraphSchema = z.object({
+  content: z.string().min(1),
+  format: z.enum(['json', 'json-ld']),
+  strategy: z.enum(['replace', 'merge', 'upsert']).optional(),
+  namespace: z.string().optional(),
+});
+
+export const RebuildEmbeddingsSchema = z.object({
+  namespace: z.string().optional(),
+  batchSize: z.number().int().positive().max(500).optional(),
+  dimensions: z.number().int().positive().optional(),
+});
+
+export const QueryGraphSchema = z.object({
+  question: z.string().min(1),
+  namespace: z.string().optional(),
+  limit: z.number().int().positive().max(50).optional(),
+});

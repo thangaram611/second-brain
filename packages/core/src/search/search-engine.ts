@@ -8,9 +8,23 @@ import type {
 } from '@second-brain/types';
 import { entities } from '../schema/index.js';
 import type { StorageDatabase } from '../storage/index.js';
+import { reciprocalRankFusion, type RankedResult } from './fusion.js';
+import { fulltextToRanked, type VectorSearchChannel } from './vector-channel.js';
 
 export class SearchEngine {
+  /** Optional vector search channel. Set via `setVectorChannel()`. */
+  private vectorChannel: VectorSearchChannel | null = null;
+
   constructor(private storage: StorageDatabase) {}
+
+  /** Wire a vector search channel for use in `searchMulti()`. */
+  setVectorChannel(channel: VectorSearchChannel | null): void {
+    this.vectorChannel = channel;
+  }
+
+  hasVectorChannel(): boolean {
+    return this.vectorChannel !== null;
+  }
 
   /**
    * Full-text search using FTS5 with BM25 ranking.
@@ -72,6 +86,46 @@ export class SearchEngine {
       score: Math.abs(row.rank as number), // BM25 returns negative scores
       matchChannel: 'fulltext' as const,
     }));
+  }
+
+  /**
+   * Multi-channel search with Reciprocal Rank Fusion.
+   *
+   * Defaults: if `channels` is omitted, runs `['fulltext', 'vector']` when a
+   * vector channel is available, else `['fulltext']`. Single-channel requests
+   * skip the RRF pass and return the channel's results directly.
+   *
+   * Async because vector search must embed the query string remotely.
+   */
+  async searchMulti(options: SearchOptions): Promise<SearchResult[]> {
+    const { query } = options;
+    if (!query.trim()) return [];
+
+    const requested = options.channels;
+    const channels: ('fulltext' | 'vector')[] = (() => {
+      if (requested && requested.length > 0) {
+        return requested.filter((c): c is 'fulltext' | 'vector' => c === 'fulltext' || c === 'vector');
+      }
+      return this.vectorChannel ? ['fulltext', 'vector'] : ['fulltext'];
+    })();
+
+    const lists: RankedResult[][] = [];
+
+    if (channels.includes('fulltext')) {
+      lists.push(fulltextToRanked(this.search(options)));
+    }
+    if (channels.includes('vector') && this.vectorChannel) {
+      lists.push(await this.vectorChannel.search(options));
+    }
+
+    if (lists.length === 0) return [];
+    if (lists.length === 1) {
+      return lists[0]
+        .slice(0, options.limit ?? 20)
+        .map((r) => ({ entity: r.entity, score: r.channelScore, matchChannel: r.channel }));
+    }
+
+    return reciprocalRankFusion(lists).slice(0, options.limit ?? 20);
   }
 
   /**

@@ -29,12 +29,13 @@ export class GitCollector implements Collector {
   }
 
   async collect(config: PipelineConfig): Promise<ExtractionResult> {
-    const git: SimpleGit = simpleGit(config.repoPath);
+    const repoPath = config.repoPath ?? process.cwd();
+    const git: SimpleGit = simpleGit(repoPath);
     const entities: CreateEntityInput[] = [];
     const relations: PendingRelation[] = [];
     const coChangeTracker = new CoChangeTracker();
 
-    const source: EntitySource = { type: 'git', ref: config.repoPath };
+    const source: EntitySource = { type: 'git', ref: repoPath };
     const seenPersons = new Set<string>();
     const seenFiles = new Set<string>();
 

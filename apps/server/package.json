@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@second-brain/core": "workspace:*",
+    "@second-brain/ingestion": "workspace:*",
     "@second-brain/sync": "workspace:*",
     "@second-brain/types": "workspace:*",
     "express": "^5.1.0",
