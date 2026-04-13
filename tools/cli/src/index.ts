@@ -1069,4 +1069,124 @@ program
     console.log(`Removed: ${result.removed.length ? result.removed.join(', ') : '(none)'}`);
   });
 
+// --- brain watch ---
+program
+  .command('watch')
+  .description('Run the file-change + branch-change daemon for a wired repo')
+  .option('--repo <path>', 'Repo root (defaults to cwd)')
+  .option('-n, --namespace <ns>', 'Override namespace (defaults to wired value or personal)')
+  .option('--server-url <url>', 'Server URL (defaults to http://localhost:7430 or $SECOND_BRAIN_SERVER_URL)')
+  .option('--token <token>', 'Bearer token (or $SECOND_BRAIN_TOKEN)')
+  .option('--author-email <email>', 'Override git config user.email')
+  .option('--author-name <name>', 'Override git config user.name')
+  .action(async (options: {
+    repo?: string;
+    namespace?: string;
+    serverUrl?: string;
+    token?: string;
+    authorEmail?: string;
+    authorName?: string;
+  }) => {
+    const { runWatch } = await import('./git-context-daemon.js');
+    const repo = options.repo ?? process.cwd();
+    const handle = await runWatch({
+      repo,
+      namespace: options.namespace,
+      serverUrl: options.serverUrl,
+      bearerToken: options.token,
+      authorEmail: options.authorEmail,
+      authorName: options.authorName,
+    });
+    const currentBranch = await handle.currentBranch();
+    console.log(`[watch] ready — repo=${repo} branch=${currentBranch}`);
+    console.log('[watch] Press Ctrl-C to stop.');
+    // Keep the process alive. SIGINT/SIGTERM handlers inside runWatch shut down cleanly.
+  });
+
+// --- brain wire ---
+program
+  .command('wire')
+  .description('One-shot wire-up: git hooks + claude hooks + wiredRepos entry (MVP — provider support lands in 10.3)')
+  .option('--repo <path>', 'Repo root (defaults to `git rev-parse --show-toplevel`)')
+  .option('-n, --namespace <ns>', 'Namespace (overrides project config)')
+  .option('--server-url <url>', 'Server URL')
+  .option('--token <token>', 'Bearer token')
+  .option('--require-project', 'Fail if no project namespace is set (for CI/team setups)')
+  .option('--no-claude', 'Skip Claude Code session hook install')
+  .option('--skip-if-claude-mem', 'Abort if claude-mem hooks are present')
+  .action(async (options: {
+    repo?: string;
+    namespace?: string;
+    serverUrl?: string;
+    token?: string;
+    requireProject?: boolean;
+    claude?: boolean;
+    skipIfClaudeMem?: boolean;
+  }) => {
+    const { runWire } = await import('./wire.js');
+    try {
+      const result = await runWire({
+        repo: options.repo,
+        namespace: options.namespace,
+        serverUrl: options.serverUrl,
+        bearerToken: options.token,
+        requireProject: options.requireProject,
+        installClaudeSession: options.claude !== false,
+        skipIfClaudeMem: options.skipIfClaudeMem,
+      });
+      console.log(`Wired: ${result.repoRoot}`);
+      console.log(`  namespace: ${result.namespace}`);
+      console.log(`  author:    ${result.authorEmail ?? '(not set)'}`);
+      console.log(`  git hooks: ${result.gitHooks.installed.join(', ')}`);
+      if (result.gitHooks.backups.length > 0) {
+        console.log(
+          `  backups:   ${result.gitHooks.backups.map((b) => `${b.name}→${b.path}`).join(', ')}`,
+        );
+      }
+      if (result.claudeHooks) {
+        console.log(
+          `  claude hooks: ${result.claudeHooks.addedHooks.length ? result.claudeHooks.addedHooks.join(', ') : '(already present)'}`,
+        );
+      }
+      console.log(`  config:    ${result.configPath}`);
+      for (const w of result.warnings) {
+        console.log(`  [warn] ${w}`);
+      }
+      console.log('');
+      console.log('Next: start the file-watch daemon with:');
+      console.log(`  ${result.watchCommand}`);
+    } catch (err) {
+      console.error(`wire failed: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+  });
+
+// --- brain unwire ---
+program
+  .command('unwire')
+  .description('Reverse `brain wire` — remove git hooks, drop wiredRepos entry')
+  .option('--repo <path>', 'Repo root')
+  .option('--remove-claude-hooks', 'Also remove Claude Code session hooks (affects all repos)')
+  .option('--purge', 'Signal that project observations should be purged (DB purge lands in 10.4)')
+  .action(async (options: { repo?: string; removeClaudeHooks?: boolean; purge?: boolean }) => {
+    const { runUnwire } = await import('./unwire.js');
+    const result = await runUnwire({
+      repo: options.repo,
+      removeClaudeHooks: options.removeClaudeHooks,
+      purge: options.purge,
+    });
+    console.log(`Unwired: ${result.repoRoot}`);
+    console.log(`  git hooks removed:  ${result.gitHooks.removed.join(', ') || '(none)'}`);
+    if (result.gitHooks.restored.length > 0) {
+      console.log(`  git hooks restored: ${result.gitHooks.restored.join(', ')}`);
+    }
+    console.log(`  config entry removed: ${result.configEntryRemoved}`);
+    if (result.claudeRemoved) {
+      console.log(`  claude hooks removed: ${result.claudeRemoved.join(', ') || '(none)'}`);
+    }
+    if (options.purge) {
+      console.log(`  [note] --purge requested but DB purge ships in sub-phase 10.4`);
+    }
+  });
+
 program.parse();

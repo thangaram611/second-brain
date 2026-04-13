@@ -202,4 +202,27 @@ export class EntityManager {
       .get();
     return result?.count ?? 0;
   }
+
+  /**
+   * List every entity whose `properties.branchContext.branch` matches the
+   * given branch. Uses the `branch_context_branch` generated column from
+   * migration 002 — index-backed, O(log n).
+   */
+  listByBranchContext(
+    branch: string,
+    options?: { status?: 'wip' | 'merged' | 'abandoned'; namespace?: string; limit?: number },
+  ): Entity[] {
+    const parts = [sql`branch_context_branch = ${branch}`];
+    if (options?.status) parts.push(sql`branch_context_status = ${options.status}`);
+    if (options?.namespace) parts.push(sql`namespace = ${options.namespace}`);
+    const where = sql.join(parts, sql` AND `);
+    const rows = this.db
+      .select()
+      .from(entities)
+      .where(where)
+      .orderBy(sql`updated_at DESC`)
+      .limit(options?.limit ?? 10_000)
+      .all();
+    return rows.map(rowToEntity);
+  }
 }

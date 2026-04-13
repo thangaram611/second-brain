@@ -193,4 +193,174 @@ describe('Observe routes', () => {
       brain2.close();
     });
   });
+
+  describe('POST /api/observe/file-change', () => {
+    it('creates one event + N touches_file relations + file entities', async () => {
+      await request(app)
+        .post('/api/observe/file-change')
+        .send({
+          repo: '/tmp/repo',
+          namespace: 'proj',
+          branch: 'feature/x',
+          changes: [
+            { path: 'src/a.ts', kind: 'change', mtime: '2026-04-13T10:00:00.000Z' },
+            { path: 'src/b.ts', kind: 'add', mtime: '2026-04-13T10:00:01.000Z' },
+          ],
+          batchedAt: '2026-04-13T10:00:02.000Z',
+          idempotencyKey: 'abc123',
+        })
+        .expect(201);
+
+      const events = brain.entities.findByType('event', 'proj');
+      const fileEvents = events.filter((e) => e.tags.includes('file-edit'));
+      expect(fileEvents).toHaveLength(1);
+      const branchContext = (fileEvents[0].properties as Record<string, unknown>).branchContext as Record<string, unknown>;
+      expect(branchContext?.branch).toBe('feature/x');
+      expect(branchContext?.status).toBe('wip');
+
+      const files = brain.entities.findByType('file', 'proj');
+      expect(files).toHaveLength(2);
+    });
+
+    it('dedupes on idempotencyKey within window', async () => {
+      const payload = {
+        repo: '/tmp/repo',
+        namespace: 'proj',
+        branch: 'main',
+        changes: [{ path: 'src/dup.ts', kind: 'change', mtime: '2026-04-13T10:00:00.000Z' }],
+        batchedAt: '2026-04-13T10:00:02.000Z',
+        idempotencyKey: 'dup-key',
+      };
+      const a = await request(app).post('/api/observe/file-change').send(payload).expect(201);
+      expect(a.body.accepted).toBe(true);
+      const b = await request(app).post('/api/observe/file-change').send(payload).expect(200);
+      expect(b.body.accepted).toBe(false);
+
+      const events = brain.entities.findByType('event', 'proj').filter((e) => e.tags.includes('file-edit'));
+      expect(events).toHaveLength(1);
+    });
+
+    it('stamps source.actor from author field', async () => {
+      await request(app)
+        .post('/api/observe/file-change')
+        .send({
+          repo: '/tmp/repo',
+          namespace: 'proj',
+          branch: 'feature/actor',
+          author: { canonicalEmail: 'alice@example.com', displayName: 'Alice' },
+          changes: [{ path: 'src/actor.ts', kind: 'add', mtime: '2026-04-13T10:00:00.000Z' }],
+          batchedAt: '2026-04-13T10:00:02.000Z',
+          idempotencyKey: 'actor-key',
+        })
+        .expect(201);
+
+      const events = brain.entities.findByType('event', 'proj').filter((e) => e.tags.includes('file-edit'));
+      expect(events[0].source.actor).toBe('alice@example.com');
+      expect(events[0].source.type).toBe('watch');
+    });
+  });
+
+  describe('POST /api/observe/branch-change', () => {
+    it('creates/updates branch entities and a preceded_by relation', async () => {
+      await request(app)
+        .post('/api/observe/branch-change')
+        .send({
+          repo: '/tmp/repo',
+          namespace: 'proj',
+          from: 'main',
+          to: 'feature/y',
+          headSha: 'abc1234567890',
+          timestamp: '2026-04-13T10:00:00.000Z',
+        })
+        .expect(201);
+
+      const branches = brain.entities.findByType('branch', 'proj');
+      const names = branches.map((b) => b.name).sort();
+      expect(names).toEqual(['feature/y', 'main']);
+    });
+  });
+
+  describe('POST /api/observe/git-event', () => {
+    it('creates an event + links to branch entity + carries branchContext', async () => {
+      await request(app)
+        .post('/api/observe/git-event')
+        .send({
+          repo: '/tmp/repo',
+          namespace: 'proj',
+          kind: 'commit',
+          branch: 'feature/z',
+          headSha: 'deadbeef1234',
+          message: 'refactor auth\n\nExtract token validator',
+          timestamp: '2026-04-13T10:00:00.000Z',
+        })
+        .expect(201);
+
+      const events = brain.entities.findByType('event', 'proj').filter((e) =>
+        e.tags.includes('git-commit'),
+      );
+      expect(events).toHaveLength(1);
+      const branchContext = (events[0].properties as Record<string, unknown>).branchContext as Record<string, unknown>;
+      expect(branchContext?.branch).toBe('feature/z');
+
+      const branches = brain.entities.findByType('branch', 'proj');
+      expect(branches.some((b) => b.name === 'feature/z')).toBe(true);
+    });
+  });
+
+  describe('currentAuthor cache', () => {
+    it('stamps source.actor on tool-use after setAuthor is seeded', async () => {
+      observations.setAuthor('s-auth', {
+        canonicalEmail: 'bob@example.com',
+        aliases: [],
+      });
+      await request(app).post('/api/observe/session-start').send({ sessionId: 's-auth' });
+      await request(app)
+        .post('/api/observe/tool-use')
+        .send({ sessionId: 's-auth', toolName: 'Bash', phase: 'pre' })
+        .expect(201);
+
+      const events = brain.entities.list({ namespace: sessionNamespace('s-auth') });
+      const toolEvent = events.find((e) => e.tags.includes('tool-use'));
+      expect(toolEvent?.source.actor).toBe('bob@example.com');
+      expect(toolEvent?.source.type).toBe('hook');
+    });
+  });
+
+  describe('counters', () => {
+    it('tracks file_change / branch_change / git_event counts', async () => {
+      await request(app)
+        .post('/api/observe/file-change')
+        .send({
+          repo: '/tmp/r',
+          namespace: 'p',
+          branch: 'main',
+          changes: [{ path: 'x.ts', kind: 'change', mtime: '2026-04-13T10:00:00.000Z' }],
+          batchedAt: '2026-04-13T10:00:02.000Z',
+          idempotencyKey: 'ctr-1',
+        });
+      await request(app)
+        .post('/api/observe/branch-change')
+        .send({
+          repo: '/tmp/r',
+          namespace: 'p',
+          from: 'main',
+          to: 'feat',
+          headSha: 'abc',
+        });
+      await request(app)
+        .post('/api/observe/git-event')
+        .send({
+          repo: '/tmp/r',
+          namespace: 'p',
+          kind: 'commit',
+          branch: 'feat',
+          headSha: 'xyz',
+        });
+
+      const res = await request(app).get('/api/observe/counters').expect(200);
+      expect(res.body.file_change_batches_total).toBe(1);
+      expect(res.body.branch_change_events_total).toBe(1);
+      expect(res.body.git_events_total).toBe(1);
+    });
+  });
 });

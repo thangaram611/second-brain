@@ -2,10 +2,11 @@ export type {
   EntityType,
   Entity,
   EntitySource,
+  EntitySourceType,
   CreateEntityInput,
   UpdateEntityInput,
 } from './entity.js';
-export { ENTITY_TYPES, DECAY_RATES } from './entity.js';
+export { ENTITY_TYPES, ENTITY_SOURCE_TYPES, DECAY_RATES } from './entity.js';
 
 export type {
   RelationType,
@@ -21,6 +22,16 @@ export {
   isSessionNamespace,
   extractSessionId,
 } from './namespace.js';
+
+export {
+  BRANCH_STATUSES,
+  BranchContextSchema,
+  BranchStatusPatchSchema,
+} from './branch-context.js';
+export type { BranchContext, BranchStatusPatch } from './branch-context.js';
+
+export { AuthorSchema, canonicalizeEmail } from './author.js';
+export type { Author } from './author.js';
 
 export type {
   SearchChannel,

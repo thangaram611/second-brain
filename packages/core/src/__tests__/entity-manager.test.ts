@@ -184,4 +184,70 @@ describe('EntityManager', () => {
       expect(brain.entities.findByType('concept')).toHaveLength(2);
     });
   });
+
+  describe('listByBranchContext (migration 002 generated columns)', () => {
+    it('returns entities whose properties.branchContext.branch matches', () => {
+      brain.entities.create({
+        type: 'event',
+        name: 'edit:a',
+        namespace: 'proj',
+        properties: { branchContext: { branch: 'feature/a', status: 'wip' } },
+        source: { type: 'watch' },
+      });
+      brain.entities.create({
+        type: 'event',
+        name: 'edit:b',
+        namespace: 'proj',
+        properties: { branchContext: { branch: 'feature/b', status: 'wip' } },
+        source: { type: 'watch' },
+      });
+      brain.entities.create({
+        type: 'event',
+        name: 'edit:c',
+        namespace: 'proj',
+        properties: { branchContext: { branch: 'feature/a', status: 'merged' } },
+        source: { type: 'watch' },
+      });
+
+      const featA = brain.entities.listByBranchContext('feature/a');
+      expect(featA).toHaveLength(2);
+      expect(featA.map((e) => e.name).sort()).toEqual(['edit:a', 'edit:c']);
+
+      const featAWip = brain.entities.listByBranchContext('feature/a', { status: 'wip' });
+      expect(featAWip).toHaveLength(1);
+      expect(featAWip[0].name).toBe('edit:a');
+    });
+
+    it('filters by namespace when provided', () => {
+      brain.entities.create({
+        type: 'event',
+        name: 'in-proj',
+        namespace: 'proj',
+        properties: { branchContext: { branch: 'feature/x', status: 'wip' } },
+        source: { type: 'watch' },
+      });
+      brain.entities.create({
+        type: 'event',
+        name: 'in-personal',
+        namespace: 'personal',
+        properties: { branchContext: { branch: 'feature/x', status: 'wip' } },
+        source: { type: 'watch' },
+      });
+
+      const inProj = brain.entities.listByBranchContext('feature/x', { namespace: 'proj' });
+      expect(inProj).toHaveLength(1);
+      expect(inProj[0].namespace).toBe('proj');
+    });
+
+    it('returns [] for an unknown branch', () => {
+      brain.entities.create({
+        type: 'event',
+        name: 'x',
+        namespace: 'proj',
+        properties: { branchContext: { branch: 'feature/real', status: 'wip' } },
+        source: { type: 'watch' },
+      });
+      expect(brain.entities.listByBranchContext('feature/ghost')).toHaveLength(0);
+    });
+  });
 });

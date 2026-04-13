@@ -1,5 +1,6 @@
 import { Router, type Request } from 'express';
 import { z } from 'zod';
+import { AuthorSchema } from '@second-brain/types';
 import type { ObservationService } from '../services/observation-service.js';
 import { tokenBucket } from '../services/rate-limit.js';
 
@@ -40,10 +41,56 @@ const StopSchema = z.object({
   timestamp: z.string().optional(),
 });
 
+const FileChangeSchema = z.object({
+  repo: z.string().min(1),
+  branch: z.string().min(1),
+  namespace: z.string().min(1),
+  author: AuthorSchema.optional(),
+  changes: z.array(
+    z.object({
+      path: z.string().min(1),
+      kind: z.enum(['add', 'change', 'unlink']),
+      size: z.number().int().optional(),
+      mtime: z.string(),
+    }),
+  ).min(1),
+  batchedAt: z.string(),
+  idempotencyKey: z.string().min(1),
+});
+
+const BranchChangeSchema = z.object({
+  repo: z.string().min(1),
+  namespace: z.string().min(1),
+  from: z.string().min(1),
+  to: z.string().min(1),
+  headSha: z.string().min(1),
+  author: AuthorSchema.optional(),
+  timestamp: z.string().optional(),
+});
+
+const GitEventSchema = z.object({
+  repo: z.string().min(1),
+  namespace: z.string().min(1),
+  kind: z.enum(['commit', 'merge', 'checkout']),
+  branch: z.string().min(1),
+  headSha: z.string().min(1),
+  message: z.string().optional(),
+  author: AuthorSchema.optional(),
+  timestamp: z.string().optional(),
+});
+
 function extractSessionKey(req: Request): string | null {
   const body = (req.body ?? {}) as Record<string, unknown>;
   const id = body.sessionId;
-  return typeof id === 'string' && id.length > 0 ? id : null;
+  if (typeof id === 'string' && id.length > 0) return id;
+  // For non-session routes (file-change, branch-change, git-event) fall back
+  // to repo + namespace so the rate limiter still buckets per-source.
+  const repo = body.repo;
+  const namespace = body.namespace;
+  if (typeof repo === 'string' && typeof namespace === 'string') {
+    return `repo:${repo}:${namespace}`;
+  }
+  return null;
 }
 
 export interface ObserveRouteOptions {
@@ -115,6 +162,36 @@ export function observeRoutes(
       const payload = SessionEndSchema.parse(req.body);
       const result = await observations.handleSessionEnd(payload);
       res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post('/api/observe/file-change', (req, res, next) => {
+    try {
+      const payload = FileChangeSchema.parse(req.body);
+      const result = observations.handleFileChange(payload);
+      res.status(result.accepted ? 201 : 200).json(result);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post('/api/observe/branch-change', (req, res, next) => {
+    try {
+      const payload = BranchChangeSchema.parse(req.body);
+      const result = observations.handleBranchChange(payload);
+      res.status(201).json(result);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post('/api/observe/git-event', (req, res, next) => {
+    try {
+      const payload = GitEventSchema.parse(req.body);
+      const result = observations.handleGitEvent(payload);
+      res.status(201).json(result);
     } catch (err) {
       next(err);
     }

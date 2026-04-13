@@ -304,4 +304,27 @@ export class RelationManager {
       .get();
     return result?.count ?? 0;
   }
+
+  /**
+   * Symmetric to EntityManager.listByBranchContext — returns relations whose
+   * `properties.branchContext.branch` matches. Uses migration-002 generated
+   * column on the relations table.
+   */
+  listByBranchContext(
+    branch: string,
+    options?: { status?: 'wip' | 'merged' | 'abandoned'; namespace?: string; limit?: number },
+  ): Relation[] {
+    const parts = [sql`branch_context_branch = ${branch}`];
+    if (options?.status) parts.push(sql`branch_context_status = ${options.status}`);
+    if (options?.namespace) parts.push(sql`namespace = ${options.namespace}`);
+    const where = sql.join(parts, sql` AND `);
+    const rows = this.db
+      .select()
+      .from(relations)
+      .where(where)
+      .orderBy(sql`updated_at DESC`)
+      .limit(options?.limit ?? 10_000)
+      .all();
+    return rows.map(rowToRelation);
+  }
 }

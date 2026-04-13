@@ -125,4 +125,60 @@ describe('StorageDatabase migration integration', () => {
     expect(readUserVersion(dbA.sqlite)).toBe(versionAfterFirst);
     dbA.close();
   });
+
+  it('applies migration 002: branch_context columns + indexes on entities AND relations', () => {
+    const db = new StorageDatabase({ path: ':memory:', wal: false });
+    // Use PRAGMA table_xinfo — generated virtual columns added via ALTER TABLE
+    // are invisible to plain table_info but appear in xinfo.
+    const eCols = db.sqlite
+      .prepare('PRAGMA table_xinfo(entities)')
+      .all() as Array<{ name: string }>;
+    const rCols = db.sqlite
+      .prepare('PRAGMA table_xinfo(relations)')
+      .all() as Array<{ name: string }>;
+    expect(eCols.map((c) => c.name)).toEqual(
+      expect.arrayContaining(['branch_context_branch', 'branch_context_status']),
+    );
+    expect(rCols.map((c) => c.name)).toEqual(
+      expect.arrayContaining(['branch_context_branch', 'branch_context_status']),
+    );
+    // Indexes exist
+    const idx = db.sqlite
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%_branch%'",
+      )
+      .all() as Array<{ name: string }>;
+    expect(idx.map((i) => i.name)).toEqual(
+      expect.arrayContaining([
+        'idx_entities_branch',
+        'idx_entities_branch_status',
+        'idx_relations_branch',
+        'idx_relations_branch_status',
+      ]),
+    );
+    db.close();
+  });
+
+  it('filters entities by branch_context_branch via the generated column index', () => {
+    const db = new StorageDatabase({ path: ':memory:', wal: false });
+    const now = new Date().toISOString();
+    db.sqlite
+      .prepare(
+        `INSERT INTO entities (id, type, name, properties, event_time, ingest_time, source_type, created_at, updated_at)
+         VALUES (?, 'event', ?, ?, ?, ?, 'watch', ?, ?)`,
+      )
+      .run('a', 'e:a', JSON.stringify({ branchContext: { branch: 'feat/x', status: 'wip' } }), now, now, now, now);
+    db.sqlite
+      .prepare(
+        `INSERT INTO entities (id, type, name, properties, event_time, ingest_time, source_type, created_at, updated_at)
+         VALUES (?, 'event', ?, ?, ?, ?, 'watch', ?, ?)`,
+      )
+      .run('b', 'e:b', JSON.stringify({ branchContext: { branch: 'feat/y', status: 'wip' } }), now, now, now, now);
+
+    const rows = db.sqlite
+      .prepare(`SELECT id FROM entities WHERE branch_context_branch = ?`)
+      .all('feat/x') as Array<{ id: string }>;
+    expect(rows.map((r) => r.id)).toEqual(['a']);
+    db.close();
+  });
 });

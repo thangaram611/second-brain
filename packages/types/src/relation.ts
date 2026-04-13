@@ -15,6 +15,12 @@ export const RELATION_TYPES = [
   'co_changes_with',
   'preceded_by',
   'blocks',
+  'reviewed_by',
+  'merged_in_mr',
+  'merged_in_pr',
+  'touches_file',
+  'owns',
+  'parallel_with',
 ] as const;
 
 export type RelationType = (typeof RELATION_TYPES)[number];

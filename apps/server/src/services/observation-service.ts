@@ -1,8 +1,9 @@
 import type { Brain, PromoteSessionResult } from '@second-brain/core';
-import type { Entity, EntitySource, SearchResult } from '@second-brain/types';
+import type { Author, BranchContext, Entity, EntitySource, SearchResult } from '@second-brain/types';
 import { sessionNamespace } from '@second-brain/types';
 import { SerialQueue } from './serial-queue.js';
 import type { PromotionService } from './promotion-service.js';
+import { resolveAuthor } from '../lib/resolve-author.js';
 
 export interface SessionStartPayload {
   sessionId: string;
@@ -42,6 +43,46 @@ export interface StopPayload {
   timestamp?: string;
 }
 
+export interface FileChangePayload {
+  /** Absolute path of the repo root — used to resolve namespace + author. */
+  repo: string;
+  branch: string;
+  /** Optional explicit author; when omitted the daemon-resolved cached author is used. */
+  author?: Author;
+  /** Namespace to write into — resolved by the caller from wiredRepos. */
+  namespace: string;
+  changes: Array<{
+    path: string;
+    kind: 'add' | 'change' | 'unlink';
+    size?: number;
+    mtime: string;
+  }>;
+  batchedAt: string;
+  /** Dedup key: hash(filePath, mtime, branchAtBatch). Rejected on duplicate. */
+  idempotencyKey: string;
+}
+
+export interface BranchChangePayload {
+  repo: string;
+  namespace: string;
+  from: string;
+  to: string;
+  headSha: string;
+  author?: Author;
+  timestamp?: string;
+}
+
+export interface GitEventPayload {
+  repo: string;
+  namespace: string;
+  kind: 'commit' | 'merge' | 'checkout';
+  branch: string;
+  headSha: string;
+  message?: string;
+  author?: Author;
+  timestamp?: string;
+}
+
 export interface ObservationServiceOptions {
   retentionDays?: number;
   /** Override the current time for testability. */
@@ -58,6 +99,10 @@ export interface ObservationCounters {
   private_blocks_filtered: number;
   tail_lines_processed: number;
   promoted_entities_total: number;
+  file_change_batches_total: number;
+  file_change_batches_dedup: number;
+  branch_change_events_total: number;
+  git_events_total: number;
 }
 
 const PRIVATE_TAG_RE = /<private>[\s\S]*?<\/private>/gi;
@@ -79,6 +124,8 @@ export function stripPrivateBlocks(text: string): { redacted: string; stripped: 
 export class ObservationService {
   private conversationBySession: Map<string, string> = new Map();
   private projectBySession: Map<string, string> = new Map();
+  private currentAuthor: Map<string, Author> = new Map();
+  private seenIdempotencyKeys: Map<string, number> = new Map();
   private queue: SerialQueue<string> = new SerialQueue<string>();
 
   readonly counters: ObservationCounters = {
@@ -87,6 +134,10 @@ export class ObservationService {
     private_blocks_filtered: 0,
     tail_lines_processed: 0,
     promoted_entities_total: 0,
+    file_change_batches_total: 0,
+    file_change_batches_dedup: 0,
+    branch_change_events_total: 0,
+    git_events_total: 0,
   };
 
   readonly retentionDays: number;
@@ -105,9 +156,21 @@ export class ObservationService {
     this.contextLimit = options.contextLimit ?? 15;
   }
 
-  private sourceFor(tool?: string): EntitySource {
-    const actor = tool ?? 'claude';
-    return { type: 'conversation', ref: actor };
+  private sourceFor(tool?: string, sessionId?: string): EntitySource {
+    const actor = sessionId ? this.currentAuthor.get(sessionId)?.canonicalEmail : undefined;
+    const ref = tool ?? 'claude';
+    const base: EntitySource = { type: 'conversation', ref };
+    return actor ? { ...base, actor } : base;
+  }
+
+  /** Exposed for routes + other services — returns the cached author for a session. */
+  getAuthor(sessionId: string): Author | undefined {
+    return this.currentAuthor.get(sessionId);
+  }
+
+  /** Exposed for tests + CLI — seed the author cache (skips git lookup). */
+  setAuthor(sessionId: string, author: Author): void {
+    this.currentAuthor.set(sessionId, author);
   }
 
   /** Ensure a conversation entity exists for the session; return its ID. */
@@ -138,7 +201,7 @@ export class ObservationService {
         ...(payload?.project ? { project: payload.project } : {}),
       },
       tags: ['session', `tool:${payload?.tool ?? 'claude'}`],
-      source: this.sourceFor(payload?.tool),
+      source: this.sourceFor(payload?.tool, sessionId),
     });
     this.conversationBySession.set(sessionId, entity.id);
     if (payload?.project) this.projectBySession.set(sessionId, payload.project);
@@ -149,6 +212,12 @@ export class ObservationService {
     payload: SessionStartPayload,
   ): Promise<{ conversationId: string; namespace: string; contextBlock: string }> {
     this.counters.hook_events_total++;
+    // Resolve author once per session (git config read) so every subsequent
+    // write in this session stamps source.actor without re-running git.
+    if (payload.cwd && !this.currentAuthor.has(payload.sessionId)) {
+      const author = await resolveAuthor(payload.cwd);
+      if (author) this.currentAuthor.set(payload.sessionId, author);
+    }
     const conversationId = this.ensureConversationEntity(payload.sessionId, payload);
     const contextBlock = await this.buildStartContextBlock(payload);
     return {
@@ -204,6 +273,10 @@ export class ObservationService {
     this.counters.hook_events_total++;
     const ns = sessionNamespace(payload.sessionId);
     const convId = this.ensureConversationEntity(payload.sessionId);
+    const actor = this.currentAuthor.get(payload.sessionId)?.canonicalEmail;
+    const hookSource: EntitySource = actor
+      ? { type: 'hook', ref: payload.toolName, actor }
+      : { type: 'hook', ref: payload.toolName };
 
     const event = this.brain.entities.create({
       type: 'event',
@@ -219,7 +292,7 @@ export class ObservationService {
         output: payload.output,
       },
       tags: ['tool-use', `tool:${payload.toolName}`, `phase:${payload.phase}`],
-      source: { type: 'conversation', ref: payload.toolName },
+      source: hookSource,
     });
 
     this.brain.relations.create({
@@ -227,28 +300,31 @@ export class ObservationService {
       sourceId: event.id,
       targetId: convId,
       namespace: ns,
-      source: { type: 'conversation', ref: payload.toolName },
+      source: hookSource,
     });
 
     for (const filePath of payload.filePaths ?? []) {
-      const file = this.upsertFileEntity(ns, filePath);
+      const file = this.upsertFileEntity(ns, filePath, actor);
       this.brain.relations.create({
         type: 'uses',
         sourceId: event.id,
         targetId: file.id,
         namespace: ns,
         properties: { toolName: payload.toolName, phase: payload.phase },
-        source: { type: 'conversation', ref: payload.toolName },
+        source: hookSource,
       });
     }
 
     return { eventId: event.id };
   }
 
-  private upsertFileEntity(ns: string, filePath: string): Entity {
+  private upsertFileEntity(ns: string, filePath: string, actor?: string): Entity {
     const matches = this.brain.entities.findByName(filePath, ns);
     const existing = matches.find((e) => e.type === 'file' && e.name === filePath);
     if (existing) return existing;
+    const source: EntitySource = actor
+      ? { type: 'conversation', actor }
+      : { type: 'conversation' };
     return this.brain.entities.create({
       type: 'file',
       name: filePath,
@@ -256,7 +332,7 @@ export class ObservationService {
       observations: [],
       properties: { path: filePath },
       tags: ['file'],
-      source: { type: 'conversation' },
+      source,
     });
   }
 
@@ -288,6 +364,7 @@ export class ObservationService {
     this.counters.promoted_entities_total += result.promotion.promotedEntities;
     this.conversationBySession.delete(sessionId);
     this.projectBySession.delete(sessionId);
+    this.currentAuthor.delete(sessionId);
 
     // Opportunistic GC of stale session namespaces.
     try {
@@ -319,6 +396,181 @@ export class ObservationService {
   /** Used by the rate-limit middleware to count drops. */
   noteRateLimitDrop(): void {
     this.counters.hook_events_dropped_ratelimit++;
+  }
+
+  /**
+   * Dedup a file-change batch by idempotencyKey — true if this is a new
+   * batch, false if we've already seen it within the dedup window.
+   * Window is a rolling 5-minute cache (enough for hook retries + webhook
+   * redeliveries; idempotencyKey itself is mtime-based so stale retries
+   * never collide across batches).
+   */
+  private shouldAcceptBatch(key: string): boolean {
+    const now = Date.now();
+    const expiry = now - 5 * 60_000;
+    for (const [k, seenAt] of this.seenIdempotencyKeys) {
+      if (seenAt < expiry) this.seenIdempotencyKeys.delete(k);
+    }
+    if (this.seenIdempotencyKeys.has(key)) return false;
+    this.seenIdempotencyKeys.set(key, now);
+    return true;
+  }
+
+  handleFileChange(payload: FileChangePayload): { accepted: boolean; eventId?: string } {
+    this.counters.file_change_batches_total++;
+    if (!this.shouldAcceptBatch(payload.idempotencyKey)) {
+      this.counters.file_change_batches_dedup++;
+      return { accepted: false };
+    }
+    const actor = payload.author?.canonicalEmail;
+    const source: EntitySource = actor
+      ? { type: 'watch', ref: payload.repo, actor }
+      : { type: 'watch', ref: payload.repo };
+
+    const branchContext: BranchContext = {
+      branch: payload.branch,
+      status: 'wip',
+      mrIid: null,
+      mergedAt: null,
+    };
+
+    const event = this.brain.entities.create({
+      type: 'event',
+      name: `file-edit:${payload.branch}@${payload.batchedAt}`,
+      namespace: payload.namespace,
+      observations: payload.changes.map((c) => `${c.kind} ${c.path}`),
+      properties: {
+        branchContext,
+        repo: payload.repo,
+        batchedAt: payload.batchedAt,
+        changeCount: payload.changes.length,
+        idempotencyKey: payload.idempotencyKey,
+      },
+      tags: ['file-edit', `branch:${payload.branch}`],
+      source,
+    });
+
+    for (const change of payload.changes) {
+      const file = this.upsertFileEntity(payload.namespace, change.path, actor);
+      // Stamp the file entity with latest branchContext so branch-aware queries
+      // find it even without going through the event.
+      this.brain.entities.update(file.id, {
+        properties: {
+          ...(file.properties ?? {}),
+          branchContext,
+          lastSeenPath: change.path,
+        },
+      });
+      this.brain.relations.create({
+        type: 'touches_file',
+        sourceId: event.id,
+        targetId: file.id,
+        namespace: payload.namespace,
+        properties: { kind: change.kind, mtime: change.mtime, branchContext },
+        source,
+      });
+    }
+    return { accepted: true, eventId: event.id };
+  }
+
+  handleBranchChange(payload: BranchChangePayload): { branchEntityId: string } {
+    this.counters.branch_change_events_total++;
+    const actor = payload.author?.canonicalEmail;
+    const source: EntitySource = actor
+      ? { type: 'git-hook', ref: payload.repo, actor }
+      : { type: 'git-hook', ref: payload.repo };
+
+    const toEntity = this.upsertBranchEntity(payload.namespace, payload.to, payload.headSha, actor);
+    const fromEntity = this.upsertBranchEntity(payload.namespace, payload.from, undefined, actor);
+
+    this.brain.relations.create({
+      type: 'preceded_by',
+      sourceId: toEntity.id,
+      targetId: fromEntity.id,
+      namespace: payload.namespace,
+      properties: { at: payload.timestamp ?? this.now() },
+      source,
+    });
+
+    return { branchEntityId: toEntity.id };
+  }
+
+  handleGitEvent(payload: GitEventPayload): { eventId: string } {
+    this.counters.git_events_total++;
+    const actor = payload.author?.canonicalEmail;
+    const source: EntitySource = actor
+      ? { type: 'git-hook', ref: payload.repo, actor }
+      : { type: 'git-hook', ref: payload.repo };
+
+    const branchContext: BranchContext = {
+      branch: payload.branch,
+      status: 'wip',
+      mrIid: null,
+      mergedAt: null,
+    };
+    const branchEntity = this.upsertBranchEntity(
+      payload.namespace,
+      payload.branch,
+      payload.headSha,
+      actor,
+    );
+
+    const event = this.brain.entities.create({
+      type: 'event',
+      name: `git-${payload.kind}:${payload.headSha.slice(0, 8)}`,
+      namespace: payload.namespace,
+      observations: payload.message ? [payload.message] : [],
+      properties: {
+        branchContext,
+        headSha: payload.headSha,
+        kind: payload.kind,
+        repo: payload.repo,
+        at: payload.timestamp ?? this.now(),
+      },
+      tags: [`git-${payload.kind}`, `branch:${payload.branch}`],
+      source,
+    });
+    this.brain.relations.create({
+      type: 'relates_to',
+      sourceId: event.id,
+      targetId: branchEntity.id,
+      namespace: payload.namespace,
+      properties: { branchContext },
+      source,
+    });
+    return { eventId: event.id };
+  }
+
+  private upsertBranchEntity(
+    ns: string,
+    name: string,
+    headSha?: string,
+    actor?: string,
+  ): Entity {
+    const matches = this.brain.entities.findByName(name, ns);
+    const existing = matches.find((e) => e.type === 'branch' && e.name === name);
+    const source: EntitySource = actor
+      ? { type: 'git-hook', actor }
+      : { type: 'git-hook' };
+    if (existing) {
+      if (headSha && existing.properties.headSha !== headSha) {
+        return (
+          this.brain.entities.update(existing.id, {
+            properties: { ...(existing.properties ?? {}), headSha },
+          }) ?? existing
+        );
+      }
+      return existing;
+    }
+    return this.brain.entities.create({
+      type: 'branch',
+      name,
+      namespace: ns,
+      observations: [],
+      properties: headSha ? { headSha } : {},
+      tags: ['branch'],
+      source,
+    });
   }
 }
 

@@ -10,12 +10,33 @@ export const ENTITY_TYPES = [
   'fact',
   'conversation',
   'reference',
+  'pull_request',
+  'merge_request',
+  'branch',
+  'review',
 ] as const;
 
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
+export const ENTITY_SOURCE_TYPES = [
+  'git',
+  'ast',
+  'conversation',
+  'github',
+  'gitlab',
+  'manual',
+  'doc',
+  'inferred',
+  'personality',
+  'watch',
+  'git-hook',
+  'hook',
+] as const;
+
+export type EntitySourceType = (typeof ENTITY_SOURCE_TYPES)[number];
+
 export interface EntitySource {
-  type: 'git' | 'ast' | 'conversation' | 'github' | 'gitlab' | 'manual' | 'doc' | 'inferred';
+  type: EntitySourceType;
   ref?: string;
   actor?: string;
 }
@@ -72,4 +93,8 @@ export const DECAY_RATES: Record<EntityType, number> = {
   fact: 0.01,
   conversation: 0.05,
   reference: 0.001,
+  pull_request: 0.001,
+  merge_request: 0.001,
+  branch: 0.0,
+  review: 0.005,
 };
