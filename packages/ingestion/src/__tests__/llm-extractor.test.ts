@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { CreateEntityInput } from '@second-brain/types';
 
 const generateObjectMock = vi.fn();
 
@@ -140,7 +141,7 @@ describe('LLMCollector', () => {
       namespace: 'personal',
       ignorePatterns: [],
     });
-    expect(result.entities.map((e) => e.name)).toEqual(['Fact A', 'Fact B']);
+    expect(result.entities.map((e: CreateEntityInput) => e.name)).toEqual(['Fact A', 'Fact B']);
     expect(result.entities[0].source.ref).toBe('spec.md');
   });
 });

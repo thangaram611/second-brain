@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import { Brain, exportJson, exportJsonLd, exportDot, importGraph, VectorSearchChannel } from '@second-brain/core';
+import { Brain, exportJson, exportJsonLd, exportDot, importGraph, VectorSearchChannel, createLogger } from '@second-brain/core';
 import type { EntityType, CreateEntityInput } from '@second-brain/types';
 import { ENTITY_TYPES } from '@second-brain/types';
 import {
@@ -11,18 +11,21 @@ import {
   DocCollector,
   ConversationCollector,
   GitHubCollector,
-  LLMExtractor,
-  EmbeddingGenerator,
   EmbedPipeline,
   resolveLLMConfig,
-} from '@second-brain/ingestion';
-import type { PipelineProgress } from '@second-brain/ingestion';
+  tryCreateLLMExtractor,
+  tryCreateEmbeddingGenerator,
+  createWatcher,
+} from '@second-brain/collectors';
+import type { PipelineProgress } from '@second-brain/collectors';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
 const DEFAULT_DB_DIR = path.join(os.homedir(), '.second-brain');
 const DEFAULT_DB_PATH = path.join(DEFAULT_DB_DIR, 'personal.db');
+
+const cliLogger = createLogger('cli');
 
 function getDbPath(): string {
   return process.env.BRAIN_DB_PATH ?? DEFAULT_DB_PATH;
@@ -44,32 +47,29 @@ program
   .description('Second Brain — developer knowledge graph CLI')
   .version('0.1.0');
 
+// --- brain reset ---
+program
+  .command('reset')
+  .description('Undo init: remove ~/.second-brain (with confirmation), optionally restore ~/.claude.json')
+  .option('-y, --yes', 'Non-interactive: proceed without confirmation')
+  .option('--wire-claude', 'Also restore ~/.claude.json from its most recent backup')
+  .option('--dir <path>', 'Override brain directory (defaults to ~/.second-brain)')
+  .action(async (options: { yes?: boolean; wireClaude?: boolean; dir?: string }) => {
+    const { runReset } = await import('./reset.js');
+    await runReset(options);
+  });
+
 // --- brain init ---
 program
   .command('init')
-  .description('Initialize a new brain')
-  .option('-p, --project <name>', 'Initialize as a project brain')
+  .description('Initialize a new brain (interactive wizard)')
+  .option('-p, --project <name>', 'Default namespace')
   .option('--db <path>', 'Custom database path')
-  .action((options: { project?: string; db?: string }) => {
-    const dbPath = options.db ?? DEFAULT_DB_PATH;
-    const dir = path.dirname(dbPath);
-
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-
-    if (fs.existsSync(dbPath)) {
-      console.log(`Brain already exists at ${dbPath}`);
-      return;
-    }
-
-    const brain = new Brain({ path: dbPath });
-    brain.close();
-
-    console.log(`Brain initialized at ${dbPath}`);
-    if (options.project) {
-      console.log(`Project namespace: ${options.project}`);
-    }
+  .option('-y, --yes', 'Non-interactive: accept defaults (ollama, personal namespace)')
+  .option('--wire-claude', 'Opt-in: patch ~/.claude.json with the MCP server entry')
+  .action(async (options: { project?: string; db?: string; yes?: boolean; wireClaude?: boolean }) => {
+    const { runInit } = await import('./init.js');
+    await runInit(options);
   });
 
 // --- brain add ---
@@ -348,13 +348,15 @@ indexCmd
     try {
       const repoPath = path.resolve(options.repo);
       const runner = new PipelineRunner(brain);
-      const collector = options.enrich
-        ? new DocCollector({
-            watchPaths: options.path,
-            llmEnrich: true,
-            extractor: new LLMExtractor(resolveLLMConfig()),
-          })
-        : new DocCollector({ watchPaths: options.path });
+      let collector: DocCollector;
+      if (options.enrich) {
+        const extractor = tryCreateLLMExtractor(resolveLLMConfig(), { logger: cliLogger });
+        collector = extractor
+          ? new DocCollector({ watchPaths: options.path, llmEnrich: true, extractor })
+          : new DocCollector({ watchPaths: options.path });
+      } else {
+        collector = new DocCollector({ watchPaths: options.path });
+      }
       runner.register(collector);
 
       const summary = await runner.run({
@@ -380,12 +382,18 @@ indexCmd
   .action(async (options: { namespace: string; source?: string; file?: string; max: string }) => {
     const brain = openBrain();
     try {
+      const convExtractor = tryCreateLLMExtractor(resolveLLMConfig(), { logger: cliLogger });
+      if (!convExtractor) {
+        console.error('Conversation indexing requires a working LLM. Configure one with `brain init` and re-run.');
+        process.exitCode = 1;
+        return;
+      }
       const runner = new PipelineRunner(brain);
       runner.register(
         new ConversationCollector({
           source: options.source,
           file: options.file,
-          extractor: new LLMExtractor(resolveLLMConfig()),
+          extractor: convExtractor,
           maxConversations: parseInt(options.max, 10),
         }),
       );
@@ -418,6 +426,9 @@ indexCmd
       const stateOpt = options.state === 'open' || options.state === 'closed' || options.state === 'all'
         ? options.state
         : 'all';
+      const ghExtractor = options.enrich
+        ? tryCreateLLMExtractor(resolveLLMConfig(), { logger: cliLogger })
+        : undefined;
       runner.register(
         new GitHubCollector({
           repo: options.repo,
@@ -425,7 +436,7 @@ indexCmd
           maxPRs: parseInt(options.maxPrs, 10),
           maxIssues: parseInt(options.maxIssues, 10),
           state: stateOpt,
-          extractor: options.enrich ? new LLMExtractor(resolveLLMConfig()) : undefined,
+          ...(ghExtractor ? { extractor: ghExtractor } : {}),
         }),
       );
       const summary = await runner.run({
@@ -437,6 +448,61 @@ indexCmd
     } finally {
       brain.close();
     }
+  });
+
+// --- brain watch ---
+program
+  .command('watch')
+  .description('Watch a repository and re-index on change (AST + docs)')
+  .option('-n, --namespace <namespace>', 'Namespace', 'personal')
+  .option('--repo <path>', 'Repository path', '.')
+  .option('--debounce <ms>', 'Debounce window for batched changes', '500')
+  .action(async (options: { namespace: string; repo: string; debounce: string }) => {
+    const repoPath = path.resolve(options.repo);
+    const debounceMs = parseInt(options.debounce, 10);
+
+    const runIndex = async (reason: string): Promise<void> => {
+      const brain = openBrain();
+      try {
+        const runner = new PipelineRunner(brain);
+        runner.register(new ASTCollector());
+        runner.register(new DocCollector({ watchPaths: ['.'] }));
+        const summary = await runner.run({
+          namespace: options.namespace,
+          repoPath,
+          ignorePatterns: ['node_modules', 'dist', '.git', '.turbo', 'coverage'],
+          onProgress: () => {},
+        });
+        console.log(
+          `[${new Date().toISOString()}] ${reason} → ${summary.entitiesCreated} entities, ${summary.relationsCreated} relations (${summary.durationMs}ms)`,
+        );
+      } finally {
+        brain.close();
+      }
+    };
+
+    console.log(`Watching ${repoPath} (debounce ${debounceMs}ms). Ctrl-C to stop.`);
+    await runIndex('initial index');
+
+    const handle = createWatcher({
+      roots: [repoPath],
+      debounceMs,
+      onBatch: async (batch) => {
+        await runIndex(`re-index after ${batch.length} change(s)`);
+      },
+      onError: (err) => console.error('[watch]', err),
+    });
+    await handle.ready;
+
+    const shutdown = async (): Promise<void> => {
+      await handle.close();
+      process.exit(0);
+    };
+    process.on('SIGINT', () => void shutdown());
+    process.on('SIGTERM', () => void shutdown());
+
+    // Keep process alive.
+    await new Promise(() => {});
   });
 
 // --- brain embed ---
@@ -451,7 +517,12 @@ program
     const brain = new Brain({ path: getDbPath(), vectorDimensions: dims });
     try {
       const cfg = resolveLLMConfig();
-      const generator = new EmbeddingGenerator(cfg);
+      const generator = tryCreateEmbeddingGenerator(cfg, { logger: cliLogger });
+      if (!generator) {
+        console.error('Embeddings require a provider with an API key (or ollama running locally). Nothing to do.');
+        process.exitCode = 1;
+        return;
+      }
       const pipeline = new EmbedPipeline(brain, generator, {
         namespace: options.namespace,
         batchSize: parseInt(options.batchSize, 10),
@@ -553,25 +624,30 @@ program
       let usedLlm = false;
       try {
         const cfg = resolveLLMConfig();
-        const extractor = new LLMExtractor(cfg, {
+        const extractor = tryCreateLLMExtractor(cfg, {
+          logger: cliLogger,
           systemPrompt: 'Extract 1-3 short search keywords from this question as entity names.',
           maxInputChars: 1000,
         });
-        const probe = await extractor.extract(question, {
-          namespace: options.namespace,
-          source: { type: 'manual' },
-        });
-        if (probe.entities.length > 0) {
-          queryText = probe.entities.map((e) => e.name).join(' ');
-          usedLlm = true;
+        if (extractor) {
+          const probe = await extractor.extract(question, {
+            namespace: options.namespace,
+            source: { type: 'manual' },
+          });
+          if (probe.entities.length > 0) {
+            queryText = probe.entities.map((e) => e.name).join(' ');
+            usedLlm = true;
+          }
         }
         if (options.vector && brain.embeddings !== null && !brain.search.hasVectorChannel()) {
-          const generator = new EmbeddingGenerator(cfg);
-          brain.search.setVectorChannel(
-            new VectorSearchChannel(brain.embeddings, brain.entities, (q) =>
-              generator.generateOne(q),
-            ),
-          );
+          const generator = tryCreateEmbeddingGenerator(cfg, { logger: cliLogger });
+          if (generator) {
+            brain.search.setVectorChannel(
+              new VectorSearchChannel(brain.embeddings, brain.entities, (q) =>
+                generator.generateOne(q),
+              ),
+            );
+          }
         }
       } catch {
         // No LLM → plain FTS.

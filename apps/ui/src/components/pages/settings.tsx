@@ -3,6 +3,7 @@ import { Database, Server, Cpu, RefreshCw, Users } from 'lucide-react';
 import { useStatsStore } from '../../store/stats-store.js';
 import { useSyncStore } from '../../store/sync-store.js';
 import { Card } from '../ui/card.js';
+import { EmbeddingStatusPanel } from '../embedding-status-panel.js';
 import type { SyncConnectionState } from '../../lib/types.js';
 
 function SyncDot({ state }: { state: SyncConnectionState }) {
@@ -82,6 +83,8 @@ export function SettingsPage() {
             </div>
           </dl>
         </Card>
+
+        <EmbeddingStatusPanel />
 
         <Card>
           <h2 className="mb-3 flex items-center gap-2 font-medium text-zinc-200">

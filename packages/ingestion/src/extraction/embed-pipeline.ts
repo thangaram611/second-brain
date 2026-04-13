@@ -1,6 +1,6 @@
 import type { Brain } from '@second-brain/core';
 import type { Entity } from '@second-brain/types';
-import { computeContentHash } from '../ast/content-hash.js';
+import { computeContentHash } from '../content-hash.js';
 import { EmbeddingGenerator } from './embedding-generator.js';
 
 export interface EmbedPipelineOptions {

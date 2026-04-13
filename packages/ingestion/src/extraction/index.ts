@@ -14,3 +14,10 @@ export { LLMExtractor } from './llm-extractor.js';
 export type { LLMExtractorOptions, ExtractContext, ExtractedShape } from './llm-extractor.js';
 export { LLMCollector } from './llm-collector.js';
 export type { LLMCollectorInput, LLMCollectorOptions } from './llm-collector.js';
+export {
+  tryCreateLLMExtractor,
+  tryCreateEmbeddingGenerator,
+  chatProviderRequiresKey,
+  embeddingProviderRequiresKey,
+} from './factory.js';
+export type { DegradationLogger } from './factory.js';

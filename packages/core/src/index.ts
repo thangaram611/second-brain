@@ -14,4 +14,8 @@ export { rawRowToEntity, rawRowToRelation } from './temporal/index.js';
 export { EmbeddingStore } from './embeddings/index.js';
 export type { EmbeddingMeta, KnnHit, KnnSearchOptions } from './embeddings/index.js';
 export { loadSqliteVec, createVecTable, recreateVecTable } from './storage/index.js';
+export { runMigrations, ALL_MIGRATIONS } from './storage/migrations/index.js';
+export type { Migration } from './storage/migrations/index.js';
+export { createLogger } from './logging.js';
+export type { Logger, LogLevel } from './logging.js';
 export * from './io/index.js';

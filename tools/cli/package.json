@@ -1,26 +1,51 @@
 {
   "name": "@second-brain/cli",
   "version": "0.1.0",
+  "description": "CLI for second-brain — a local-first developer knowledge graph.",
   "private": true,
   "type": "module",
+  "license": "MIT",
   "bin": {
+    "second-brain": "./dist/index.mjs",
     "brain": "./dist/index.mjs"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "knowledge-graph",
+    "second-brain",
+    "cli",
+    "mcp",
+    "developer-tools"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": false
   },
   "scripts": {
     "build": "tsdown src/index.ts --format esm --dts",
     "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "check-types": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@clack/prompts": "^0.11.0",
     "@second-brain/core": "workspace:*",
+    "@second-brain/collectors": "workspace:*",
     "@second-brain/ingestion": "workspace:*",
     "@second-brain/types": "workspace:*",
-    "commander": "^14.0.3"
+    "commander": "^14.0.3",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "tsdown": "^0.21.0",
     "tsx": "^4.19.0",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.4"
   }
 }

@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "main": "./dist/index.mjs",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsdown src/index.ts --format esm --dts",
     "dev": "tsx --watch src/index.ts",

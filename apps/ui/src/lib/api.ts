@@ -221,4 +221,59 @@ export const api = {
       return request<PeerInfo[]>(`/sync/peers/${encodeURIComponent(namespace)}`);
     },
   },
+
+  // --- Admin / Phase 7 ---
+
+  query(params: { question: string; namespace?: string; limit?: number }) {
+    return request<{
+      question: string;
+      interpreted: string | null;
+      results: SearchResult[];
+    }>('/query', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  },
+
+  import(params: {
+    content: string;
+    format: 'json' | 'json-ld';
+    strategy?: 'replace' | 'merge' | 'upsert';
+    namespace?: string;
+  }) {
+    return request<{
+      entitiesImported: number;
+      relationsImported: number;
+      conflicts: Array<{ entityType: string; entityName: string; reason: string }>;
+    }>('/import', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  },
+
+  embeddingStatus() {
+    return request<{
+      vectorEnabled: boolean;
+      byNamespace: Array<{
+        namespace: string;
+        total: number;
+        embedded: number;
+        coverage: number;
+      }>;
+    }>('/embeddings/status');
+  },
+
+  rebuildEmbeddings(params?: { namespace?: string; batchSize?: number; dimensions?: number }) {
+    return request<{
+      ok: boolean;
+      model: string;
+      embedded: number;
+      skipped: number;
+      errors: number;
+      durationMs: number;
+    }>('/rebuild-embeddings', {
+      method: 'POST',
+      body: JSON.stringify(params ?? {}),
+    });
+  },
 };

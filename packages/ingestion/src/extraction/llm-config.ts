@@ -27,8 +27,7 @@ export const LLMConfigSchema = z
   })
   .superRefine((cfg, ctx) => {
     const embProvider = cfg.embeddingProvider ?? cfg.provider;
-    // Cast through unknown — the runtime guard is intentional, the goal is
-    // to reject 'anthropic' as an embedding provider with a clear error.
+    // Runtime guard — the goal is to reject 'anthropic' as an embedding provider with a clear error.
     if ((EMBEDDING_PROVIDERS as readonly string[]).indexOf(embProvider) === -1) {
       ctx.addIssue({
         code: 'custom',

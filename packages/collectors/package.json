@@ -1,0 +1,38 @@
+{
+  "name": "@second-brain/collectors",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsdown src/index.ts --format esm --dts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check-types": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@octokit/rest": "^22.0.1",
+    "@second-brain/core": "workspace:*",
+    "@second-brain/ingestion": "workspace:*",
+    "@second-brain/types": "workspace:*",
+    "chokidar": "^4.0.3",
+    "simple-git": "^3.27.0",
+    "tree-sitter-wasms": "^0.1.13",
+    "web-tree-sitter": "^0.25.10",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "ai": "^6.0.158",
+    "tsdown": "^0.21.0",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.4"
+  }
+}

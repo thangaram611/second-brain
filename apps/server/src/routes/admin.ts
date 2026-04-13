@@ -8,12 +8,15 @@ import {
   type Brain,
   type ExportFormat,
 } from '@second-brain/core';
+import { createLogger } from '@second-brain/core';
 import {
   resolveLLMConfig,
-  EmbeddingGenerator,
   EmbedPipeline,
-  LLMExtractor,
-} from '@second-brain/ingestion';
+  tryCreateLLMExtractor,
+  tryCreateEmbeddingGenerator,
+} from '@second-brain/collectors';
+
+const serverLogger = createLogger('server.admin');
 import {
   ExportGraphSchema,
   ImportGraphSchema,
@@ -35,6 +38,30 @@ export function adminRoutes(brain: Brain): Router {
   router.post('/api/reindex', (_req, res) => {
     brain.storage.sqlite.exec("INSERT INTO entities_fts(entities_fts) VALUES('rebuild')");
     res.json({ ok: true });
+  });
+
+  router.get('/api/embeddings/status', (_req, res) => {
+    const rows = brain.storage.sqlite
+      .prepare(
+        `SELECT
+           e.namespace AS namespace,
+           COUNT(*) AS total,
+           SUM(CASE WHEN emb.entity_id IS NOT NULL THEN 1 ELSE 0 END) AS embedded
+         FROM entities e
+         LEFT JOIN embeddings emb ON emb.entity_id = e.id
+         GROUP BY e.namespace
+         ORDER BY e.namespace`,
+      )
+      .all() as Array<{ namespace: string; total: number; embedded: number }>;
+    res.json({
+      vectorEnabled: brain.embeddings !== null,
+      byNamespace: rows.map((r) => ({
+        namespace: r.namespace,
+        total: r.total,
+        embedded: r.embedded,
+        coverage: r.total > 0 ? r.embedded / r.total : 0,
+      })),
+    });
   });
 
   router.post('/api/export', (req, res) => {
@@ -73,7 +100,14 @@ export function adminRoutes(brain: Brain): Router {
       }
       brain.enableVectorSearch(opts.dimensions);
     }
-    const generator = new EmbeddingGenerator(cfg);
+    const generator = tryCreateEmbeddingGenerator(cfg, { logger: serverLogger });
+    if (!generator) {
+      res.status(400).json({
+        error:
+          'Embedding provider requires an API key. Set BRAIN_EMBEDDING_API_KEY or BRAIN_LLM_API_KEY and retry.',
+      });
+      return;
+    }
     const pipeline = new EmbedPipeline(brain, generator, {
       namespace: opts.namespace,
       batchSize: opts.batchSize,
@@ -100,18 +134,21 @@ export function adminRoutes(brain: Brain): Router {
     let usedLlm = false;
     try {
       const cfg = resolveLLMConfig();
-      const extractor = new LLMExtractor(cfg, {
+      const extractor = tryCreateLLMExtractor(cfg, {
+        logger: serverLogger,
         systemPrompt:
           'Extract 1-3 short search keywords from the user question. Output as entity names; the type field is irrelevant. Do NOT invent relations.',
         maxInputChars: 1000,
       });
-      const probe = await extractor.extract(opts.question, {
-        namespace: opts.namespace,
-        source: { type: 'manual' },
-      });
-      if (probe.entities.length > 0) {
-        queryText = probe.entities.map((e) => e.name).join(' ');
-        usedLlm = true;
+      if (extractor) {
+        const probe = await extractor.extract(opts.question, {
+          namespace: opts.namespace,
+          source: { type: 'manual' },
+        });
+        if (probe.entities.length > 0) {
+          queryText = probe.entities.map((e) => e.name).join(' ');
+          usedLlm = true;
+        }
       }
     } catch {
       // No LLM → fall back to plain FTS.

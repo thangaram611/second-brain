@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import express from 'express';
 import { WebSocketServer } from 'ws';
@@ -27,6 +28,23 @@ app.use(createAuthRouter(AUTH_SECRET));
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
+
+// --- Optional static UI (opt-in for single-image deployments) ---
+// When SERVE_UI=true the relay also serves the built UI assets. Path is
+// configurable via UI_DIST_DIR (defaults to /ui-dist, matching the Dockerfile).
+// SPA fallback routes unknown paths to index.html so react-router works.
+if (process.env.SERVE_UI === 'true') {
+  const uiDir = process.env.UI_DIST_DIR ?? '/ui-dist';
+  if (!fs.existsSync(path.join(uiDir, 'index.html'))) {
+    console.error(`[relay] SERVE_UI=true but no index.html at ${uiDir}`);
+    process.exit(1);
+  }
+  app.use(express.static(uiDir, { index: false }));
+  app.get(/^\/(?!health|auth|api\/).*/, (_req, res) => {
+    res.sendFile(path.join(uiDir, 'index.html'));
+  });
+  console.log(`[relay] Serving UI from ${uiDir}`);
+}
 
 // --- Hocuspocus relay server ---
 

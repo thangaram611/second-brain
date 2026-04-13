@@ -15,7 +15,7 @@ export const ENTITY_TYPES = [
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
 export interface EntitySource {
-  type: 'git' | 'ast' | 'conversation' | 'github' | 'manual' | 'doc' | 'inferred';
+  type: 'git' | 'ast' | 'conversation' | 'github' | 'gitlab' | 'manual' | 'doc' | 'inferred';
   ref?: string;
   actor?: string;
 }

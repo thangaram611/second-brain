@@ -1,6 +1,11 @@
-// Pipeline
-export { PipelineRunner } from './pipeline/index.js';
-export { resolveRelations } from './pipeline/index.js';
+// Content hash utility (shared across ingestion packages)
+export { computeContentHash } from './content-hash.js';
+
+// Network helpers (retry with exponential backoff + jitter)
+export { withRetry, defaultShouldRetry, computeBackoff } from './net/retry.js';
+export type { RetryOptions } from './net/retry.js';
+
+// Pipeline types (Collector interface + pipeline data shapes)
 export type {
   Collector,
   ExtractionResult,
@@ -9,18 +14,7 @@ export type {
   PipelineProgress,
   PipelineRunSummary,
   ProgressCallback,
-} from './pipeline/index.js';
-
-// Collectors
-export { GitCollector } from './git/index.js';
-export type { GitCollectorOptions } from './git/index.js';
-export { ASTCollector } from './ast/index.js';
-export { GitHubCollector } from './github/index.js';
-export type { GitHubCollectorOptions } from './github/index.js';
-export { GitHubPRSchema, GitHubIssueSchema, GitHubReviewSchema } from './github/index.js';
-export type { GitHubPR, GitHubIssue, GitHubReview } from './github/index.js';
-export * from './conversation/index.js';
-export * from './docs/index.js';
+} from './pipeline/types.js';
 
 // LLM extraction + embeddings
 export {
@@ -34,6 +28,10 @@ export {
   EmbedPipeline,
   LLMExtractor,
   LLMCollector,
+  tryCreateLLMExtractor,
+  tryCreateEmbeddingGenerator,
+  chatProviderRequiresKey,
+  embeddingProviderRequiresKey,
 } from './extraction/index.js';
 export type {
   LLMConfig,
@@ -49,4 +47,5 @@ export type {
   ExtractedShape,
   LLMCollectorInput,
   LLMCollectorOptions,
+  DegradationLogger,
 } from './extraction/index.js';

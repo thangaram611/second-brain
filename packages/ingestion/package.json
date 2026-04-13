@@ -21,14 +21,10 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.69",
     "@ai-sdk/openai": "^3.0.52",
-    "@octokit/rest": "^22.0.1",
     "@second-brain/core": "workspace:*",
     "@second-brain/types": "workspace:*",
     "ai": "^6.0.158",
     "ai-sdk-ollama": "^3.8.3",
-    "simple-git": "^3.27.0",
-    "tree-sitter-wasms": "^0.1.13",
-    "web-tree-sitter": "^0.24.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

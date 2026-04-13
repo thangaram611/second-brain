@@ -1,12 +1,29 @@
 {
   "name": "@second-brain/mcp-server",
   "version": "0.1.0",
+  "description": "MCP server exposing the second-brain knowledge graph to LLM clients (Claude Code, etc.).",
   "private": true,
   "type": "module",
+  "license": "MIT",
   "main": "./dist/index.mjs",
   "types": "./dist/index.d.mts",
   "bin": {
     "second-brain-mcp": "./dist/stdio.mjs"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "knowledge-graph",
+    "second-brain"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": false
   },
   "exports": {
     ".": {

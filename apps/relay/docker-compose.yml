@@ -1,0 +1,22 @@
+services:
+  relay:
+    build:
+      # Build context is the repo root so the Dockerfile can see the monorepo.
+      context: ../..
+      dockerfile: apps/relay/Dockerfile
+    image: second-brain-app:${TAG:-local}
+    container_name: second-brain
+    ports:
+      - "${RELAY_PORT:-7421}:7421"
+    environment:
+      RELAY_AUTH_SECRET: ${RELAY_AUTH_SECRET:?RELAY_AUTH_SECRET is required}
+      RELAY_PERSIST_DIR: /data
+      # Set SERVE_UI=false to run as a pure relay without the UI.
+      SERVE_UI: ${SERVE_UI:-true}
+    volumes:
+      - relay-data:/data
+    restart: unless-stopped
+
+volumes:
+  relay-data:
+    driver: local
