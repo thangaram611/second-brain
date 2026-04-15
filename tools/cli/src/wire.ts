@@ -1,9 +1,12 @@
 import { execFileSync } from 'node:child_process';
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { z } from 'zod';
+import lockfile from 'proper-lockfile';
 import { canonicalizeEmail } from '@second-brain/types';
+import { GitLabProvider, resolveGitLabProject, mintRelayChannel } from '@second-brain/collectors';
 
 const ProjectConfigSchema = z.object({ namespace: z.string().min(1).optional() }).passthrough();
 import {
@@ -18,6 +21,7 @@ import {
   saveWiredRepos,
   type WiredReposEntry,
 } from './git-context-daemon.js';
+import { storeSecret } from './keychain.js';
 
 export interface WireOptions {
   /** Repo root. Defaults to `git rev-parse --show-toplevel` from cwd. */
@@ -36,6 +40,31 @@ export interface WireOptions {
   skipIfClaudeMem?: boolean;
   /** Override `brain-hook` binary name. */
   hookCommand?: string;
+
+  // ── Phase 10.3 — provider setup ────────────────────────────────────────
+  /** Forge provider to wire. If omitted, provider setup is skipped. */
+  provider?: 'gitlab';
+  /** GitLab base URL (with or without `/api/v4` suffix). Auto-detected from
+      `git remote get-url origin` when omitted. */
+  gitlabBaseUrl?: string;
+  /** GitLab PAT. If omitted, falls back to `SECOND_BRAIN_GITLAB_TOKEN` env. */
+  gitlabToken?: string;
+  /** GitLab project path (`group/subgroup/project`). Auto-detected from
+      `git remote get-url origin` when omitted. */
+  gitlabProjectPath?: string;
+  /** Inject a provider instance for tests. */
+  gitlabProvider?: GitLabProvider;
+  /** Inject a fetch implementation for tests (project-resolve + relay mint). */
+  fetchImpl?: typeof fetch;
+}
+
+export interface ProviderWireResult {
+  provider: 'gitlab';
+  projectId: string;
+  webhookId: number;
+  webhookAlreadyExisted: boolean;
+  relayUrl: string;
+  baseUrl: string;
 }
 
 export interface WireResult {
@@ -49,6 +78,7 @@ export interface WireResult {
   gitHooks: InstallGitHooksResult;
   configPath: string;
   watchCommand: string;
+  providerResult?: ProviderWireResult;
 }
 
 function resolveRepoRoot(explicit?: string): string {
@@ -101,6 +131,34 @@ function resolveProjectNamespace(repoRoot: string): string | null {
 }
 
 export async function runWire(options: WireOptions = {}): Promise<WireResult> {
+  // ── Concurrent-wire guard (plan revision #4) ────────────────────────────
+  const configDir = path.join(os.homedir(), '.second-brain');
+  fs.mkdirSync(configDir, { recursive: true });
+  const lockPath = path.join(configDir, '.wire.lock');
+  // Ensure the lock file exists so `proper-lockfile` can acquire an
+  // exclusive lock on it without failing.
+  if (!fs.existsSync(lockPath)) fs.writeFileSync(lockPath, '', 'utf8');
+  let release: (() => Promise<void>) | null = null;
+  try {
+    release = await lockfile.lock(lockPath, {
+      realpath: false,
+      retries: 0,
+      stale: 60_000,
+    });
+  } catch (err) {
+    throw new Error(
+      `another wire operation is in progress (${err instanceof Error ? err.message : String(err)})`,
+    );
+  }
+
+  try {
+    return await runWireInternal(options);
+  } finally {
+    await release();
+  }
+}
+
+async function runWireInternal(options: WireOptions): Promise<WireResult> {
   const repoRoot = resolveRepoRoot(options.repo);
   const warnings: string[] = [];
 
@@ -153,14 +211,39 @@ export async function runWire(options: WireOptions = {}): Promise<WireResult> {
 
   const repoHash = computeRepoHash(repoRoot);
   const wired = loadWiredRepos();
-  const entry: WiredReposEntry = {
+  const baseEntry: WiredReposEntry = {
     repoHash,
     absPath: repoRoot,
     namespace,
     installedAt: new Date().toISOString(),
   };
-  wired.wiredRepos[repoHash] = entry;
+  wired.wiredRepos[repoHash] = baseEntry;
   saveWiredRepos(wired);
+
+  // ── Phase 10.3 — provider wiring (optional) ──────────────────────────
+  let providerResult: ProviderWireResult | undefined;
+  if (options.provider === 'gitlab') {
+    try {
+      providerResult = await wireGitLabProvider(repoRoot, options, warnings);
+      if (providerResult) {
+        const updated: WiredReposEntry = {
+          ...baseEntry,
+          providerId: 'gitlab',
+          projectId: providerResult.projectId,
+          gitlabBaseUrl: providerResult.baseUrl,
+          gitlabProjectId: providerResult.projectId,
+          webhookId: providerResult.webhookId,
+          relayUrl: providerResult.relayUrl,
+        };
+        wired.wiredRepos[repoHash] = updated;
+        saveWiredRepos(wired);
+      }
+    } catch (err) {
+      warnings.push(
+        `GitLab provider wiring failed: ${err instanceof Error ? err.message : String(err)}. Claude/git hooks are installed; you can retry with \`brain provider refresh gitlab\`.`,
+      );
+    }
+  }
 
   const configPath = path.join(os.homedir(), '.second-brain', 'config.json');
   const watchCommand = `brain watch --repo ${JSON.stringify(repoRoot)}`;
@@ -176,5 +259,116 @@ export async function runWire(options: WireOptions = {}): Promise<WireResult> {
     gitHooks,
     configPath,
     watchCommand,
+    providerResult,
   };
+}
+
+function readGitRemoteOrigin(repoRoot: string): string | null {
+  try {
+    const out = execFileSync('git', ['remote', 'get-url', 'origin'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      timeout: 2000,
+    }).trim();
+    return out.length > 0 ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extract `(host, projectPath)` from a git remote URL.
+ *   SSH  — git@host:group/subgroup/project.git → {host, path: 'group/subgroup/project'}
+ *   HTTPS — https://host/group/subgroup/project.git → same
+ */
+export function parseGitRemote(remote: string): { host: string; projectPath: string } | null {
+  const sshMatch = remote.match(/^[^@]+@([^:]+):(.+?)(?:\.git)?$/);
+  if (sshMatch) {
+    return { host: sshMatch[1], projectPath: sshMatch[2] };
+  }
+  const httpsMatch = remote.match(/^https?:\/\/([^/]+)\/(.+?)(?:\.git)?$/);
+  if (httpsMatch) {
+    return { host: httpsMatch[1], projectPath: httpsMatch[2] };
+  }
+  return null;
+}
+
+async function wireGitLabProvider(
+  repoRoot: string,
+  options: WireOptions,
+  warnings: string[],
+): Promise<ProviderWireResult | undefined> {
+  const remote = readGitRemoteOrigin(repoRoot);
+  const parsed = remote ? parseGitRemote(remote) : null;
+
+  const projectPath =
+    options.gitlabProjectPath ?? parsed?.projectPath;
+  if (!projectPath) {
+    warnings.push('could not infer GitLab project path from git remote; pass --gitlab-project-path');
+    return undefined;
+  }
+
+  const baseUrl = normalizeGitLabBaseUrl(
+    options.gitlabBaseUrl ?? (parsed ? `https://${parsed.host}` : 'https://gitlab.com'),
+  );
+
+  const pat = options.gitlabToken ?? process.env.SECOND_BRAIN_GITLAB_TOKEN ?? process.env.GITLAB_TOKEN;
+  if (!pat) {
+    warnings.push(
+      `no GitLab PAT provided (pass --gitlab-token or set SECOND_BRAIN_GITLAB_TOKEN); skipped webhook register for ${projectPath}.`,
+    );
+    return undefined;
+  }
+
+  const provider = options.gitlabProvider ?? new GitLabProvider({ fetchImpl: options.fetchImpl });
+  await provider.auth({ baseUrl, pat });
+  const project = await resolveGitLabProject({
+    baseUrl,
+    pat,
+    path: projectPath,
+    fetchImpl: options.fetchImpl,
+  });
+  const projectId = String(project.id);
+
+  const relayUrl = await mintRelayChannel({ fetchImpl: options.fetchImpl });
+  const secretValue = crypto.randomBytes(32).toString('hex');
+
+  // Persist the secret BEFORE hitting the forge — if register fails and
+  // we need to clean up, the caller can still find the key in the
+  // keychain. If keychain fails, we refuse to proceed (security rev #11).
+  const stored = await storeSecret(`gitlab.webhook-token:${projectId}`, secretValue);
+  if (!stored.ok && stored.reason === 'runtime-error') {
+    throw new Error(`keychain runtime error (${stored.message}); refusing to register webhook with a secret that can't be safely stored`);
+  }
+  // Also store PAT so unwire + watch can read it.
+  await storeSecret(`gitlab.pat:${hostOf(baseUrl)}`, pat);
+
+  const registration = await provider.registerWebhook({
+    provider: 'gitlab',
+    projectId,
+    relayUrl,
+    secret: { kind: 'token', value: secretValue },
+  });
+
+  return {
+    provider: 'gitlab',
+    projectId,
+    webhookId: registration.webhookId,
+    webhookAlreadyExisted: registration.alreadyExisted,
+    relayUrl,
+    baseUrl,
+  };
+}
+
+function normalizeGitLabBaseUrl(url: string): string {
+  const trimmed = url.replace(/\/+$/, '');
+  return trimmed.endsWith('/api/v4') ? trimmed : `${trimmed}/api/v4`;
+}
+
+function hostOf(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return baseUrl;
+  }
 }

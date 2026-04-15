@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { canonicalizeEmail, AuthorSchema, BranchContextSchema, BranchStatusPatchSchema } from '@second-brain/types';
+import {
+  canonicalizeEmail,
+  gitlabNoreplyEmail,
+  AuthorSchema,
+  BranchContextSchema,
+  BranchStatusPatchSchema,
+} from '@second-brain/types';
 
 describe('canonicalizeEmail', () => {
   it('unwraps GitHub noreply aliases', () => {
@@ -16,6 +22,26 @@ describe('canonicalizeEmail', () => {
 
   it('lowercases and trims plain emails', () => {
     expect(canonicalizeEmail('  Alice@Example.COM  ')).toBe('alice@example.com');
+  });
+
+  it('throws on empty input so callers never stamp empty source.actor', () => {
+    expect(() => canonicalizeEmail('')).toThrow();
+    expect(() => canonicalizeEmail('   ')).toThrow();
+  });
+});
+
+describe('gitlabNoreplyEmail', () => {
+  it('builds the canonical GitLab noreply address from a username', () => {
+    expect(gitlabNoreplyEmail('jdoe')).toBe('jdoe@users.noreply.gitlab.com');
+  });
+
+  it('lowercases the username portion', () => {
+    expect(gitlabNoreplyEmail('JaneDoe')).toBe('janedoe@users.noreply.gitlab.com');
+  });
+
+  it('result is stable under canonicalizeEmail round-trip', () => {
+    const built = gitlabNoreplyEmail('alice');
+    expect(canonicalizeEmail(built)).toBe(built);
   });
 });
 

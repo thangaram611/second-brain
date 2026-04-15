@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Brain } from '@second-brain/core';
-import { ENTITY_TYPES, RELATION_TYPES } from '@second-brain/types';
+import { BRANCH_STATUSES, ENTITY_TYPES, RELATION_TYPES } from '@second-brain/types';
 import type { EntityType, RelationType } from '@second-brain/types';
 
 export function registerWriteTools(mcp: McpServer, brain: Brain): void {
@@ -534,6 +534,48 @@ export function registerWriteTools(mcp: McpServer, brain: Brain): void {
           {
             type: 'text',
             text: `Contradiction dismissed (relation ${args.relationId} deleted).`,
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [{ type: 'text', text: `Error: ${(err as Error).message}` }],
+        isError: true,
+      };
+    }
+  });
+
+  // --- flip_branch_status ---
+  mcp.registerTool('flip_branch_status', {
+    description:
+      'Bulk-update branchContext.status on every entity and relation carrying a given branch. Admin escape hatch for when provider webhooks are unavailable or a local merge needs to be re-stamped.',
+    inputSchema: {
+      branch: z.string().min(1).describe('Branch name to flip (exact match on branchContext.branch)'),
+      status: z.enum(BRANCH_STATUSES).describe('New status: wip | merged | abandoned'),
+      mrIid: z.number().int().nullable().optional().describe('Optional MR/PR iid'),
+      mergedAt: z
+        .string()
+        .datetime()
+        .nullable()
+        .optional()
+        .describe('ISO timestamp when status=merged'),
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+    },
+  }, async (args) => {
+    try {
+      const result = brain.flipBranchStatus(args.branch, {
+        status: args.status,
+        mrIid: args.mrIid ?? null,
+        mergedAt: args.mergedAt ?? null,
+      });
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Flipped branch "${args.branch}" → ${args.status}. Updated entities=${result.updatedEntities}, relations=${result.updatedRelations}.`,
           },
         ],
       };

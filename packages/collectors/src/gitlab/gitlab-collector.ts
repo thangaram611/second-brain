@@ -1,3 +1,13 @@
+/**
+ * Legacy one-shot GitLab collector — predates Phase 10.3's
+ * `GitLabProvider` webhook pipeline. Still exported for external users
+ * of `@second-brain/collectors`; not called by the server / CLI runtime.
+ *
+ * Writes MRs as `type='reference'` with name `${project}!${iid}: ${title}`.
+ * Phase 10.3+ writes `type='merge_request'` via the new provider path,
+ * so the two entity shapes never co-exist for a given repo in practice.
+ * Do NOT call this from new code — use `GitLabProvider` instead.
+ */
 import type { CreateEntityInput, EntitySource } from '@second-brain/types';
 import type {
   Collector,

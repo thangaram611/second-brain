@@ -250,4 +250,65 @@ describe('EntityManager', () => {
       expect(brain.entities.listByBranchContext('feature/ghost')).toHaveLength(0);
     });
   });
+
+  describe('findByTypeAndProperty', () => {
+    it('matches on numeric property equality', () => {
+      brain.entities.create({
+        type: 'merge_request',
+        name: 'acme/repo!42',
+        namespace: 'proj',
+        properties: { iid: 42, projectId: 'acme/repo', title: 'Add feature' },
+        source: { type: 'gitlab' },
+      });
+      const rows = brain.entities.findByTypeAndProperty('merge_request', '$.iid', 42, 'proj');
+      expect(rows).toHaveLength(1);
+      expect(rows[0].name).toBe('acme/repo!42');
+    });
+
+    it('matches on string property equality', () => {
+      brain.entities.create({
+        type: 'merge_request',
+        name: 'acme/repo!7',
+        namespace: 'proj',
+        properties: { iid: 7, projectId: 'acme/repo' },
+        source: { type: 'gitlab' },
+      });
+      const rows = brain.entities.findByTypeAndProperty('merge_request', '$.projectId', 'acme/repo');
+      expect(rows).toHaveLength(1);
+    });
+
+    it('returns the same entity across title edits (stable key)', () => {
+      const mr = brain.entities.create({
+        type: 'merge_request',
+        name: 'acme/repo!11',
+        namespace: 'proj',
+        properties: { iid: 11, projectId: 'acme/repo', title: 'WIP: draft' },
+        source: { type: 'gitlab' },
+      });
+      brain.entities.update(mr.id, {
+        properties: { iid: 11, projectId: 'acme/repo', title: 'Release: v2' },
+      });
+      const rows = brain.entities.findByTypeAndProperty('merge_request', '$.iid', 11, 'proj');
+      expect(rows).toHaveLength(1);
+      expect(rows[0].id).toBe(mr.id);
+    });
+
+    it('returns [] when no entity matches', () => {
+      expect(
+        brain.entities.findByTypeAndProperty('merge_request', '$.iid', 999, 'proj'),
+      ).toHaveLength(0);
+    });
+
+    it('filters by type — same property on different type is ignored', () => {
+      brain.entities.create({
+        type: 'pull_request',
+        name: 'acme/repo#3',
+        namespace: 'proj',
+        properties: { iid: 3 },
+        source: { type: 'github' },
+      });
+      const rows = brain.entities.findByTypeAndProperty('merge_request', '$.iid', 3, 'proj');
+      expect(rows).toHaveLength(0);
+    });
+  });
 });

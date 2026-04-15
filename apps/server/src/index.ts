@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import type { WebhookSecret } from '@second-brain/collectors';
 import {
   getBrain,
   closeBrain,
@@ -8,12 +9,33 @@ import {
 } from './brain-instance.js';
 import { createApp } from './app.js';
 import { createWsServer, broadcast } from './ws/ws-server.js';
+import {
+  loadWiredReposForServer,
+  buildProviderNamespaceEntries,
+} from './lib/wired-repos-loader.js';
 
 const PORT = Number(process.env.BRAIN_API_PORT ?? 7430);
 
 const brain = getBrain();
 const syncManager = getSyncManager();
 const observations = getObservationService();
+
+// Phase 10.3 — seed ObservationService with wiredRepos namespace map so
+// mr-event deliveries can derive namespace server-side (rev #3).
+const wiredConfig = loadWiredReposForServer();
+for (const entry of buildProviderNamespaceEntries(wiredConfig)) {
+  observations.registerWiredProject(entry.provider, entry.projectId, entry.namespace);
+}
+
+// Build webhook-secret map from env (keychain is a CLI-side concern).
+// Format: SECOND_BRAIN_WEBHOOK_SECRET__<provider>__<projectId>=<token>
+const webhookSecrets = new Map<string, WebhookSecret>();
+for (const [envKey, envValue] of Object.entries(process.env)) {
+  const match = envKey.match(/^SECOND_BRAIN_WEBHOOK_SECRET__([a-z]+)__(.+)$/);
+  if (match && typeof envValue === 'string' && envValue.length > 0) {
+    webhookSecrets.set(`${match[1]}:${match[2]}`, { kind: 'token', value: envValue });
+  }
+}
 
 // Wire sync events to WS broadcast
 syncManager.onSyncEvent = (event) => {
@@ -36,6 +58,7 @@ const app = createApp(brain, {
   observations,
   observeOptions: {
     bearerToken: process.env.BRAIN_AUTH_TOKEN,
+    webhookSecrets,
   },
 });
 const server = createServer(app);

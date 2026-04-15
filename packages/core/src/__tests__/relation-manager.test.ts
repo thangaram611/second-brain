@@ -303,4 +303,56 @@ describe('RelationManager', () => {
       expect(brain.relations.count()).toBe(0);
     });
   });
+
+  describe('createOrGet', () => {
+    it('creates the relation on first call', () => {
+      const before = brain.relations.count();
+      const rel = brain.relations.createOrGet({
+        type: 'depends_on',
+        sourceId: entityA.id,
+        targetId: entityB.id,
+        source: { type: 'manual' },
+      });
+      expect(rel.id).toBeTruthy();
+      expect(brain.relations.count()).toBe(before + 1);
+    });
+
+    it('returns the existing row without creating a duplicate', () => {
+      const first = brain.relations.createOrGet({
+        type: 'depends_on',
+        sourceId: entityA.id,
+        targetId: entityB.id,
+        source: { type: 'manual' },
+      });
+      const before = brain.relations.count();
+      const second = brain.relations.createOrGet({
+        type: 'depends_on',
+        sourceId: entityA.id,
+        targetId: entityB.id,
+        source: { type: 'gitlab', actor: 'late-writer' },
+        weight: 0.5,
+      });
+      expect(second.id).toBe(first.id);
+      expect(second.source.actor).toBe(first.source.actor ?? undefined);
+      expect(second.weight).toBe(first.weight);
+      expect(brain.relations.count()).toBe(before);
+    });
+
+    it('scopes uniqueness per (source, target, type) — different type creates a new row', () => {
+      brain.relations.createOrGet({
+        type: 'depends_on',
+        sourceId: entityA.id,
+        targetId: entityB.id,
+        source: { type: 'manual' },
+      });
+      const other = brain.relations.createOrGet({
+        type: 'relates_to',
+        sourceId: entityA.id,
+        targetId: entityB.id,
+        source: { type: 'manual' },
+      });
+      expect(other.type).toBe('relates_to');
+      expect(brain.relations.count()).toBe(2);
+    });
+  });
 });

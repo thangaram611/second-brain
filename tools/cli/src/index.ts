@@ -2,8 +2,8 @@
 
 import { Command } from 'commander';
 import { Brain, exportJson, exportJsonLd, exportDot, importGraph, VectorSearchChannel, createLogger } from '@second-brain/core';
-import type { EntityType, CreateEntityInput } from '@second-brain/types';
-import { ENTITY_TYPES } from '@second-brain/types';
+import type { BranchStatusPatch, EntityType, CreateEntityInput } from '@second-brain/types';
+import { BRANCH_STATUSES, BranchStatusPatchSchema, ENTITY_TYPES } from '@second-brain/types';
 import {
   PipelineRunner,
   GitCollector,
@@ -1106,7 +1106,7 @@ program
 // --- brain wire ---
 program
   .command('wire')
-  .description('One-shot wire-up: git hooks + claude hooks + wiredRepos entry (MVP — provider support lands in 10.3)')
+  .description('One-shot wire-up: git hooks + claude hooks + wiredRepos entry (+ optional GitLab provider)')
   .option('--repo <path>', 'Repo root (defaults to `git rev-parse --show-toplevel`)')
   .option('-n, --namespace <ns>', 'Namespace (overrides project config)')
   .option('--server-url <url>', 'Server URL')
@@ -1114,6 +1114,10 @@ program
   .option('--require-project', 'Fail if no project namespace is set (for CI/team setups)')
   .option('--no-claude', 'Skip Claude Code session hook install')
   .option('--skip-if-claude-mem', 'Abort if claude-mem hooks are present')
+  .option('--provider <name>', 'Forge provider to wire (gitlab)')
+  .option('--gitlab-url <url>', 'GitLab base URL (auto-detected from origin when omitted)')
+  .option('--gitlab-token <pat>', 'GitLab PAT (falls back to SECOND_BRAIN_GITLAB_TOKEN env)')
+  .option('--gitlab-project-path <path>', 'group/subgroup/project (auto-detected when omitted)')
   .action(async (options: {
     repo?: string;
     namespace?: string;
@@ -1122,6 +1126,10 @@ program
     requireProject?: boolean;
     claude?: boolean;
     skipIfClaudeMem?: boolean;
+    provider?: string;
+    gitlabUrl?: string;
+    gitlabToken?: string;
+    gitlabProjectPath?: string;
   }) => {
     const { runWire } = await import('./wire.js');
     try {
@@ -1133,6 +1141,10 @@ program
         requireProject: options.requireProject,
         installClaudeSession: options.claude !== false,
         skipIfClaudeMem: options.skipIfClaudeMem,
+        provider: options.provider === 'gitlab' ? 'gitlab' : undefined,
+        gitlabBaseUrl: options.gitlabUrl,
+        gitlabToken: options.gitlabToken,
+        gitlabProjectPath: options.gitlabProjectPath,
       });
       console.log(`Wired: ${result.repoRoot}`);
       console.log(`  namespace: ${result.namespace}`);
@@ -1147,6 +1159,13 @@ program
         console.log(
           `  claude hooks: ${result.claudeHooks.addedHooks.length ? result.claudeHooks.addedHooks.join(', ') : '(already present)'}`,
         );
+      }
+      if (result.providerResult) {
+        const p = result.providerResult;
+        console.log(
+          `  provider:  ${p.provider} projectId=${p.projectId} hook=${p.webhookId}${p.webhookAlreadyExisted ? ' (reused)' : ''}`,
+        );
+        console.log(`  relay:     ${p.relayUrl}`);
       }
       console.log(`  config:    ${result.configPath}`);
       for (const w of result.warnings) {
@@ -1164,29 +1183,83 @@ program
 // --- brain unwire ---
 program
   .command('unwire')
-  .description('Reverse `brain wire` — remove git hooks, drop wiredRepos entry')
+  .description('Reverse `brain wire` — remove git hooks, drop wiredRepos entry, unregister webhook')
   .option('--repo <path>', 'Repo root')
   .option('--remove-claude-hooks', 'Also remove Claude Code session hooks (affects all repos)')
   .option('--purge', 'Signal that project observations should be purged (DB purge lands in 10.4)')
-  .action(async (options: { repo?: string; removeClaudeHooks?: boolean; purge?: boolean }) => {
-    const { runUnwire } = await import('./unwire.js');
-    const result = await runUnwire({
-      repo: options.repo,
-      removeClaudeHooks: options.removeClaudeHooks,
-      purge: options.purge,
-    });
-    console.log(`Unwired: ${result.repoRoot}`);
-    console.log(`  git hooks removed:  ${result.gitHooks.removed.join(', ') || '(none)'}`);
-    if (result.gitHooks.restored.length > 0) {
-      console.log(`  git hooks restored: ${result.gitHooks.restored.join(', ')}`);
-    }
-    console.log(`  config entry removed: ${result.configEntryRemoved}`);
-    if (result.claudeRemoved) {
-      console.log(`  claude hooks removed: ${result.claudeRemoved.join(', ') || '(none)'}`);
-    }
-    if (options.purge) {
-      console.log(`  [note] --purge requested but DB purge ships in sub-phase 10.4`);
-    }
-  });
+  .option('--force', 'Proceed past provider API failures (401, timeout). 404 is always success.')
+  .action(
+    async (options: {
+      repo?: string;
+      removeClaudeHooks?: boolean;
+      purge?: boolean;
+      force?: boolean;
+    }) => {
+      const { runUnwire } = await import('./unwire.js');
+      try {
+        const result = await runUnwire({
+          repo: options.repo,
+          removeClaudeHooks: options.removeClaudeHooks,
+          purge: options.purge,
+          force: options.force,
+        });
+        console.log(`Unwired: ${result.repoRoot}`);
+        console.log(`  git hooks removed:  ${result.gitHooks.removed.join(', ') || '(none)'}`);
+        if (result.gitHooks.restored.length > 0) {
+          console.log(`  git hooks restored: ${result.gitHooks.restored.join(', ')}`);
+        }
+        console.log(`  config entry removed:  ${result.configEntryRemoved}`);
+        console.log(`  provider unregistered: ${result.providerUnregistered}`);
+        console.log(`  keychain cleaned:      ${result.keychainCleaned} entry/ies`);
+        if (result.claudeRemoved) {
+          console.log(`  claude hooks removed:  ${result.claudeRemoved.join(', ') || '(none)'}`);
+        }
+        for (const w of result.warnings) console.log(`  warning: ${w}`);
+        if (options.purge) {
+          console.log(`  [note] --purge requested but DB purge ships in sub-phase 10.4`);
+        }
+      } catch (err) {
+        console.error(`brain unwire: ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+      }
+    },
+  );
+
+// --- brain flip-branch ---
+program
+  .command('flip-branch')
+  .description('Manually flip branchContext.status on a branch (admin escape hatch).')
+  .argument('<branch>', 'Branch name to flip (exact match)')
+  .requiredOption('--status <status>', `One of: ${BRANCH_STATUSES.join(' | ')}`)
+  .option('--mr <iid>', 'Optional MR/PR iid (numeric)')
+  .option('--merged-at <iso>', 'ISO timestamp (when --status=merged)')
+  .action(
+    (
+      branchName: string,
+      options: { status: string; mr?: string; mergedAt?: string },
+    ) => {
+      let patch: BranchStatusPatch;
+      try {
+        patch = BranchStatusPatchSchema.parse({
+          status: options.status,
+          mrIid: options.mr ? Number(options.mr) : null,
+          mergedAt: options.mergedAt ?? null,
+        });
+      } catch (err) {
+        console.error(`Invalid arguments: ${(err as Error).message}`);
+        process.exit(1);
+      }
+      const brain = openBrain();
+      try {
+        const result = brain.flipBranchStatus(branchName, patch);
+        console.log(
+          `Flipped "${branchName}" → ${patch.status}. ` +
+            `entities=${result.updatedEntities} relations=${result.updatedRelations}`,
+        );
+      } finally {
+        brain.close();
+      }
+    },
+  );
 
 program.parse();

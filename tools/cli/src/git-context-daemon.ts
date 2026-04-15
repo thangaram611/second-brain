@@ -1,4 +1,4 @@
-import { startFileChangeCollector } from '@second-brain/collectors';
+import { startFileChangeCollector, createRelayClient } from '@second-brain/collectors';
 import type { FileChangeCollectorHandle } from '@second-brain/collectors';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -19,9 +19,15 @@ const WiredReposEntrySchema = z.object({
   repoHash: z.string(),
   absPath: z.string(),
   namespace: z.string(),
-  providerId: z.string().optional(),
+  providerId: z.enum(['gitlab', 'github', 'custom']).optional(),
   projectId: z.string().optional(),
   relayUrl: z.string().optional(),
+  /** Phase 10.3 — GitLab self-hosted base URL. */
+  gitlabBaseUrl: z.string().optional(),
+  /** Phase 10.3 — numeric GitLab project id (stringified JSON-safe). */
+  gitlabProjectId: z.string().optional(),
+  /** Phase 10.3 — webhook id returned by GitLab on register. */
+  webhookId: z.number().int().optional(),
   installedAt: z.string(),
 });
 
@@ -33,13 +39,20 @@ const WiredReposSchema = z.object({
 export type WiredReposEntry = z.infer<typeof WiredReposEntrySchema>;
 export type WiredRepos = z.infer<typeof WiredReposSchema>;
 
-const CONFIG_DIR = path.join(os.homedir(), '.second-brain');
-const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
-const LOG_PATH = path.join(CONFIG_DIR, 'hook.log');
+// Resolved at call time (not module load) so tests can swap `$HOME`.
+function configDir(): string {
+  return path.join(os.homedir(), '.second-brain');
+}
+function configPath(): string {
+  return path.join(configDir(), 'config.json');
+}
+function logPath(): string {
+  return path.join(configDir(), 'hook.log');
+}
 
 export function loadWiredRepos(): WiredRepos {
   try {
-    const raw = fs.readFileSync(CONFIG_PATH, 'utf8');
+    const raw = fs.readFileSync(configPath(), 'utf8');
     const parsed: unknown = JSON.parse(raw);
     const result = WiredReposSchema.safeParse(parsed);
     if (result.success) return result.data;
@@ -50,8 +63,8 @@ export function loadWiredRepos(): WiredRepos {
 }
 
 export function saveWiredRepos(repos: WiredRepos): void {
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(repos, null, 2) + '\n', 'utf8');
+  fs.mkdirSync(configDir(), { recursive: true });
+  fs.writeFileSync(configPath(), JSON.stringify(repos, null, 2) + '\n', 'utf8');
 }
 
 export function computeRepoHash(repoRoot: string): string {
@@ -72,8 +85,8 @@ export function computeRepoHash(repoRoot: string): string {
 
 function logLine(msg: string): void {
   try {
-    fs.mkdirSync(CONFIG_DIR, { recursive: true });
-    fs.appendFileSync(LOG_PATH, `${new Date().toISOString()} ${msg}\n`);
+    fs.mkdirSync(configDir(), { recursive: true });
+    fs.appendFileSync(logPath(), `${new Date().toISOString()} ${msg}\n`);
   } catch {
     // Never let logging failures crash the daemon.
   }
@@ -96,6 +109,20 @@ export async function runWatch(options: WatchOptions): Promise<FileChangeCollect
     : undefined;
 
   logLine(`[watch] start repo=${repoRoot} ns=${namespace} serverUrl=${serverUrl}`);
+
+  // Phase 10.3 — drain any queued MR-event deliveries from a previous run
+  // (relay client spills to disk on 429 or connection error; revision #14).
+  try {
+    const relay = createRelayClient();
+    const result = await relay.drainQueue();
+    if (result.delivered > 0 || result.requeued > 0) {
+      logLine(
+        `[watch] relay queue drain: delivered=${result.delivered} requeued=${result.requeued}`,
+      );
+    }
+  } catch (err) {
+    logLine(`[watch] relay drain failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   const handle = await startFileChangeCollector({
     repoRoot,

@@ -28,6 +28,7 @@ export * from './docs/index.js';
 export { createWatcher } from './watch/index.js';
 export type { WatcherOptions, WatcherHandle, WatchChange, WatchChangeKind } from './watch/index.js';
 export * from './git-context/index.js';
+export * from './providers/index.js';
 export { createJsonlTail } from './watch/jsonl-tail.js';
 export type { JsonlTailOptions, JsonlTailHandle } from './watch/jsonl-tail.js';
 export { createSqlitePoller } from './watch/sqlite-poller.js';

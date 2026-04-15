@@ -165,6 +165,39 @@ export class EntityManager {
     return rows.map(rowToEntity);
   }
 
+  /**
+   * Find entities of `type` whose JSON property at `jsonPath` equals `value`.
+   *
+   * `jsonPath` uses SQLite `json_extract` path syntax, e.g. `$.iid` or
+   * `$.branchContext.branch`. Comparison is strict SQL equality: number
+   * parameters match JSON numbers, string parameters match JSON strings.
+   * Uses the `entities.properties` TEXT column directly — no generated
+   * column is required, so callers can key on arbitrary paths without a
+   * migration.
+   *
+   * Phase 10.3 uses this for MR dedup on `(type='merge_request',
+   * properties.projectId, properties.iid)` because `findByName` is a
+   * `LIKE %substring%` match and MR title edits would break the name key.
+   */
+  findByTypeAndProperty(
+    type: EntityType,
+    jsonPath: string,
+    value: string | number,
+    namespace?: string,
+  ): Entity[] {
+    const conditions = [
+      eq(entities.type, type),
+      sql`json_extract(${entities.properties}, ${jsonPath}) = ${value}`,
+    ];
+    if (namespace) conditions.push(eq(entities.namespace, namespace));
+    const rows = this.db
+      .select()
+      .from(entities)
+      .where(and(...conditions))
+      .all();
+    return rows.map(rowToEntity);
+  }
+
   touch(id: string): void {
     const now = new Date().toISOString();
     this.db

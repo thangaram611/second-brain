@@ -64,6 +64,32 @@ export class RelationManager {
     return rowToRelation(row);
   }
 
+  /**
+   * Insert-or-return: creates the relation if no edge exists for the
+   * (sourceId, targetId, type) triple (enforced by
+   * `idx_relations_unique_edge`), otherwise returns the pre-existing row.
+   *
+   * Phase 10.3 — webhook replays and idempotent MR ingest must not throw
+   * `SqliteError: UNIQUE constraint failed`. The existing `batchUpsert`
+   * (line ~240) performs an update on hit; `createOrGet` is strictly
+   * non-destructive (first writer wins on properties/weight/confidence).
+   */
+  createOrGet(input: CreateRelationInput): Relation {
+    const existing = this.db
+      .select()
+      .from(relations)
+      .where(
+        and(
+          eq(relations.sourceId, input.sourceId),
+          eq(relations.targetId, input.targetId),
+          eq(relations.type, input.type),
+        ),
+      )
+      .get();
+    if (existing) return rowToRelation(existing);
+    return this.create(input);
+  }
+
   get(id: string): Relation | null {
     const row = this.db.select().from(relations).where(eq(relations.id, id)).get();
     return row ? rowToRelation(row) : null;

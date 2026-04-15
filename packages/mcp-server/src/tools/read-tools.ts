@@ -8,6 +8,8 @@ export interface RecallContextBlockOptions {
   query?: string;
   namespaces?: string[];
   limit?: number;
+  /** When true, prepend a <parallel-work-alert> block if any collisions exist. */
+  includeParallelWork?: boolean;
 }
 
 /**
@@ -58,9 +60,29 @@ export async function buildRecallContextBlock(
     hits = recent.slice(0, limit);
   }
 
-  if (hits.length === 0) return '';
+  const alertLines: string[] = [];
+  if (options.includeParallelWork) {
+    const collisions = brain.findParallelWork({ limit: 10 });
+    if (collisions.length > 0) {
+      alertLines.push('<parallel-work-alert>');
+      for (const c of collisions) {
+        alertLines.push(`  ${c.entityType}: ${c.entityName} (ns=${c.namespace})`);
+        alertLines.push(`    actors:   ${c.actors.join(', ')}`);
+        alertLines.push(`    branches: ${c.branches.join(', ')}`);
+      }
+      alertLines.push('</parallel-work-alert>');
+    }
+  }
 
-  const lines: string[] = ['## Prior context from second-brain'];
+  if (hits.length === 0) {
+    return alertLines.length > 0 ? alertLines.join('\n') : '';
+  }
+
+  const lines: string[] = [];
+  if (alertLines.length > 0) {
+    lines.push(...alertLines, '');
+  }
+  lines.push('## Prior context from second-brain');
   for (const h of hits) {
     const e = h.entity;
     lines.push(`- [${e.type}] **${e.name}** · ${e.id} · ns=${e.namespace}`);
@@ -550,7 +572,7 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
   // --- recall_session_context ---
   mcp.registerTool('recall_session_context', {
     description:
-      'Surface memory relevant to the current session. Searches session:<id> (if given) and cross-session namespaces, merges hits, returns a compact context block.',
+      'Surface memory relevant to the current session. Searches session:<id> (if given) and cross-session namespaces, merges hits, returns a compact context block. When includeParallelWork=true, prepends a <parallel-work-alert> block if another developer is editing overlapping entities on a different branch.',
     inputSchema: {
       sessionId: z.string().optional().describe('Active session ID; session:<id> is added to the namespace scope'),
       query: z.string().optional().describe('Optional free-text query. When absent, returns most-recently accessed entities.'),
@@ -559,6 +581,10 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
         .optional()
         .describe('Extra namespaces to include (default: ["personal"])'),
       limit: z.number().int().min(1).max(50).optional().describe('Max entities (default 15)'),
+      includeParallelWork: z
+        .boolean()
+        .optional()
+        .describe('Prepend a parallel-work-alert block when ≥2 actors touch the same entity on WIP branches. Default false.'),
     },
     annotations: {
       readOnlyHint: true,
@@ -578,10 +604,47 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
       query: args.query,
       namespaces: scopeNamespaces,
       limit,
+      includeParallelWork: args.includeParallelWork ?? false,
     });
     return {
       content: [{ type: 'text', text: block || 'No prior context.' }],
     };
+  });
+
+  // --- find_parallel_work ---
+  mcp.registerTool('find_parallel_work', {
+    description:
+      'Surface entities touched by ≥2 distinct actors on WIP branches. Detects developer collisions (same file/symbol edited on different branches) BEFORE they become merge conflicts.',
+    inputSchema: {
+      branch: z.string().optional().describe('Limit to entities touched on this branch'),
+      namespace: z.string().optional().describe('Filter to a namespace'),
+      pathLike: z
+        .string()
+        .optional()
+        .describe('Substring match on entity name (e.g. a file-path fragment)'),
+      limit: z.number().int().min(1).max(200).optional().describe('Max rows (default 50)'),
+    },
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false,
+    },
+  }, async (args) => {
+    const rows = brain.findParallelWork({
+      branch: args.branch,
+      namespace: args.namespace,
+      pathLike: args.pathLike,
+      limit: args.limit,
+    });
+    if (rows.length === 0) {
+      return { content: [{ type: 'text', text: 'No parallel work detected.' }] };
+    }
+    const lines: string[] = ['Parallel work detected:', ''];
+    for (const r of rows) {
+      lines.push(`- [${r.entityType}] ${r.entityName} (ns=${r.namespace})`);
+      lines.push(`    actors:   ${r.actors.join(', ')}`);
+      lines.push(`    branches: ${r.branches.join(', ')}`);
+    }
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
   });
 
   // --- timeline_around ---
