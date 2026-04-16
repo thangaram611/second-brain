@@ -94,12 +94,8 @@ export function getPersonalityExtractor(): PersonalityExtractor | null {
   if (!enabled) return null;
 
   const brain = getBrain();
-  const llmConfig = resolveLLMConfig();
-  let llm = null;
-  if (llmConfig) {
-    // LLM wiring deferred — streams handle missing LLM gracefully
-    llm = null;
-  }
+  // LLM wiring deferred — personality streams handle missing LLM gracefully
+  const llm = null;
 
   personalityInstance = new PersonalityExtractor(brain, { llm });
 

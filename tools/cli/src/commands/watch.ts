@@ -9,11 +9,11 @@ import {
 import { openBrain } from '../lib/config.js';
 
 export function registerWatchCommand(program: Command): void {
-  // First watch: re-index on file change (AST + docs).
-  // NOTE: overridden by the daemon watch below; kept for backwards compat.
+  // Legacy re-index on file change (AST + docs).
+  // Superseded by the daemon watch below; kept as subcommand for backwards compat.
   program
-    .command('watch')
-    .description('Watch a repository and re-index on change (AST + docs)')
+    .command('watch-reindex')
+    .description('Watch a repository and re-index on change (AST + docs, legacy)')
     .option('-n, --namespace <namespace>', 'Namespace', 'personal')
     .option('--repo <path>', 'Repository path', '.')
     .option('--debounce <ms>', 'Debounce window for batched changes', '500')
@@ -65,7 +65,7 @@ export function registerWatchCommand(program: Command): void {
       await new Promise(() => {});
     });
 
-  // Second watch: file-change + branch-change daemon (overrides the above).
+  // Primary watch: file-change + branch-change daemon.
   program
     .command('watch')
     .description('Run the file-change + branch-change daemon for a wired repo')

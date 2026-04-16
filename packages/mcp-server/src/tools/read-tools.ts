@@ -5,6 +5,7 @@ import { ENTITY_TYPES, RELATION_TYPES, sessionNamespace } from '@second-brain/ty
 import type { EntityType, RelationType, TimelineEntry, SearchResult } from '@second-brain/types';
 import {
   textResponse,
+  errorResponse,
   notFoundResponse,
   formatSearchResults,
   formatDecisionResults,
@@ -547,13 +548,13 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
     const res = await fetch(url.toString(), { headers });
     if (!res.ok) {
       const text = await res.text();
-      return { content: [{ type: 'text', text: `Ownership query failed (${res.status}): ${text}` }] };
+      return errorResponse(`Ownership query failed (${res.status}): ${text}`);
     }
 
     const scores = (await res.json()) as Array<{ actor: string; score: number; signals: Record<string, unknown> }>;
 
     if (scores.length === 0) {
-      return { content: [{ type: 'text', text: `No ownership data found for ${args.path}` }] };
+      return textResponse(`No ownership data found for ${args.path}`);
     }
 
     const lines: string[] = [`Ownership for ${args.path}:`, ''];
@@ -562,7 +563,7 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
       const sig = s.signals;
       lines.push(`    commits: ${sig.commits}, blame: ${sig.recencyWeightedBlameLines}, reviews: ${sig.reviews}, tests: ${sig.testAuthorship}, codeowner: ${sig.codeownerMatch}`);
     }
-    return { content: [{ type: 'text', text: lines.join('\n') }] };
+    return textResponse(lines.join('\n'));
   });
 
   // --- timeline_around ---
