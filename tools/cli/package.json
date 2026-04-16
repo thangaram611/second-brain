@@ -40,6 +40,8 @@
     "@second-brain/collectors": "workspace:*",
     "@second-brain/ingestion": "workspace:*",
     "@second-brain/types": "workspace:*",
+    "@noble/ciphers": "^1.2.0",
+    "@noble/hashes": "^1.7.0",
     "commander": "^14.0.3",
     "proper-lockfile": "^4.1.2",
     "zod": "^4.3.6"

@@ -5,11 +5,20 @@ import { SyncManager } from '@second-brain/sync';
 import { resolveLLMConfig, tryCreateLLMExtractor } from '@second-brain/ingestion';
 import { ObservationService } from './services/observation-service.js';
 import { PromotionService } from './services/promotion-service.js';
+import { OwnershipService } from './services/ownership-service.js';
+import { PersonalityExtractor } from './services/personality-extractor.js';
+import { LanguageFingerprintStream } from './services/personality/language-fingerprint.js';
+import { TechFamiliarityStream } from './services/personality/tech-familiarity.js';
+import { ManagementSignalsStream } from './services/personality/management-signals.js';
+import { decisionPatternsStream } from './services/personality/decision-patterns.js';
+import { communicationStyleStream } from './services/personality/communication-style.js';
 
 let brainInstance: Brain | null = null;
 let syncManagerInstance: SyncManager | null = null;
 let observationInstance: ObservationService | null = null;
 let promotionInstance: PromotionService | null = null;
+let ownershipInstance: OwnershipService | null = null;
+let personalityInstance: PersonalityExtractor | null = null;
 
 export function getBrain(): Brain {
   if (brainInstance) return brainInstance;
@@ -28,6 +37,8 @@ export function closeBrain(): void {
     brainInstance = null;
     observationInstance = null;
     promotionInstance = null;
+    ownershipInstance = null;
+    personalityInstance = null;
   }
 }
 
@@ -67,4 +78,37 @@ export function getObservationService(): ObservationService {
     retentionDays: Number(process.env.SESSION_RETENTION_DAYS ?? 30),
   });
   return observationInstance;
+}
+
+export function getOwnershipService(): OwnershipService {
+  if (ownershipInstance) return ownershipInstance;
+  const brain = getBrain();
+  ownershipInstance = new OwnershipService(brain);
+  return ownershipInstance;
+}
+
+export function getPersonalityExtractor(): PersonalityExtractor | null {
+  if (personalityInstance !== null) return personalityInstance;
+
+  const enabled = process.env.PERSONALITY_ENABLED !== 'false';
+  if (!enabled) return null;
+
+  const brain = getBrain();
+  const llmConfig = resolveLLMConfig();
+  let llm = null;
+  if (llmConfig) {
+    // LLM wiring deferred — streams handle missing LLM gracefully
+    llm = null;
+  }
+
+  personalityInstance = new PersonalityExtractor(brain, { llm });
+
+  // Register all personality streams
+  personalityInstance.registerStream(new LanguageFingerprintStream());
+  personalityInstance.registerStream(new TechFamiliarityStream());
+  personalityInstance.registerStream(new ManagementSignalsStream());
+  personalityInstance.registerStream(decisionPatternsStream);
+  personalityInstance.registerStream(communicationStyleStream);
+
+  return personalityInstance;
 }

@@ -8,12 +8,16 @@ import { syncRoutes } from './sync.js';
 import { temporalRoutes } from './temporal.js';
 import { adminRoutes } from './admin.js';
 import { observeRoutes, type ObserveRouteOptions } from './observe.js';
+import { queryRoutes, type QueryRouteOptions } from './query.js';
 import type { ObservationService } from '../services/observation-service.js';
+import type { OwnershipService } from '../services/ownership-service.js';
 
 export interface RegisterRoutesOptions {
   syncManager?: SyncManager;
   observations?: ObservationService;
   observeOptions?: ObserveRouteOptions;
+  ownership?: OwnershipService;
+  queryOptions?: QueryRouteOptions;
 }
 
 export function registerRoutes(
@@ -32,5 +36,8 @@ export function registerRoutes(
   }
   if (observations) {
     app.use(observeRoutes(observations, observeOptions));
+  }
+  if (options.ownership) {
+    app.use(queryRoutes(options.ownership, options.queryOptions));
   }
 }

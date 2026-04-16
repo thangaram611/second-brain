@@ -647,6 +647,49 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
     return { content: [{ type: 'text', text: lines.join('\n') }] };
   });
 
+  // --- get_ownership ---
+  mcp.registerTool('get_ownership', {
+    description:
+      'Compute file ownership scores. Returns ranked owners with signals (blame, commits, reviews, tests, CODEOWNERS). Useful for "who should review this?" or "who knows this code best?".',
+    inputSchema: {
+      path: z.string().describe('Repository-relative file path'),
+      limit: z.number().int().min(1).max(50).optional().describe('Max owners to return (default 3)'),
+    },
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false,
+    },
+  }, async (args) => {
+    const port = process.env.BRAIN_API_PORT ?? '7430';
+    const url = new URL(`http://localhost:${port}/api/query/ownership`);
+    url.searchParams.set('path', args.path);
+    if (args.limit !== undefined) url.searchParams.set('limit', String(args.limit));
+
+    const headers: Record<string, string> = {};
+    const token = process.env.BRAIN_AUTH_TOKEN;
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(url.toString(), { headers });
+    if (!res.ok) {
+      const text = await res.text();
+      return { content: [{ type: 'text', text: `Ownership query failed (${res.status}): ${text}` }] };
+    }
+
+    const scores = (await res.json()) as Array<{ actor: string; score: number; signals: Record<string, unknown> }>;
+
+    if (scores.length === 0) {
+      return { content: [{ type: 'text', text: `No ownership data found for ${args.path}` }] };
+    }
+
+    const lines: string[] = [`Ownership for ${args.path}:`, ''];
+    for (const s of scores) {
+      lines.push(`- ${s.actor} (score: ${(s.score * 100).toFixed(1)}%)`);
+      const sig = s.signals;
+      lines.push(`    commits: ${sig.commits}, blame: ${sig.recencyWeightedBlameLines}, reviews: ${sig.reviews}, tests: ${sig.testAuthorship}, codeowner: ${sig.codeownerMatch}`);
+    }
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+  });
+
   // --- timeline_around ---
   mcp.registerTool('timeline_around', {
     description:

@@ -122,3 +122,97 @@ test project the user owns; `brain serve` running at `http://localhost:7430`;
 
 Ship-blockers: **steps 2, 5, 6, and 8.** Others are feature-verification
 and can be waived for a manual regression run.
+
+## 10.4 — Personal namespace export/import/stats CLI
+
+Pre-reqs: `brain init` completed; some personal-namespace entities exist
+(e.g. from a prior `brain ingest --source personality` or manual insertion);
+`brain` CLI is on `$PATH`.
+
+1. **Stats baseline.** Run:
+   ```
+   brain personal stats
+   ```
+   Expected: prints `Personal namespace stats:` with entity/relation counts,
+   per-source-type breakdown, and per-personality-stream breakdown.
+
+2. **Stats JSON mode.** Run:
+   ```
+   brain personal stats --json
+   ```
+   Expected: valid JSON with `stats`, `sourceTypes`, `streams` fields.
+
+3. **Stats audit.** Run:
+   ```
+   brain personal stats --audit
+   ```
+   Expected: lists every personality entity with `[streamName] name (type,
+   conf=X.XX, derived_from=N)` format.
+
+4. **Plain export.** Run:
+   ```
+   brain personal export -o personal-backup.json
+   ```
+   Expected: file written; prints entity/relation/dangling counts;
+   `cat personal-backup.json | jq .version` → `"1.0"`.
+
+5. **Export JSON mode.** Run:
+   ```
+   brain personal export -o personal-backup.json --json
+   ```
+   Expected: single-line JSON with `entities`, `relations`,
+   `danglingEdges`, `file`, `encrypted` fields.
+
+6. **Encrypted export.** Run:
+   ```
+   brain personal export -o personal-backup.enc --encrypt
+   ```
+   Expected: prompts for passphrase twice; mismatched passphrases print
+   `Passphrases do not match.` and exit non-zero; matching passphrases
+   write a binary file beginning with `SBP1` magic bytes.
+
+7. **Plain import into fresh brain.** Run:
+   ```
+   BRAIN_DB_PATH=./test-import.db brain init
+   BRAIN_DB_PATH=./test-import.db brain personal import personal-backup.json
+   ```
+   Expected: prints `Imported N entities, M relations`.
+
+8. **Import JSON mode.** Run:
+   ```
+   BRAIN_DB_PATH=./test-import2.db brain init
+   BRAIN_DB_PATH=./test-import2.db brain personal import personal-backup.json --json
+   ```
+   Expected: valid JSON with `entitiesImported`, `relationsImported`,
+   `droppedDanglingEdges`, `conflicts` fields.
+
+9. **Encrypted import.** Run:
+   ```
+   BRAIN_DB_PATH=./test-enc.db brain init
+   BRAIN_DB_PATH=./test-enc.db brain personal import personal-backup.enc
+   ```
+   Expected: prompts for passphrase; correct passphrase imports
+   successfully; wrong passphrase prints `Decryption failed. Wrong
+   passphrase?` and exits non-zero.
+
+10. **Round-trip fidelity.** Compare stats before export and after import:
+    ```
+    brain personal stats --json > before.json
+    BRAIN_DB_PATH=./test-rt.db brain init
+    BRAIN_DB_PATH=./test-rt.db brain personal import personal-backup.json
+    BRAIN_DB_PATH=./test-rt.db brain personal stats --json > after.json
+    ```
+    Expected: `totalEntities` and `totalRelations` match between
+    `before.json` and `after.json`.
+
+11. **Dangling edge handling.** If the export contains cross-namespace
+    dangling edges (visible in `danglingEdges` count from step 5), import
+    without `--reattach` drops them:
+    ```
+    BRAIN_DB_PATH=./test-dangle.db brain init
+    BRAIN_DB_PATH=./test-dangle.db brain personal import personal-backup.json
+    ```
+    Expected: prints `Dropped N dangling edges (use --reattach to keep)`.
+
+Ship-blockers: **steps 1, 4, 7, and 10.** Steps 6, 9, and 11 are
+feature-verification and can be waived for a manual regression run.

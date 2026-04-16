@@ -5,6 +5,7 @@ import type { MappedObservation } from '@second-brain/collectors';
 import { SerialQueue } from './serial-queue.js';
 import type { PromotionService } from './promotion-service.js';
 import { resolveAuthor } from '../lib/resolve-author.js';
+import type { PersonalityExtractor } from './personality-extractor.js';
 
 export interface SessionStartPayload {
   sessionId: string;
@@ -181,6 +182,8 @@ export class ObservationService {
   /** Per-MR serial queue so concurrent update events don't race. */
   private mrQueue: SerialQueue<string> = new SerialQueue<string>();
 
+  private personalityExtractor: PersonalityExtractor | null = null;
+
   readonly retentionDays: number;
   private readonly now: () => string;
   private readonly contextNamespaces: string[];
@@ -212,6 +215,11 @@ export class ObservationService {
   /** Exposed for tests + CLI — seed the author cache (skips git lookup). */
   setAuthor(sessionId: string, author: Author): void {
     this.currentAuthor.set(sessionId, author);
+  }
+
+  /** Wire an optional personality extractor for session-end extraction. */
+  setPersonalityExtractor(extractor: PersonalityExtractor | null): void {
+    this.personalityExtractor = extractor;
   }
 
   /** Ensure a conversation entity exists for the session; return its ID. */
@@ -405,6 +413,19 @@ export class ObservationService {
     this.counters.promoted_entities_total += result.promotion.promotedEntities;
     this.conversationBySession.delete(sessionId);
     this.projectBySession.delete(sessionId);
+
+    // Personality extraction — non-fatal, must run before currentAuthor cleanup
+    if (this.personalityExtractor) {
+      try {
+        const actor = this.currentAuthor.get(sessionId)?.canonicalEmail;
+        if (actor) {
+          await this.personalityExtractor.runForSession(sessionId, { actor });
+        }
+      } catch (err) {
+        console.warn('[second-brain] personality extraction error:', err);
+      }
+    }
+
     this.currentAuthor.delete(sessionId);
 
     // Opportunistic GC of stale session namespaces.
