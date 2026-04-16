@@ -4,6 +4,7 @@ import type { SyncManager } from '@second-brain/sync';
 import type { RelationType } from '@second-brain/types';
 import { CreateRelationSchema } from '../schemas.js';
 import { broadcast } from '../ws/ws-server.js';
+import { requireRelation, deleteRelationWithSync } from './helpers.js';
 
 export function relationRoutes(brain: Brain, syncManager?: SyncManager): Router {
   const router = Router();
@@ -45,31 +46,17 @@ export function relationRoutes(brain: Brain, syncManager?: SyncManager): Router 
 
   // Get relation by ID
   router.get('/api/relations/:id', (req, res) => {
-    const relation = brain.relations.get(req.params.id);
-    if (!relation) {
-      res.status(404).json({ error: 'Relation not found' });
-      return;
-    }
+    const relation = requireRelation(brain, req.params.id, res);
+    if (!relation) return;
     res.json(relation);
   });
 
   // Delete relation
   router.delete('/api/relations/:id', (req, res) => {
-    const relation = brain.relations.get(req.params.id);
-    if (!relation) {
-      res.status(404).json({ error: 'Relation not found' });
-      return;
-    }
-
-    const deleted = brain.relations.delete(req.params.id);
+    const deleted = deleteRelationWithSync(req.params.id, brain, syncManager);
     if (!deleted) {
       res.status(404).json({ error: 'Relation not found' });
       return;
-    }
-
-    broadcast({ type: 'relation:deleted', id: req.params.id });
-    if (syncManager?.isSynced(relation.namespace)) {
-      syncManager.onLocalRelationDelete(req.params.id, relation.namespace);
     }
     res.status(204).end();
   });

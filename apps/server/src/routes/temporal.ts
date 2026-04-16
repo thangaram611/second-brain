@@ -10,6 +10,7 @@ import {
   TemporalEntityQuerySchema,
 } from '../schemas.js';
 import { broadcast } from '../ws/ws-server.js';
+import { requireRelation } from './helpers.js';
 
 export function temporalRoutes(brain: Brain): Router {
   const router = Router();
@@ -44,11 +45,8 @@ export function temporalRoutes(brain: Brain): Router {
     const { winnerId } = ResolveContradictionSchema.parse(req.body);
     const relationId = req.params.id;
 
-    const relation = brain.relations.get(relationId);
-    if (!relation) {
-      res.status(404).json({ error: 'Relation not found' });
-      return;
-    }
+    const relation = requireRelation(brain, relationId, res);
+    if (!relation) return;
 
     const loserId = relation.sourceId === winnerId ? relation.targetId : relation.sourceId;
 

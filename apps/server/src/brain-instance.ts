@@ -112,3 +112,30 @@ export function getPersonalityExtractor(): PersonalityExtractor | null {
 
   return personalityInstance;
 }
+
+// --- Unified service container -------------------------------------------
+
+export interface Services {
+  brain: Brain;
+  syncManager: SyncManager;
+  observations: ObservationService;
+  promotion: PromotionService;
+  ownership: OwnershipService;
+  personality: PersonalityExtractor | null;
+}
+
+/**
+ * Returns a typed object with every singleton service.
+ * Lazily initialises each service on first call (same instances as the
+ * individual getters).
+ */
+export function getServices(): Services {
+  return {
+    brain: getBrain(),
+    syncManager: getSyncManager(),
+    observations: getObservationService(),
+    promotion: getPromotionService(),
+    ownership: getOwnershipService(),
+    personality: getPersonalityExtractor(),
+  };
+}

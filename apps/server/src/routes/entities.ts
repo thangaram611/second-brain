@@ -10,6 +10,7 @@ import {
   NeighborsQuerySchema,
 } from '../schemas.js';
 import { broadcast } from '../ws/ws-server.js';
+import { requireEntity, deleteEntityWithSync } from './helpers.js';
 
 export function entityRoutes(brain: Brain, syncManager?: SyncManager): Router {
   const router = Router();
@@ -47,11 +48,8 @@ export function entityRoutes(brain: Brain, syncManager?: SyncManager): Router {
 
   // Get entity by ID (with relations)
   router.get('/api/entities/:id', (req, res) => {
-    const entity = brain.entities.get(req.params.id);
-    if (!entity) {
-      res.status(404).json({ error: 'Entity not found' });
-      return;
-    }
+    const entity = requireEntity(brain, req.params.id, res);
+    if (!entity) return;
 
     brain.entities.touch(entity.id);
     const outbound = brain.relations.getOutbound(entity.id);
@@ -99,21 +97,10 @@ export function entityRoutes(brain: Brain, syncManager?: SyncManager): Router {
 
   // Delete entity
   router.delete('/api/entities/:id', (req, res) => {
-    const entity = brain.entities.get(req.params.id);
-    if (!entity) {
-      res.status(404).json({ error: 'Entity not found' });
-      return;
-    }
-
-    const deleted = brain.entities.delete(req.params.id);
+    const deleted = deleteEntityWithSync(req.params.id, brain, syncManager);
     if (!deleted) {
       res.status(404).json({ error: 'Entity not found' });
       return;
-    }
-
-    broadcast({ type: 'entity:deleted', id: req.params.id });
-    if (syncManager?.isSynced(entity.namespace)) {
-      syncManager.onLocalEntityDelete(req.params.id, entity.namespace);
     }
     res.status(204).end();
   });
@@ -155,18 +142,15 @@ export function entityRoutes(brain: Brain, syncManager?: SyncManager): Router {
 
   // Get neighbors (graph traversal)
   router.get('/api/entities/:id/neighbors', (req, res) => {
-    const entity = brain.entities.get(req.params.id);
-    if (!entity) {
-      res.status(404).json({ error: 'Entity not found' });
-      return;
-    }
+    const entity = requireEntity(brain, req.params.id, res);
+    if (!entity) return;
 
     const params = NeighborsQuerySchema.parse(req.query);
     const relationTypes = params.relationTypes
       ? (params.relationTypes.split(',') as RelationType[])
       : undefined;
 
-    const result = brain.relations.getNeighbors(
+    const result = brain.traversal.getNeighbors(
       req.params.id,
       params.depth ?? 1,
       relationTypes,
