@@ -6,7 +6,7 @@ export type {
   CreateEntityInput,
   UpdateEntityInput,
 } from './entity.js';
-export { ENTITY_TYPES, ENTITY_SOURCE_TYPES, DECAY_RATES } from './entity.js';
+export { ENTITY_TYPES, ENTITY_SOURCE_TYPES, DECAY_RATES, isEntityType, isSourceType } from './entity.js';
 
 export type {
   RelationType,
@@ -14,7 +14,7 @@ export type {
   CreateRelationInput,
   UpdateRelationInput,
 } from './relation.js';
-export { RELATION_TYPES } from './relation.js';
+export { RELATION_TYPES, isRelationType } from './relation.js';
 
 export {
   SESSION_NAMESPACE_PREFIX,

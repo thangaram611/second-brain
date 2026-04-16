@@ -80,6 +80,14 @@ export interface UpdateEntityInput {
   tags?: string[];
 }
 
+export function isEntityType(val: string): val is EntityType {
+  return ENTITY_TYPES.some((t) => t === val);
+}
+
+export function isSourceType(val: string): val is EntitySourceType {
+  return ENTITY_SOURCE_TYPES.some((t) => t === val);
+}
+
 /** Confidence decay rates per entity type (per day) */
 export const DECAY_RATES: Record<EntityType, number> = {
   concept: 0.001,

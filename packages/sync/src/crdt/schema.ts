@@ -1,6 +1,6 @@
 import * as Y from 'yjs';
-import type { Entity, Relation, EntityType, RelationType, EntitySource } from '@second-brain/types';
-import { ENTITY_TYPES, RELATION_TYPES } from '@second-brain/types';
+import type { Entity, Relation, EntitySource } from '@second-brain/types';
+import { isEntityType, isRelationType, isSourceType } from '@second-brain/types';
 
 // ---- Safe extraction helpers (NO `as` casts) ----
 
@@ -27,24 +27,6 @@ function getOptionalString(map: Y.Map<unknown>, key: string): string | undefined
   if (val === undefined || val === null) return undefined;
   if (typeof val !== 'string') throw new Error(`Expected string or undefined for "${key}", got ${typeof val}`);
   return val;
-}
-
-// ---- Type guards ----
-
-const VALID_SOURCE_TYPES: ReadonlyArray<string> = [
-  'git', 'ast', 'conversation', 'github', 'manual', 'doc', 'inferred',
-];
-
-function isEntityType(val: string): val is EntityType {
-  return ENTITY_TYPES.some((t) => t === val);
-}
-
-function isRelationType(val: string): val is RelationType {
-  return RELATION_TYPES.some((t) => t === val);
-}
-
-function isSourceType(val: string): val is EntitySource['type'] {
-  return VALID_SOURCE_TYPES.includes(val);
 }
 
 // ---- Y.Doc factory ----

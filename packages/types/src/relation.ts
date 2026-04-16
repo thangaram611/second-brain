@@ -25,6 +25,10 @@ export const RELATION_TYPES = [
 
 export type RelationType = (typeof RELATION_TYPES)[number];
 
+export function isRelationType(val: string): val is RelationType {
+  return RELATION_TYPES.some((t) => t === val);
+}
+
 export interface Relation {
   id: string;
   type: RelationType;
