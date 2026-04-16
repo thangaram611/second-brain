@@ -23,6 +23,15 @@ export interface ParallelWorkConflict {
   branches: string[];
 }
 
+function buildQuery(params: Record<string, string | number | boolean | undefined | null>): string {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value != null && value !== '') qs.set(key, String(value));
+  }
+  const str = qs.toString();
+  return str ? `?${str}` : '';
+}
+
 class ApiError extends Error {
   constructor(
     public status: number,
@@ -49,13 +58,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   entities: {
     list(params?: { namespace?: string; type?: string; limit?: number; offset?: number }) {
-      const qs = new URLSearchParams();
-      if (params?.namespace) qs.set('namespace', params.namespace);
-      if (params?.type) qs.set('type', params.type);
-      if (params?.limit) qs.set('limit', String(params.limit));
-      if (params?.offset) qs.set('offset', String(params.offset));
-      const q = qs.toString();
-      return request<Entity[]>(`/entities${q ? `?${q}` : ''}`);
+      return request<Entity[]>(`/entities${buildQuery({
+        namespace: params?.namespace,
+        type: params?.type,
+        limit: params?.limit,
+        offset: params?.offset,
+      })}`);
     },
 
     get(id: string) {
@@ -109,11 +117,10 @@ export const api = {
     },
 
     neighbors(id: string, opts?: { depth?: number; relationTypes?: string }) {
-      const qs = new URLSearchParams();
-      if (opts?.depth) qs.set('depth', String(opts.depth));
-      if (opts?.relationTypes) qs.set('relationTypes', opts.relationTypes);
-      const q = qs.toString();
-      return request<NeighborResult>(`/entities/${id}/neighbors${q ? `?${q}` : ''}`);
+      return request<NeighborResult>(`/entities/${id}/neighbors${buildQuery({
+        depth: opts?.depth,
+        relationTypes: opts?.relationTypes,
+      })}`);
     },
   },
 
@@ -140,30 +147,29 @@ export const api = {
   },
 
   search(params: { q: string; types?: string; namespace?: string; limit?: number; minConfidence?: number }) {
-    const qs = new URLSearchParams();
-    qs.set('q', params.q);
-    if (params.types) qs.set('types', params.types);
-    if (params.namespace) qs.set('namespace', params.namespace);
-    if (params.limit) qs.set('limit', String(params.limit));
-    if (params.minConfidence) qs.set('minConfidence', String(params.minConfidence));
-    return request<SearchResult[]>(`/search?${qs.toString()}`);
+    return request<SearchResult[]>(`/search${buildQuery({
+      q: params.q,
+      types: params.types,
+      namespace: params.namespace,
+      limit: params.limit,
+      minConfidence: params.minConfidence,
+    })}`);
   },
 
   stats(namespace?: string) {
-    const qs = namespace ? `?namespace=${namespace}` : '';
-    return request<GraphStats>(`/stats${qs}`);
+    return request<GraphStats>(`/stats${buildQuery({ namespace })}`);
   },
 
   // --- Temporal API (Phase 5) ---
 
   timeline(params: { from: string; to: string; types?: string; namespace?: string; limit?: number }) {
-    const qs = new URLSearchParams();
-    qs.set('from', params.from);
-    qs.set('to', params.to);
-    if (params.types) qs.set('types', params.types);
-    if (params.namespace) qs.set('namespace', params.namespace);
-    if (params.limit) qs.set('limit', String(params.limit));
-    return request<TimelineEntry[]>(`/timeline?${qs.toString()}`);
+    return request<TimelineEntry[]>(`/timeline${buildQuery({
+      from: params.from,
+      to: params.to,
+      types: params.types,
+      namespace: params.namespace,
+      limit: params.limit,
+    })}`);
   },
 
   contradictions: {
@@ -184,23 +190,21 @@ export const api = {
   },
 
   decisions(params?: { namespace?: string; limit?: number; offset?: number; sort?: string }) {
-    const qs = new URLSearchParams();
-    if (params?.namespace) qs.set('namespace', params.namespace);
-    if (params?.limit) qs.set('limit', String(params.limit));
-    if (params?.offset) qs.set('offset', String(params.offset));
-    if (params?.sort) qs.set('sort', params.sort);
-    const q = qs.toString();
-    return request<Entity[]>(`/decisions${q ? `?${q}` : ''}`);
+    return request<Entity[]>(`/decisions${buildQuery({
+      namespace: params?.namespace,
+      limit: params?.limit,
+      offset: params?.offset,
+      sort: params?.sort,
+    })}`);
   },
 
   stale(params?: { threshold?: number; namespace?: string; types?: string; limit?: number }) {
-    const qs = new URLSearchParams();
-    if (params?.threshold != null) qs.set('threshold', String(params.threshold));
-    if (params?.namespace) qs.set('namespace', params.namespace);
-    if (params?.types) qs.set('types', params.types);
-    if (params?.limit) qs.set('limit', String(params.limit));
-    const q = qs.toString();
-    return request<StaleEntity[]>(`/stale${q ? `?${q}` : ''}`);
+    return request<StaleEntity[]>(`/stale${buildQuery({
+      threshold: params?.threshold,
+      namespace: params?.namespace,
+      types: params?.types,
+      limit: params?.limit,
+    })}`);
   },
 
   // --- Sync API (Phase 6) ---
@@ -235,12 +239,11 @@ export const api = {
 
   parallelWork: {
     list(params?: { branch?: string; namespace?: string; limit?: number }) {
-      const qs = new URLSearchParams();
-      if (params?.branch) qs.set('branch', params.branch);
-      if (params?.namespace) qs.set('namespace', params.namespace);
-      if (params?.limit) qs.set('limit', String(params.limit));
-      const q = qs.toString();
-      return request<{ conflicts: Array<{ entityId: string; entityName: string; entityType: string; namespace: string; actors: string[]; branches: string[] }> }>(`/query/parallel-work${q ? `?${q}` : ''}`);
+      return request<{ conflicts: Array<{ entityId: string; entityName: string; entityType: string; namespace: string; actors: string[]; branches: string[] }> }>(`/query/parallel-work${buildQuery({
+        branch: params?.branch,
+        namespace: params?.namespace,
+        limit: params?.limit,
+      })}`);
     },
   },
 
@@ -301,11 +304,7 @@ export const api = {
 
   ownership: {
     tree(path?: string, depth?: number) {
-      const qs = new URLSearchParams();
-      if (path) qs.set('path', path);
-      if (depth) qs.set('depth', String(depth));
-      const q = qs.toString();
-      return request<OwnershipNode>(`/query/ownership-tree${q ? `?${q}` : ''}`);
+      return request<OwnershipNode>(`/query/ownership-tree${buildQuery({ path, depth })}`);
     },
   },
 

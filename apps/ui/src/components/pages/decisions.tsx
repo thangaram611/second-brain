@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Scale, ChevronRight, Network, ExternalLink } from 'lucide-react';
 import type { Entity, NeighborResult } from '../../lib/types.js';
 import { api } from '../../lib/api.js';
+import { useAsync } from '../../hooks/use-async.js';
 import { TypeBadge } from '../ui/badge.js';
 import { Card } from '../ui/card.js';
 import { EmptyState } from '../ui/empty-state.js';
@@ -10,32 +11,25 @@ import { LoadingState } from '../ui/loading.js';
 import { Button } from '../ui/button.js';
 
 export function DecisionsPage() {
-  const [decisions, setDecisions] = useState<Entity[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [neighbors, setNeighbors] = useState<NeighborResult | null>(null);
   const navigate = useNavigate();
 
-  useEffect(() => {
-    setLoading(true);
-    api
-      .decisions({ sort: sortOrder, limit: 200 })
-      .then(setDecisions)
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load'))
-      .finally(() => setLoading(false));
-  }, [sortOrder]);
+  const { data: decisions, loading, error } = useAsync(
+    () => api.decisions({ sort: sortOrder, limit: 200 }),
+    [sortOrder],
+  );
 
   // Filter client-side by search query
   const filtered = searchQuery
-    ? decisions.filter(
+    ? (decisions ?? []).filter(
         (d) =>
           d.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
           d.observations.some((o) => o.toLowerCase().includes(searchQuery.toLowerCase())),
       )
-    : decisions;
+    : (decisions ?? []);
 
   async function toggleExpand(id: string) {
     if (expandedId === id) {
