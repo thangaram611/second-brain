@@ -18,6 +18,7 @@ import {
 import { ENTITY_TYPES } from '@second-brain/types';
 import type { EntityType } from '@second-brain/types';
 import { VectorSearchChannel } from '@second-brain/core';
+import { textResponse, errorResponse } from './formatters.js';
 
 const EXPORT_FORMATS = ['json', 'json-ld', 'dot'] as const;
 const IMPORT_FORMATS = ['json', 'json-ld'] as const;
@@ -35,9 +36,7 @@ export function registerPipelineTools(mcp: McpServer, brain: Brain): void {
     },
     async () => {
       brain.storage.sqlite.exec("INSERT INTO entities_fts(entities_fts) VALUES('rebuild')");
-      return {
-        content: [{ type: 'text', text: 'FTS5 index rebuilt successfully.' }],
-      };
+      return textResponse('FTS5 index rebuilt successfully.');
     },
   );
 
@@ -63,9 +62,7 @@ export function registerPipelineTools(mcp: McpServer, brain: Brain): void {
         includeRelations: args.includeRelations,
       };
       const content = exportFor(brain, opts);
-      return {
-        content: [{ type: 'text', text: content }],
-      };
+      return textResponse(content);
     },
   );
 
@@ -97,14 +94,7 @@ export function registerPipelineTools(mcp: McpServer, brain: Brain): void {
               .slice(0, 10)
               .map((c) => `  - ${c.entityType}/${c.entityName}: ${c.reason}`)
               .join('\n')}`;
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Imported ${result.entitiesImported} entities, ${result.relationsImported} relations.${conflictText}`,
-          },
-        ],
-      };
+      return textResponse(`Imported ${result.entitiesImported} entities, ${result.relationsImported} relations.${conflictText}`);
     },
   );
 
@@ -134,15 +124,7 @@ export function registerPipelineTools(mcp: McpServer, brain: Brain): void {
 
       if (brain.embeddings === null) {
         if (typeof args.dimensions !== 'number') {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: 'Vector search is not enabled and no `dimensions` argument was supplied. Pass `dimensions` to bootstrap (e.g. 768 for nomic-embed-text).',
-              },
-            ],
-            isError: true,
-          };
+          return errorResponse('Vector search is not enabled and no `dimensions` argument was supplied. Pass `dimensions` to bootstrap (e.g. 768 for nomic-embed-text).');
         }
         brain.enableVectorSearch(args.dimensions);
       }
@@ -159,14 +141,7 @@ export function registerPipelineTools(mcp: McpServer, brain: Brain): void {
         );
         brain.search.setVectorChannel(ch);
       }
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Embedded ${summary.embedded} entities (${summary.skipped} unchanged, ${summary.errors} errors) in ${summary.durationMs}ms using ${cfg.embeddingModel}.`,
-          },
-        ],
-      };
+      return textResponse(`Embedded ${summary.embedded} entities (${summary.skipped} unchanged, ${summary.errors} errors) in ${summary.durationMs}ms using ${cfg.embeddingModel}.`);
     },
   );
 
@@ -216,14 +191,7 @@ export function registerPipelineTools(mcp: McpServer, brain: Brain): void {
       });
 
       if (results.length === 0) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `No matches for "${args.question}"${usedLlm ? ` (interpreted as: ${queryText})` : ''}.`,
-            },
-          ],
-        };
+        return textResponse(`No matches for "${args.question}"${usedLlm ? ` (interpreted as: ${queryText})` : ''}.`);
       }
 
       const lines = [
@@ -233,7 +201,7 @@ export function registerPipelineTools(mcp: McpServer, brain: Brain): void {
           return `[${e.type}] ${e.name} — score ${r.score.toFixed(3)} via ${r.matchChannel}\n  id: ${e.id}`;
         }),
       ];
-      return { content: [{ type: 'text', text: lines.join('\n') }] };
+      return textResponse(lines.join('\n'));
     },
   );
 }

@@ -3,6 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Brain } from '@second-brain/core';
 import { BRANCH_STATUSES, ENTITY_TYPES, RELATION_TYPES } from '@second-brain/types';
 import type { EntityType, RelationType } from '@second-brain/types';
+import { textResponse, errorResponse, notFoundResponse } from './formatters.js';
 
 export function registerWriteTools(mcp: McpServer, brain: Brain): void {
   // --- add_entity ---
@@ -43,14 +44,7 @@ export function registerWriteTools(mcp: McpServer, brain: Brain): void {
       source: { type: 'manual' },
     });
 
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Created ${entity.type}: "${entity.name}" (${entity.id})`,
-        },
-      ],
-    };
+    return textResponse(`Created ${entity.type}: "${entity.name}" (${entity.id})`);
   });
 
   // --- add_relation ---
@@ -73,17 +67,11 @@ export function registerWriteTools(mcp: McpServer, brain: Brain): void {
     // Validate both entities exist
     const source = brain.entities.get(args.sourceId);
     if (!source) {
-      return {
-        content: [{ type: 'text', text: `Source entity not found: ${args.sourceId}` }],
-        isError: true,
-      };
+      return notFoundResponse('Source entity', args.sourceId);
     }
     const target = brain.entities.get(args.targetId);
     if (!target) {
-      return {
-        content: [{ type: 'text', text: `Target entity not found: ${args.targetId}` }],
-        isError: true,
-      };
+      return notFoundResponse('Target entity', args.targetId);
     }
 
     const relation = brain.relations.create({
@@ -98,14 +86,7 @@ export function registerWriteTools(mcp: McpServer, brain: Brain): void {
       source: { type: 'manual' },
     });
 
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Created relation: "${source.name}" --[${relation.type}]--> "${target.name}" (${relation.id})`,
-        },
-      ],
-    };
+    return textResponse(`Created relation: "${source.name}" --[${relation.type}]--> "${target.name}" (${relation.id})`);
   });
 
   // --- add_observation ---
@@ -121,20 +102,10 @@ export function registerWriteTools(mcp: McpServer, brain: Brain): void {
   }, async (args) => {
     const updated = brain.entities.addObservation(args.entityId, args.observation);
     if (!updated) {
-      return {
-        content: [{ type: 'text', text: `Entity not found: ${args.entityId}` }],
-        isError: true,
-      };
+      return notFoundResponse('Entity', args.entityId);
     }
 
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Added observation to "${updated.name}". Now has ${updated.observations.length} observation(s).`,
-        },
-      ],
-    };
+    return textResponse(`Added observation to "${updated.name}". Now has ${updated.observations.length} observation(s).`);
   });
 
   // --- record_decision ---
@@ -190,9 +161,7 @@ export function registerWriteTools(mcp: McpServer, brain: Brain): void {
       text += `\nLinked to: ${createdRelations.join(', ')}`;
     }
 
-    return {
-      content: [{ type: 'text', text }],
-    };
+    return textResponse(text);
   });
 
   // --- record_pattern ---
@@ -247,9 +216,7 @@ export function registerWriteTools(mcp: McpServer, brain: Brain): void {
       text += `\nExamples linked: ${linked.join(', ')}`;
     }
 
-    return {
-      content: [{ type: 'text', text }],
-    };
+    return textResponse(text);
   });
 
   // --- record_fact ---
@@ -279,14 +246,7 @@ export function registerWriteTools(mcp: McpServer, brain: Brain): void {
       source: { type: 'manual', ref: args.sourceRef },
     });
 
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Fact recorded: "${entity.name}" (${entity.id})`,
-        },
-      ],
-    };
+    return textResponse(`Fact recorded: "${entity.name}" (${entity.id})`);
   });
 
   // --- update_entity ---
@@ -308,20 +268,10 @@ export function registerWriteTools(mcp: McpServer, brain: Brain): void {
     const updated = brain.entities.update(id, patch);
 
     if (!updated) {
-      return {
-        content: [{ type: 'text', text: `Entity not found: ${id}` }],
-        isError: true,
-      };
+      return notFoundResponse('Entity', id);
     }
 
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Updated "${updated.name}" (${updated.id})`,
-        },
-      ],
-    };
+    return textResponse(`Updated "${updated.name}" (${updated.id})`);
   });
 
   // --- merge_entities ---
@@ -338,18 +288,12 @@ export function registerWriteTools(mcp: McpServer, brain: Brain): void {
   }, async (args) => {
     const primary = brain.entities.get(args.primaryId);
     if (!primary) {
-      return {
-        content: [{ type: 'text', text: `Primary entity not found: ${args.primaryId}` }],
-        isError: true,
-      };
+      return notFoundResponse('Primary entity', args.primaryId);
     }
 
     const secondary = brain.entities.get(args.secondaryId);
     if (!secondary) {
-      return {
-        content: [{ type: 'text', text: `Secondary entity not found: ${args.secondaryId}` }],
-        isError: true,
-      };
+      return notFoundResponse('Secondary entity', args.secondaryId);
     }
 
     // Merge observations and tags
@@ -400,14 +344,7 @@ export function registerWriteTools(mcp: McpServer, brain: Brain): void {
     // Delete secondary (cascades its relations)
     brain.entities.delete(args.secondaryId);
 
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Merged "${secondary.name}" into "${primary.name}". ${mergedObs.length} observations, ${mergedTags.length} tags, ${repointed} relations re-pointed.`,
-        },
-      ],
-    };
+    return textResponse(`Merged "${secondary.name}" into "${primary.name}". ${mergedObs.length} observations, ${mergedTags.length} tags, ${repointed} relations re-pointed.`);
   });
 
   // --- invalidate ---
@@ -428,10 +365,7 @@ export function registerWriteTools(mcp: McpServer, brain: Brain): void {
   }, async (args) => {
     const entity = brain.entities.get(args.entityId);
     if (!entity) {
-      return {
-        content: [{ type: 'text', text: `Entity not found: ${args.entityId}` }],
-        isError: true,
-      };
+      return notFoundResponse('Entity', args.entityId);
     }
 
     // Set confidence to 0 (soft delete)
@@ -445,10 +379,7 @@ export function registerWriteTools(mcp: McpServer, brain: Brain): void {
     if (args.replacementId) {
       const replacement = brain.entities.get(args.replacementId);
       if (!replacement) {
-        return {
-          content: [{ type: 'text', text: `Replacement entity not found: ${args.replacementId}` }],
-          isError: true,
-        };
+        return notFoundResponse('Replacement entity', args.replacementId);
       }
       brain.relations.create({
         type: 'supersedes',
@@ -458,24 +389,10 @@ export function registerWriteTools(mcp: McpServer, brain: Brain): void {
         source: { type: 'manual' },
       });
 
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Invalidated "${entity.name}". Superseded by "${replacement.name}".`,
-          },
-        ],
-      };
+      return textResponse(`Invalidated "${entity.name}". Superseded by "${replacement.name}".`);
     }
 
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Invalidated "${entity.name}" (confidence set to 0).`,
-        },
-      ],
-    };
+    return textResponse(`Invalidated "${entity.name}" (confidence set to 0).`);
   });
 
   // --- resolve_contradiction ---
@@ -490,10 +407,7 @@ export function registerWriteTools(mcp: McpServer, brain: Brain): void {
     try {
       const rel = brain.relations.get(args.relationId);
       if (!rel) {
-        return {
-          content: [{ type: 'text', text: `Relation not found: ${args.relationId}` }],
-          isError: true,
-        };
+        return notFoundResponse('Relation', args.relationId);
       }
 
       const loserId = rel.sourceId === args.winnerId ? rel.targetId : rel.sourceId;
@@ -502,19 +416,9 @@ export function registerWriteTools(mcp: McpServer, brain: Brain): void {
 
       brain.contradictions.resolve(args.relationId, args.winnerId);
 
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Contradiction resolved: "${winner?.name ?? args.winnerId}" supersedes "${loser?.name ?? loserId}".`,
-          },
-        ],
-      };
+      return textResponse(`Contradiction resolved: "${winner?.name ?? args.winnerId}" supersedes "${loser?.name ?? loserId}".`);
     } catch (err) {
-      return {
-        content: [{ type: 'text', text: `Error: ${(err as Error).message}` }],
-        isError: true,
-      };
+      return errorResponse(`Error: ${(err as Error).message}`);
     }
   });
 
@@ -529,19 +433,9 @@ export function registerWriteTools(mcp: McpServer, brain: Brain): void {
     try {
       brain.contradictions.dismiss(args.relationId);
 
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Contradiction dismissed (relation ${args.relationId} deleted).`,
-          },
-        ],
-      };
+      return textResponse(`Contradiction dismissed (relation ${args.relationId} deleted).`);
     } catch (err) {
-      return {
-        content: [{ type: 'text', text: `Error: ${(err as Error).message}` }],
-        isError: true,
-      };
+      return errorResponse(`Error: ${(err as Error).message}`);
     }
   });
 
@@ -571,19 +465,9 @@ export function registerWriteTools(mcp: McpServer, brain: Brain): void {
         mrIid: args.mrIid ?? null,
         mergedAt: args.mergedAt ?? null,
       });
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Flipped branch "${args.branch}" → ${args.status}. Updated entities=${result.updatedEntities}, relations=${result.updatedRelations}.`,
-          },
-        ],
-      };
+      return textResponse(`Flipped branch "${args.branch}" → ${args.status}. Updated entities=${result.updatedEntities}, relations=${result.updatedRelations}.`);
     } catch (err) {
-      return {
-        content: [{ type: 'text', text: `Error: ${(err as Error).message}` }],
-        isError: true,
-      };
+      return errorResponse(`Error: ${(err as Error).message}`);
     }
   });
 }

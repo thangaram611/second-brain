@@ -3,6 +3,14 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Brain } from '@second-brain/core';
 import { ENTITY_TYPES, RELATION_TYPES, sessionNamespace } from '@second-brain/types';
 import type { EntityType, RelationType, TimelineEntry, SearchResult } from '@second-brain/types';
+import {
+  textResponse,
+  notFoundResponse,
+  formatSearchResults,
+  formatDecisionResults,
+  formatPatternResults,
+  formatEntityDetail,
+} from './formatters.js';
 
 export interface RecallContextBlockOptions {
   query?: string;
@@ -122,34 +130,10 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
     });
 
     if (results.length === 0) {
-      return {
-        content: [{ type: 'text', text: 'No results found.' }],
-      };
+      return textResponse('No results found.');
     }
 
-    const text = results
-      .map((r) => {
-        const e = r.entity;
-        const lines = [
-          `[${e.type}] ${e.name} (score: ${r.score.toFixed(3)}, confidence: ${e.confidence})`,
-          `  id: ${e.id}`,
-        ];
-        if (e.observations.length > 0) {
-          for (const obs of e.observations) {
-            lines.push(`  - ${obs}`);
-          }
-        }
-        if (e.tags.length > 0) {
-          lines.push(`  tags: ${e.tags.join(', ')}`);
-        }
-        lines.push(`  namespace: ${e.namespace}`);
-        return lines.join('\n');
-      })
-      .join('\n\n');
-
-    return {
-      content: [{ type: 'text', text: `Found ${results.length} result(s):\n\n${text}` }],
-    };
+    return textResponse(`Found ${results.length} result(s):\n\n${formatSearchResults(results)}`);
   });
 
   // --- get_entity ---
@@ -166,10 +150,7 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
   }, async (args) => {
     const entity = brain.entities.get(args.id);
     if (!entity) {
-      return {
-        content: [{ type: 'text', text: `Entity not found: ${args.id}` }],
-        isError: true,
-      };
+      return notFoundResponse('Entity', args.id);
     }
 
     // Touch to track access
@@ -178,52 +159,7 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
     const outbound = brain.relations.getOutbound(args.id);
     const inbound = brain.relations.getInbound(args.id);
 
-    const lines = [
-      `# ${entity.name}`,
-      `Type: ${entity.type}`,
-      `ID: ${entity.id}`,
-      `Namespace: ${entity.namespace}`,
-      `Confidence: ${entity.confidence}`,
-      `Access count: ${entity.accessCount}`,
-      `Source: ${entity.source.type}${entity.source.ref ? ` (${entity.source.ref})` : ''}`,
-      `Created: ${entity.createdAt}`,
-      `Updated: ${entity.updatedAt}`,
-    ];
-
-    if (entity.observations.length > 0) {
-      lines.push('', '## Observations');
-      for (const obs of entity.observations) {
-        lines.push(`- ${obs}`);
-      }
-    }
-
-    if (entity.tags.length > 0) {
-      lines.push('', `## Tags`, entity.tags.join(', '));
-    }
-
-    if (Object.keys(entity.properties).length > 0) {
-      lines.push('', '## Properties', JSON.stringify(entity.properties, null, 2));
-    }
-
-    if (outbound.length > 0) {
-      lines.push('', '## Outbound Relations');
-      for (const rel of outbound) {
-        const target = brain.entities.get(rel.targetId);
-        lines.push(`- ${rel.type} → ${target?.name ?? rel.targetId} (weight: ${rel.weight})`);
-      }
-    }
-
-    if (inbound.length > 0) {
-      lines.push('', '## Inbound Relations');
-      for (const rel of inbound) {
-        const source = brain.entities.get(rel.sourceId);
-        lines.push(`- ${source?.name ?? rel.sourceId} → ${rel.type} (weight: ${rel.weight})`);
-      }
-    }
-
-    return {
-      content: [{ type: 'text', text: lines.join('\n') }],
-    };
+    return textResponse(formatEntityDetail(entity, outbound, inbound, brain));
   });
 
   // --- get_neighbors ---
@@ -245,22 +181,17 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
   }, async (args) => {
     const seed = brain.entities.get(args.entityId);
     if (!seed) {
-      return {
-        content: [{ type: 'text', text: `Entity not found: ${args.entityId}` }],
-        isError: true,
-      };
+      return notFoundResponse('Entity', args.entityId);
     }
 
-    const { entities: neighbors, relations } = brain.relations.getNeighbors(
+    const { entities: neighbors, relations } = brain.traversal.getNeighbors(
       args.entityId,
       args.depth ?? 1,
       args.relationTypes as RelationType[] | undefined,
     );
 
     if (neighbors.length === 0) {
-      return {
-        content: [{ type: 'text', text: `No neighbors found for "${seed.name}".` }],
-      };
+      return textResponse(`No neighbors found for "${seed.name}".`);
     }
 
     const lines = [`Neighbors of "${seed.name}" (depth ${args.depth ?? 1}):\n`];
@@ -279,9 +210,7 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
       lines.push(`  ${src} --[${rel.type}]--> ${tgt}`);
     }
 
-    return {
-      content: [{ type: 'text', text: lines.join('\n') }],
-    };
+    return textResponse(lines.join('\n'));
   });
 
   // --- traverse_graph ---
@@ -300,25 +229,17 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
   }, async (args) => {
     const from = brain.entities.get(args.fromId);
     if (!from) {
-      return {
-        content: [{ type: 'text', text: `Source entity not found: ${args.fromId}` }],
-        isError: true,
-      };
+      return notFoundResponse('Source entity', args.fromId);
     }
     const to = brain.entities.get(args.toId);
     if (!to) {
-      return {
-        content: [{ type: 'text', text: `Target entity not found: ${args.toId}` }],
-        isError: true,
-      };
+      return notFoundResponse('Target entity', args.toId);
     }
 
-    const paths = brain.relations.findPath(args.fromId, args.toId, args.maxDepth ?? 5);
+    const paths = brain.traversal.findPath(args.fromId, args.toId, args.maxDepth ?? 5);
 
     if (paths.length === 0) {
-      return {
-        content: [{ type: 'text', text: `No path found between "${from.name}" and "${to.name}".` }],
-      };
+      return textResponse(`No path found between "${from.name}" and "${to.name}".`);
     }
 
     const lines = [`Found ${paths.length} path(s) from "${from.name}" to "${to.name}":\n`];
@@ -336,9 +257,7 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
       lines.push(`  Path ${i + 1}: ${steps.join(' ')}`);
     }
 
-    return {
-      content: [{ type: 'text', text: lines.join('\n') }],
-    };
+    return textResponse(lines.join('\n'));
   });
 
   // --- search_decisions ---
@@ -362,26 +281,10 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
     });
 
     if (results.length === 0) {
-      return {
-        content: [{ type: 'text', text: 'No decisions found.' }],
-      };
+      return textResponse('No decisions found.');
     }
 
-    const text = results
-      .map((r) => {
-        const e = r.entity;
-        const lines = [`**${e.name}** (confidence: ${e.confidence})`];
-        for (const obs of e.observations) {
-          lines.push(`  - ${obs}`);
-        }
-        lines.push(`  id: ${e.id} | namespace: ${e.namespace} | created: ${e.createdAt}`);
-        return lines.join('\n');
-      })
-      .join('\n\n');
-
-    return {
-      content: [{ type: 'text', text: `Found ${results.length} decision(s):\n\n${text}` }],
-    };
+    return textResponse(`Found ${results.length} decision(s):\n\n${formatDecisionResults(results)}`);
   });
 
   // --- search_patterns ---
@@ -405,26 +308,10 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
     });
 
     if (results.length === 0) {
-      return {
-        content: [{ type: 'text', text: 'No patterns found.' }],
-      };
+      return textResponse('No patterns found.');
     }
 
-    const text = results
-      .map((r) => {
-        const e = r.entity;
-        const lines = [`**${e.name}** (confidence: ${e.confidence})`];
-        for (const obs of e.observations) {
-          lines.push(`  - ${obs}`);
-        }
-        lines.push(`  id: ${e.id} | namespace: ${e.namespace}`);
-        return lines.join('\n');
-      })
-      .join('\n\n');
-
-    return {
-      content: [{ type: 'text', text: `Found ${results.length} pattern(s):\n\n${text}` }],
-    };
+    return textResponse(`Found ${results.length} pattern(s):\n\n${formatPatternResults(results)}`);
   });
 
   // --- get_graph_stats ---
@@ -460,9 +347,7 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
       }
     }
 
-    return {
-      content: [{ type: 'text', text: lines.join('\n') }],
-    };
+    return textResponse(lines.join('\n'));
   });
 
   // --- get_contradictions ---
@@ -480,9 +365,7 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
     const contradictions = brain.contradictions.getUnresolved(args.namespace);
 
     if (contradictions.length === 0) {
-      return {
-        content: [{ type: 'text', text: 'No unresolved contradictions.' }],
-      };
+      return textResponse('No unresolved contradictions.');
     }
 
     const text = contradictions
@@ -507,9 +390,7 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
       })
       .join('\n\n---\n\n');
 
-    return {
-      content: [{ type: 'text', text: `Found ${contradictions.length} unresolved contradiction(s):\n\n${text}` }],
-    };
+    return textResponse(`Found ${contradictions.length} unresolved contradiction(s):\n\n${text}`);
   });
 
   // --- get_timeline ---
@@ -540,9 +421,7 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
     });
 
     if (entries.length === 0) {
-      return {
-        content: [{ type: 'text', text: 'No activity in this time range.' }],
-      };
+      return textResponse('No activity in this time range.');
     }
 
     // Group by date
@@ -564,9 +443,7 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
       lines.push('');
     }
 
-    return {
-      content: [{ type: 'text', text: lines.join('\n') }],
-    };
+    return textResponse(lines.join('\n'));
   });
 
   // --- recall_session_context ---
@@ -606,9 +483,7 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
       limit,
       includeParallelWork: args.includeParallelWork ?? false,
     });
-    return {
-      content: [{ type: 'text', text: block || 'No prior context.' }],
-    };
+    return textResponse(block || 'No prior context.');
   });
 
   // --- find_parallel_work ---
@@ -636,7 +511,7 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
       limit: args.limit,
     });
     if (rows.length === 0) {
-      return { content: [{ type: 'text', text: 'No parallel work detected.' }] };
+      return textResponse('No parallel work detected.');
     }
     const lines: string[] = ['Parallel work detected:', ''];
     for (const r of rows) {
@@ -644,7 +519,7 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
       lines.push(`    actors:   ${r.actors.join(', ')}`);
       lines.push(`    branches: ${r.branches.join(', ')}`);
     }
-    return { content: [{ type: 'text', text: lines.join('\n') }] };
+    return textResponse(lines.join('\n'));
   });
 
   // --- get_ownership ---
@@ -712,10 +587,7 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
   }, async (args) => {
     const anchor = brain.entities.get(args.entityId);
     if (!anchor) {
-      return {
-        content: [{ type: 'text', text: `Entity not found: ${args.entityId}` }],
-        isError: true,
-      };
+      return notFoundResponse('Entity', args.entityId);
     }
     const windowMinutes = args.windowMinutes ?? 60;
     const anchorMs = new Date(anchor.eventTime).getTime();
@@ -730,9 +602,7 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
     });
 
     if (entries.length === 0) {
-      return {
-        content: [{ type: 'text', text: `No activity within ±${windowMinutes}min of "${anchor.name}".` }],
-      };
+      return textResponse(`No activity within ±${windowMinutes}min of "${anchor.name}".`);
     }
 
     const lines = [
@@ -744,9 +614,7 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
       const tag = entry.changeType === 'created' ? '+' : '~';
       lines.push(`  ${entry.timestamp}  ${tag} [${entry.entityType}] ${entry.entityName}  ${entry.entityId}`);
     }
-    return {
-      content: [{ type: 'text', text: lines.join('\n') }],
-    };
+    return textResponse(lines.join('\n'));
   });
 
   // --- get_observations_by_ids ---
@@ -782,7 +650,7 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
           .join('\n'),
       );
     }
-    return { content: [{ type: 'text', text: rows.join('\n\n') }] };
+    return textResponse(rows.join('\n\n'));
   });
 
   // --- get_stale ---
@@ -816,9 +684,7 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
     });
 
     if (stale.length === 0) {
-      return {
-        content: [{ type: 'text', text: 'No stale entities found.' }],
-      };
+      return textResponse('No stale entities found.');
     }
 
     const text = stale
@@ -834,8 +700,6 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
       })
       .join('\n\n');
 
-    return {
-      content: [{ type: 'text', text: `Found ${stale.length} stale entity(ies):\n\n${text}` }],
-    };
+    return textResponse(`Found ${stale.length} stale entity(ies):\n\n${text}`);
   });
 }
