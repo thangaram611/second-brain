@@ -48,3 +48,38 @@ export {
   QUEUE_DIR_PATH,
 } from './webhook-relay.js';
 export type { RelayClient, RelayForwardInput, RelayForwardOutput, QueuedDelivery } from './webhook-relay.js';
+
+export { CustomProvider } from './custom-provider.js';
+
+export { CustomProviderMappingSchema, extractField } from './custom-provider-types.js';
+export type {
+  CustomProviderMapping,
+  VerificationConfig,
+  PREventMapping,
+  ReviewEventMapping,
+  CommentEventMapping,
+} from './custom-provider-types.js';
+
+export { GitHubProvider } from './github-provider.js';
+export type { GitHubProviderOptions } from './github-provider.js';
+
+export {
+  GitHubPRWebhookSchema,
+  GitHubPRReviewWebhookSchema,
+  GitHubPRReviewCommentWebhookSchema,
+  GitHubCheckSuiteWebhookSchema,
+  GitHubWebhookUserSchema,
+  GitHubHookRestSchema,
+  GitHubUserRestSchema,
+  GH_PR_ACTIONS,
+} from './github-webhook-types.js';
+export type {
+  GitHubPRWebhook,
+  GitHubPRReviewWebhook,
+  GitHubPRReviewCommentWebhook,
+  GitHubCheckSuiteWebhook,
+  GitHubWebhookUser,
+  GitHubHookRest,
+  GitHubUserRest,
+  GhPrAction,
+} from './github-webhook-types.js';
