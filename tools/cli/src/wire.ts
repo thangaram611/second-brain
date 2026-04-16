@@ -11,10 +11,12 @@ import { GitLabProvider, GitHubProvider, resolveGitLabProject, mintRelayChannel 
 const ProjectConfigSchema = z.object({ namespace: z.string().min(1).optional() }).passthrough();
 import {
   installClaudeHooks,
+  type InstallHooksResult,
+} from './install-claude-hooks.js';
+import {
   installGitHooks,
   type InstallGitHooksResult,
-  type InstallHooksResult,
-} from './install-hooks.js';
+} from './install-git-hooks.js';
 import {
   computeRepoHash,
   loadWiredRepos,

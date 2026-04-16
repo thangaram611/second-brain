@@ -162,7 +162,8 @@ export async function runHook(argv: string[], stdin: string, opts: RunOptions = 
 
     const port = Number(process.env.BRAIN_API_PORT ?? 7430);
     const url = `http://127.0.0.1:${port}${ENDPOINT[hook]}`;
-    const token = process.env.BRAIN_AUTH_TOKEN;
+    const { buildAuthHeaders } = await import('./lib/config.js');
+    const authHeaders = buildAuthHeaders();
 
     const timeoutMs = hook === 'session-start' ? 500 : 100;
     const controller = new AbortController();
@@ -175,7 +176,7 @@ export async function runHook(argv: string[], stdin: string, opts: RunOptions = 
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          ...(token ? { authorization: `Bearer ${token}` } : {}),
+          ...authHeaders,
         },
         body: JSON.stringify(body),
         signal: controller.signal,

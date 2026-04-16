@@ -17,17 +17,15 @@ export async function runOwnership(options: {
   serverUrl?: string;
   token?: string;
 }): Promise<void> {
-  const serverUrl =
-    options.serverUrl ?? process.env.BRAIN_SERVER_URL ?? 'http://localhost:7430';
-  const token = options.token ?? process.env.BRAIN_AUTH_TOKEN;
+  const { getServerUrl, buildAuthHeaders } = await import('./lib/config.js');
+  const serverUrl = getServerUrl(options.serverUrl);
 
   const url = new URL(`${serverUrl}/api/query/ownership`);
   url.searchParams.set('path', options.path);
   if (options.limit !== undefined)
     url.searchParams.set('limit', String(options.limit));
 
-  const headers: Record<string, string> = {};
-  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const headers: Record<string, string> = buildAuthHeaders(options.token);
 
   const res = await fetch(url.toString(), { headers });
   if (!res.ok) {

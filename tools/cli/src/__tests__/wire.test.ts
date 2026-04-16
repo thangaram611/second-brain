@@ -7,7 +7,7 @@ import {
   installGitHooks,
   uninstallGitHooks,
   GIT_HOOK_NAMES,
-} from '../install-hooks.js';
+} from '../install-git-hooks.js';
 
 let tmpDir: string;
 let savedHome: string | undefined;

@@ -6,9 +6,11 @@ import lockfile from 'proper-lockfile';
 import { GitLabProvider, GitHubProvider } from '@second-brain/collectors';
 import {
   uninstallClaudeHooks,
+} from './install-claude-hooks.js';
+import {
   uninstallGitHooks,
   type UninstallGitHooksResult,
-} from './install-hooks.js';
+} from './install-git-hooks.js';
 import {
   computeRepoHash,
   loadWiredRepos,

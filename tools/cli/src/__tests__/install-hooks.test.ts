@@ -8,7 +8,7 @@ import {
   detectClaudeMem,
   stripClaudeMem,
   CLAUDE_HOOK_EVENTS,
-} from '../install-hooks.js';
+} from '../install-claude-hooks.js';
 
 let tmp: string;
 
