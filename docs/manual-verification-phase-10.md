@@ -216,3 +216,162 @@ Pre-reqs: `brain init` completed; some personal-namespace entities exist
 
 Ship-blockers: **steps 1, 4, 7, and 10.** Steps 6, 9, and 11 are
 feature-verification and can be waived for a manual regression run.
+
+## 10.5 — GitHub provider, custom provider, SSE relay, UI ownership & WIP radar
+
+Pre-reqs: `brain init` completed; `brain serve` running at
+`http://localhost:7430`; a GitHub repo the user owns; `brain` CLI is on
+`$PATH`.
+
+### A. GitHub Provider Round-Trip
+
+1. **Wire a GitHub repo.** In a repo with a `git remote` pointing at
+   GitHub, run:
+   ```
+   brain wire --provider github
+   ```
+   Expected stdout: `provider: github owner=<owner> repo=<repo> hook=<id>`;
+   the smee.io channel URL is printed. Confirm in GitHub UI
+   *Settings → Webhooks*: one entry pointing at the smee URL, scoped to
+   `pull_request`, `pull_request_review`, `pull_request_review_comment`,
+   `check_suite`, with HMAC signing enabled.
+
+2. **Verify webhook on GitHub.** Navigate to *Settings → Webhooks* in
+   the GitHub repo. Confirm the webhook exists, is active, and lists the
+   correct events. Click *Recent Deliveries* — no failures expected yet.
+
+3. **Open a PR.** Push a branch, open a PR in the GitHub UI. Within
+   30 s, run:
+   ```
+   brain mcp call recall_session_context --query "<pr-title>"
+   ```
+   Expected: a `merge_request` entity with `properties.iid`,
+   `properties.sourceBranch`, `properties.targetBranch`, `authored_by`
+   edge to the `person` entity.
+
+4. **Merge the PR.** Merge via the GitHub UI. Within 30 s:
+   ```
+   brain recall --query <source-branch>
+   ```
+   Expected: every entity+relation tagged with that branch now has
+   `branchContext.status='merged'` and `mrIid=<number>`;
+   `find_parallel_work` no longer lists them.
+
+5. **Unwire.** Run:
+   ```
+   brain unwire
+   ```
+   Expected: webhook removed from GitHub *Settings → Webhooks*; keychain
+   entries `github.webhook-secret:<owner>/<repo>` and
+   `github.pat:github.com` removed; `~/.second-brain/config.json` no
+   longer lists this repo. Historical PR entities remain recallable.
+
+### B. Custom Provider (Gitea)
+
+1. **Create a mapping file.** Run:
+   ```
+   brain provider template --name gitea
+   ```
+   Expected: `~/.second-brain/providers/gitea.json` created with a
+   skeleton mapping. Open it and verify the structure matches the
+   `CustomProviderMapping` schema (see `docs/providers.md`).
+
+2. **Configure webhook on Gitea.** In the Gitea UI, create a webhook
+   pointing at your smee.io relay URL (or directly at
+   `http://localhost:7430/api/observe/mr-event`). Set the secret token to
+   match what you store in the keychain. Select events: Pull Request,
+   Pull Request Review, Pull Request Comment.
+
+3. **Send a test webhook delivery.** Use Gitea's *Test Delivery* button
+   or `curl` with the correct headers:
+   ```
+   curl -X POST http://localhost:7430/api/observe/mr-event \
+     -H 'content-type: application/json' \
+     -H 'x-gitea-event: pull_request' \
+     -H 'x-gitea-token: <your-secret>' \
+     -d '{"action":"opened","pull_request":{"number":1,"title":"Test PR","head":{"ref":"feat/test"},"base":{"ref":"main"},"user":{"login":"alice"}},"repository":{"full_name":"org/repo"}}'
+   ```
+   Expected: 201 response; `brain recall --query "Test PR"` returns the
+   observation.
+
+4. **Verify observation.** Run:
+   ```
+   brain mcp call recall_session_context --query "Test PR"
+   ```
+   Expected: a `merge_request` entity with the correct title, branches,
+   and author.
+
+### C. SSE Relay
+
+1. **Wire a repo with a provider.** Ensure `brain wire --provider github`
+   (or `gitlab`) has completed and the smee.io channel URL is configured.
+
+2. **Start the watch daemon.** Run:
+   ```
+   brain watch --repo .
+   ```
+   Expected: output includes `SSE relay connected` (or similar relay
+   connection confirmation).
+
+3. **Verify relay connectivity.** Check the daemon logs for the smee.io
+   EventSource connection. If the connection drops, the daemon should
+   auto-reconnect within a few seconds.
+
+4. **Trigger a webhook event.** Open or update a PR on the forge.
+   Expected: the watch daemon logs show the forwarded delivery ID and
+   event type; the server creates/updates the corresponding observation.
+
+### D. UI Ownership Page
+
+Pre-req: server running; at least one wired repo with file-change
+observations.
+
+1. **Navigate to `/ownership`.** Open `http://localhost:7430/ownership`
+   in a browser.
+   Expected: the ownership page loads without errors.
+
+2. **Verify directory tree.** The page displays a directory tree for the
+   wired repository.
+   Expected: top-level directories are visible with ownership score bars.
+
+3. **Click into subdirectories.** Expand a directory node.
+   Expected: child files/directories load with their individual ownership
+   scores.
+
+4. **Verify score bars.** Each file/directory has a colored score bar
+   indicating the dominant contributor(s).
+   Expected: scores sum to ≤ 1.0 per entry; contributors are labeled.
+
+### E. UI WIP Radar
+
+Pre-req: server running; at least two branches with overlapping file
+edits.
+
+1. **Navigate to `/wip-radar`.** Open `http://localhost:7430/wip-radar`
+   in a browser.
+   Expected: the WIP radar page loads without errors.
+
+2. **Create parallel branches.** In the wired repo, simulate two
+   branches touching the same file:
+   ```
+   # Branch A
+   git checkout -b feat/a && echo "// a" >> src/shared.ts && git add . && git commit -m "a"
+   git checkout main
+
+   # Branch B
+   git checkout -b feat/b && echo "// b" >> src/shared.ts && git add . && git commit -m "b"
+   ```
+   Ensure both branches' file changes are observed (via `brain watch` or
+   the git hooks).
+
+3. **Verify conflicts appear.** Refresh `/wip-radar`.
+   Expected: at least one conflict card showing `src/shared.ts` with
+   both branches (`feat/a`, `feat/b`) and their respective authors.
+
+4. **Verify auto-refresh.** Leave the page open; trigger another
+   overlapping edit on a new branch.
+   Expected: the new conflict appears without a manual page refresh.
+
+Ship-blockers: **A.1–A.4, C.2, D.1–D.2, E.1.** Steps B.*, C.4, D.3–D.4,
+and E.2–E.4 are feature-verification and can be waived for a manual
+regression run.
