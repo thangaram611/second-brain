@@ -1,13 +1,13 @@
 import { eq, and, sql } from 'drizzle-orm';
 import type {
-  Entity,
-  EntityType,
   SearchOptions,
   SearchResult,
   GraphStats,
 } from '@second-brain/types';
 import { entities } from '../schema/index.js';
 import type { StorageDatabase } from '../storage/index.js';
+import { rawRowToEntity } from '../temporal/row-mappers.js';
+import { sanitizeFtsQuery } from './fts-utils.js';
 import { reciprocalRankFusion, type RankedResult } from './fusion.js';
 import { fulltextToRanked, type VectorSearchChannel } from './vector-channel.js';
 
@@ -34,18 +34,7 @@ export class SearchEngine {
 
     if (!query.trim()) return [];
 
-    // Build FTS5 query — strip FTS5 metacharacters and add prefix matching.
-    const ftsQuery = query
-      .trim()
-      .split(/\s+/)
-      .map((term) => {
-        const sanitized = term.replace(/['"()*^~{}[\]:]/g, '');
-        if (!sanitized) return null;
-        return `"${sanitized}"*`;
-      })
-      .filter(Boolean)
-      .join(' ');
-
+    const ftsQuery = sanitizeFtsQuery(query);
     if (!ftsQuery) return [];
 
     // Use raw SQL for FTS5 query since Drizzle doesn't have native FTS support
@@ -82,7 +71,7 @@ export class SearchEngine {
     >;
 
     return rows.map((row) => ({
-      entity: this.rowToEntity(row),
+      entity: rawRowToEntity(row),
       score: Math.abs(row.rank as number), // BM25 returns negative scores
       matchChannel: 'fulltext' as const,
     }));
@@ -180,29 +169,5 @@ export class SearchEngine {
     const namespaces = nsRows.map((r) => r.namespace);
 
     return { totalEntities, totalRelations, entitiesByType, relationsByType, namespaces };
-  }
-
-  private rowToEntity(row: Record<string, unknown>): Entity {
-    return {
-      id: row.id as string,
-      type: row.type as EntityType,
-      name: row.name as string,
-      namespace: row.namespace as string,
-      observations: JSON.parse((row.observations as string) || '[]'),
-      properties: JSON.parse((row.properties as string) || '{}'),
-      confidence: row.confidence as number,
-      eventTime: row.event_time as string,
-      ingestTime: row.ingest_time as string,
-      lastAccessedAt: (row.last_accessed_at as string) ?? (row.created_at as string),
-      accessCount: row.access_count as number,
-      source: {
-        type: row.source_type as Entity['source']['type'],
-        ref: (row.source_ref as string) ?? undefined,
-        actor: (row.source_actor as string) ?? undefined,
-      },
-      tags: JSON.parse((row.tags as string) || '[]'),
-      createdAt: row.created_at as string,
-      updatedAt: row.updated_at as string,
-    };
   }
 }

@@ -7,6 +7,7 @@ import type {
   EntityType,
 } from '@second-brain/types';
 import type { StorageDatabase } from '../storage/index.js';
+import { sanitizeFtsQuery } from '../search/fts-utils.js';
 import { rawRowToEntity } from './row-mappers.js';
 
 /**
@@ -109,17 +110,7 @@ export class BitemporalQueries {
 
     if (!query.trim()) return [];
 
-    const ftsQuery = query
-      .trim()
-      .split(/\s+/)
-      .map((term) => {
-        const sanitized = term.replace(/['"()*^~{}[\]:]/g, '');
-        if (!sanitized) return null;
-        return `"${sanitized}"*`;
-      })
-      .filter(Boolean)
-      .join(' ');
-
+    const ftsQuery = sanitizeFtsQuery(query);
     if (!ftsQuery) return [];
 
     let sql = `

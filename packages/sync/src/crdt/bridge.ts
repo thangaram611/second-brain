@@ -7,6 +7,55 @@ import { entityToYMap, relationToYMap, yMapToEntity, yMapToRelation } from './sc
 type DeepObserverFn = (events: Array<Y.YEvent<any>>, txn: Y.Transaction) => void;
 
 /**
+ * Creates a deep observer that filters by origin, collects affected/deleted IDs,
+ * and delegates to caller-provided handlers.
+ */
+function createDeepObserver(
+  rootMap: Y.Map<unknown>,
+  handlers: {
+    onDelete: (id: string) => void;
+    onUpsert: (id: string, yMap: Y.Map<unknown>) => void;
+  },
+): DeepObserverFn {
+  return (events, txn) => {
+    if (txn.origin === SyncBridge.LOCAL_ORIGIN || txn.origin === 'hydrate') return;
+
+    const affectedIds = new Set<string>();
+    const deletedIds = new Set<string>();
+
+    for (const event of events) {
+      if (event.target === rootMap) {
+        for (const [key, change] of event.changes.keys) {
+          if (change.action === 'delete') {
+            deletedIds.add(key);
+          } else {
+            affectedIds.add(key);
+          }
+        }
+      } else {
+        const path = event.path;
+        if (path.length > 0) {
+          const id = path[0];
+          if (typeof id === 'string') {
+            affectedIds.add(id);
+          }
+        }
+      }
+    }
+
+    for (const id of deletedIds) {
+      handlers.onDelete(id);
+    }
+
+    for (const id of affectedIds) {
+      const yMap = rootMap.get(id);
+      if (!(yMap instanceof Y.Map)) continue;
+      handlers.onUpsert(id, yMap);
+    }
+  };
+}
+
+/**
  * Bidirectional bridge between a Y.Doc and SQLite storage.
  *
  * Uses `observeDeep` on the entities/relations maps so that both
@@ -14,7 +63,7 @@ type DeepObserverFn = (events: Array<Y.YEvent<any>>, txn: Y.Transaction) => void
  * (name update, confidence change, etc.) are captured.
  */
 export class SyncBridge {
-  private static LOCAL_ORIGIN = 'local';
+  static readonly LOCAL_ORIGIN = 'local';
 
   private doc: Y.Doc;
   private entityManager: EntityManager;
@@ -42,52 +91,18 @@ export class SyncBridge {
     const entitiesMap = this.doc.getMap('entities');
     const relationsMap = this.doc.getMap('relations');
 
-    this.entityDeepObserver = (events, txn) => {
-      if (txn.origin === SyncBridge.LOCAL_ORIGIN || txn.origin === 'hydrate') return;
-
-      const affectedEntityIds = new Set<string>();
-      const deletedEntityIds = new Set<string>();
-
-      for (const event of events) {
-        if (event.target === entitiesMap) {
-          // Top-level changes on the entities map
-          for (const [key, change] of event.changes.keys) {
-            if (change.action === 'delete') {
-              deletedEntityIds.add(key);
-            } else {
-              affectedEntityIds.add(key);
-            }
-          }
-        } else {
-          // Nested change: event.path gives the path from the observed target (entitiesMap)
-          // to the event target. The first path element is the entity ID.
-          const path = event.path;
-          if (path.length > 0) {
-            const entityId = path[0];
-            if (typeof entityId === 'string') {
-              affectedEntityIds.add(entityId);
-            }
-          }
-        }
-      }
-
-      for (const entityId of deletedEntityIds) {
-        this.entityManager.delete(entityId);
-      }
-
-      for (const entityId of affectedEntityIds) {
-        const yMap = entitiesMap.get(entityId);
-        if (!(yMap instanceof Y.Map)) continue;
-
+    this.entityDeepObserver = createDeepObserver(entitiesMap, {
+      onDelete: (id) => this.entityManager.delete(id),
+      onUpsert: (id, yMap) => {
         let remoteEntity: Entity;
         try {
           remoteEntity = yMapToEntity(yMap);
         } catch {
-          continue;
+          return;
         }
 
         if (this.onConflict) {
-          const existing = this.entityManager.get(entityId);
+          const existing = this.entityManager.get(id);
           if (existing) {
             this.detectEntityConflicts(existing, remoteEntity);
           }
@@ -105,48 +120,17 @@ export class SyncBridge {
           tags: remoteEntity.tags,
         };
         this.entityManager.batchUpsert([input]);
-      }
-    };
+      },
+    });
 
-    this.relationDeepObserver = (events, txn) => {
-      if (txn.origin === SyncBridge.LOCAL_ORIGIN || txn.origin === 'hydrate') return;
-
-      const affectedRelationIds = new Set<string>();
-      const deletedRelationIds = new Set<string>();
-
-      for (const event of events) {
-        if (event.target === relationsMap) {
-          for (const [key, change] of event.changes.keys) {
-            if (change.action === 'delete') {
-              deletedRelationIds.add(key);
-            } else {
-              affectedRelationIds.add(key);
-            }
-          }
-        } else {
-          const path = event.path;
-          if (path.length > 0) {
-            const relationId = path[0];
-            if (typeof relationId === 'string') {
-              affectedRelationIds.add(relationId);
-            }
-          }
-        }
-      }
-
-      for (const relationId of deletedRelationIds) {
-        this.relationManager.delete(relationId);
-      }
-
-      for (const relationId of affectedRelationIds) {
-        const yMap = relationsMap.get(relationId);
-        if (!(yMap instanceof Y.Map)) continue;
-
+    this.relationDeepObserver = createDeepObserver(relationsMap, {
+      onDelete: (id) => this.relationManager.delete(id),
+      onUpsert: (_id, yMap) => {
         let remoteRelation: Relation;
         try {
           remoteRelation = yMapToRelation(yMap);
         } catch {
-          continue;
+          return;
         }
 
         const input: CreateRelationInput = {
@@ -162,8 +146,8 @@ export class SyncBridge {
           eventTime: remoteRelation.eventTime,
         };
         this.relationManager.batchUpsert([input]);
-      }
-    };
+      },
+    });
 
     entitiesMap.observeDeep(this.entityDeepObserver);
     relationsMap.observeDeep(this.relationDeepObserver);

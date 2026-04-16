@@ -20,6 +20,12 @@ export interface LLMCollectorOptions {
  * Generic Collector that runs LLMExtractor over a list of text inputs.
  * Used by docs/conversation collectors that want to delegate the actual
  * extraction to the LLM rather than doing deterministic parsing only.
+ *
+ * This wrapper exists as a separate abstraction (rather than being inlined
+ * into callers) because it bridges two interfaces: it adapts the single-text
+ * LLMExtractor into the multi-input Collector contract expected by the
+ * pipeline, handling iteration, result merging, and progress reporting in
+ * one reusable place.
  */
 export class LLMCollector implements Collector {
   readonly name: string;

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { StorageDatabase, type DatabaseOptions } from './storage/index.js';
 import { EntityManager } from './graph/entity-manager.js';
 import { RelationManager } from './graph/relation-manager.js';
+import { GraphTraversal } from './graph/graph-traversal.js';
 import { SearchEngine } from './search/search-engine.js';
 import { BitemporalQueries } from './temporal/bitemporal-queries.js';
 import { DecayEngine } from './temporal/decay-engine.js';
@@ -69,6 +70,7 @@ export class Brain {
   readonly storage: StorageDatabase;
   readonly entities: EntityManager;
   readonly relations: RelationManager;
+  readonly traversal: GraphTraversal;
   readonly search: SearchEngine;
   readonly temporal: BitemporalQueries;
   readonly decay: DecayEngine;
@@ -77,17 +79,21 @@ export class Brain {
    * Vector embedding store. Non-null only when `vectorDimensions` was set
    * in BrainOptions or `enableVectorSearch()` was called on storage.
    */
-  readonly embeddings: EmbeddingStore | null;
+  private _embeddings: EmbeddingStore | null;
+  get embeddings(): EmbeddingStore | null {
+    return this._embeddings;
+  }
 
   constructor(options: BrainOptions) {
     this.storage = new StorageDatabase(options);
     this.entities = new EntityManager(this.storage.db);
     this.relations = new RelationManager(this.storage.db);
+    this.traversal = new GraphTraversal(this.relations, this.entities);
     this.search = new SearchEngine(this.storage);
     this.temporal = new BitemporalQueries(this.storage);
     this.decay = new DecayEngine(this.storage, options.decay);
     this.contradictions = new ContradictionDetector(this.storage, this.relations, this.entities);
-    this.embeddings = this.storage.vectorDimensions !== null ? new EmbeddingStore(this.storage) : null;
+    this._embeddings = this.storage.vectorDimensions !== null ? new EmbeddingStore(this.storage) : null;
   }
 
   /**
@@ -96,19 +102,10 @@ export class Brain {
    */
   enableVectorSearch(dimensions: number): EmbeddingStore {
     this.storage.enableVectorSearch(dimensions);
-    if (this.embeddings === null) {
-      // EmbeddingStore is readonly but we set it in the constructor based on
-      // storage state — once enabled, replace via Object.defineProperty so the
-      // public type stays accurate without a non-readonly field.
-      Object.defineProperty(this, 'embeddings', {
-        value: new EmbeddingStore(this.storage),
-        writable: false,
-        enumerable: true,
-        configurable: false,
-      });
+    if (this._embeddings === null) {
+      this._embeddings = new EmbeddingStore(this.storage);
     }
-    if (this.embeddings === null) throw new Error('enableVectorSearch failed to initialize EmbeddingStore');
-    return this.embeddings;
+    return this._embeddings;
   }
 
   /**

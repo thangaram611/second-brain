@@ -166,12 +166,12 @@ describe('Brain.promoteSession', () => {
       source: { type: 'manual' },
     });
 
-    const before = brain.relations.getNeighbors(a.id, 2);
+    const before = brain.traversal.getNeighbors(a.id, 2);
     expect(before.entities.map((e) => e.id).sort()).toEqual([b.id, c.id].sort());
 
     brain.promoteSession(sessionId, 'personal');
 
-    const after = brain.relations.getNeighbors(a.id, 2);
+    const after = brain.traversal.getNeighbors(a.id, 2);
     expect(after.entities.map((e) => e.id).sort()).toEqual([b.id, c.id].sort());
     // All entities have moved
     expect(after.entities.every((e) => e.namespace === 'personal')).toBe(true);

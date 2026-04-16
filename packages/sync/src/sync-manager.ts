@@ -14,6 +14,13 @@ import { hydrateDocFromDatabase } from './crdt/hydrate.js';
 import { SyncBridge } from './crdt/bridge.js';
 import { createSyncProvider } from './provider/hocuspocus-client.js';
 
+export interface SyncSession {
+  doc: Y.Doc;
+  bridge: SyncBridge;
+  provider: HocuspocusProvider;
+  status: SyncStatus;
+}
+
 export type SyncWsEvent =
   | { type: 'sync:connected'; namespace: string; peers: number }
   | { type: 'sync:disconnected'; namespace: string }
@@ -22,10 +29,7 @@ export type SyncWsEvent =
   | { type: 'sync:conflict'; namespace: string; conflict: SyncConflict };
 
 export class SyncManager {
-  private docs: Map<string, Y.Doc> = new Map();
-  private bridges: Map<string, SyncBridge> = new Map();
-  private providers: Map<string, HocuspocusProvider> = new Map();
-  private statuses: Map<string, SyncStatus> = new Map();
+  private sessions: Map<string, SyncSession> = new Map();
   private entityManager: EntityManager;
   private relationManager: RelationManager;
 
@@ -37,134 +41,113 @@ export class SyncManager {
   }
 
   async join(config: SyncConfig): Promise<SyncStatus> {
-    // Guard: never sync the personal namespace
     if (config.namespace === 'personal') {
       throw new Error('Cannot sync the "personal" namespace');
     }
 
-    // If already joined, return existing status
-    const existing = this.statuses.get(config.namespace);
-    if (existing) return existing;
+    const existing = this.sessions.get(config.namespace);
+    if (existing) return existing.status;
 
-    // 1. Create Y.Doc
+    // Build session locally; only insert into map when fully constructed
     const doc = createBrainDoc();
-    this.docs.set(config.namespace, doc);
+    try {
+      const status: SyncStatus = {
+        namespace: config.namespace,
+        state: 'connecting',
+        connectedPeers: 0,
+        lastSyncedAt: null,
+        pendingChanges: 0,
+        error: null,
+      };
 
-    // 2. Initialize status
-    const status: SyncStatus = {
-      namespace: config.namespace,
-      state: 'connecting',
-      connectedPeers: 0,
-      lastSyncedAt: null,
-      pendingChanges: 0,
-      error: null,
-    };
-    this.statuses.set(config.namespace, status);
+      hydrateDocFromDatabase(doc, this.entityManager, this.relationManager, config.namespace);
 
-    // 3. Hydrate from SQLite
-    hydrateDocFromDatabase(doc, this.entityManager, this.relationManager, config.namespace);
+      const bridge = new SyncBridge({
+        doc,
+        entityManager: this.entityManager,
+        relationManager: this.relationManager,
+        namespace: config.namespace,
+        onConflict: (conflict: SyncConflict) => {
+          this.onSyncEvent?.({
+            type: 'sync:conflict',
+            namespace: config.namespace,
+            conflict,
+          });
+        },
+      });
 
-    // 4. Create SyncBridge
-    const bridge = new SyncBridge({
-      doc,
-      entityManager: this.entityManager,
-      relationManager: this.relationManager,
-      namespace: config.namespace,
-      onConflict: (conflict: SyncConflict) => {
-        this.onSyncEvent?.({
-          type: 'sync:conflict',
-          namespace: config.namespace,
-          conflict,
-        });
-      },
-    });
-    this.bridges.set(config.namespace, bridge);
+      const provider = createSyncProvider(doc, config, {
+        onConnect: () => {
+          this.updateStatus(config.namespace, (s) => {
+            s.state = 'connected';
+          });
+          this.onSyncEvent?.({
+            type: 'sync:connected',
+            namespace: config.namespace,
+            peers: this.sessions.get(config.namespace)?.status.connectedPeers ?? 0,
+          });
+        },
+        onDisconnect: () => {
+          this.updateStatus(config.namespace, (s) => {
+            s.state = 'disconnected';
+          });
+          this.onSyncEvent?.({
+            type: 'sync:disconnected',
+            namespace: config.namespace,
+          });
+        },
+        onSynced: () => {
+          this.updateStatus(config.namespace, (s) => {
+            s.state = 'connected';
+            s.lastSyncedAt = new Date().toISOString();
+          });
+        },
+        onAwarenessUpdate: (states: Map<number, Record<string, unknown>>) => {
+          this.updateStatus(config.namespace, (s) => {
+            s.connectedPeers = states.size;
+          });
+        },
+      });
 
-    // 5. Create HocuspocusProvider
-    const provider = createSyncProvider(doc, config, {
-      onConnect: () => {
-        const s = this.statuses.get(config.namespace);
-        if (s) {
-          s.state = 'connected';
-        }
-        this.onSyncEvent?.({
-          type: 'sync:connected',
-          namespace: config.namespace,
-          peers: s?.connectedPeers ?? 0,
-        });
-      },
-      onDisconnect: () => {
-        const s = this.statuses.get(config.namespace);
-        if (s) {
-          s.state = 'disconnected';
-        }
-        this.onSyncEvent?.({
-          type: 'sync:disconnected',
-          namespace: config.namespace,
-        });
-      },
-      onSynced: () => {
-        const s = this.statuses.get(config.namespace);
-        if (s) {
-          s.state = 'connected';
-          s.lastSyncedAt = new Date().toISOString();
-        }
-      },
-      onAwarenessUpdate: (states: Map<number, Record<string, unknown>>) => {
-        const s = this.statuses.get(config.namespace);
-        if (s) {
-          s.connectedPeers = states.size;
-        }
-      },
-    });
-    this.providers.set(config.namespace, provider);
+      bridge.startObserving();
 
-    // 6. Start observing AFTER hydration to avoid echo writes
-    bridge.startObserving();
+      this.sessions.set(config.namespace, { doc, bridge, provider, status });
 
-    return status;
+      return status;
+    } catch (err) {
+      doc.destroy();
+      throw err;
+    }
   }
 
   async leave(namespace: string): Promise<void> {
-    const bridge = this.bridges.get(namespace);
-    if (bridge) {
-      bridge.stopObserving();
-      this.bridges.delete(namespace);
-    }
+    const session = this.sessions.get(namespace);
+    if (!session) return;
 
-    const provider = this.providers.get(namespace);
-    if (provider) {
-      provider.destroy();
-      this.providers.delete(namespace);
-    }
-
-    const doc = this.docs.get(namespace);
-    if (doc) {
-      doc.destroy();
-      this.docs.delete(namespace);
-    }
-
-    this.statuses.delete(namespace);
+    session.bridge.stopObserving();
+    session.provider.destroy();
+    session.doc.destroy();
+    this.sessions.delete(namespace);
   }
 
   getStatus(namespace: string): SyncStatus | null {
-    return this.statuses.get(namespace) ?? null;
+    return this.sessions.get(namespace)?.status ?? null;
   }
 
   getAllStatuses(): SyncStatus[] {
-    return Array.from(this.statuses.values());
+    return Array.from(this.sessions.values()).map((s) => s.status);
   }
 
   getPeers(namespace: string): PeerInfo[] {
-    const provider = this.providers.get(namespace);
-    if (!provider) return [];
+    const session = this.sessions.get(namespace);
+    if (!session) return [];
 
     const peers: PeerInfo[] = [];
-    const states = provider.awareness?.getStates();
+    const states = session.provider.awareness?.getStates();
     if (!states) return [];
 
     for (const [clientId, state] of states.entries()) {
-      if (clientId === provider.document?.clientID) continue; // Skip self
+      if (clientId === session.provider.document?.clientID) continue;
 
       const user = extractUser(state);
       peers.push({
@@ -179,55 +162,44 @@ export class SyncManager {
   }
 
   isSynced(namespace: string): boolean {
-    const status = this.statuses.get(namespace);
+    const status = this.sessions.get(namespace)?.status;
     return status?.state === 'connected' && status.lastSyncedAt !== null;
   }
 
   // ---- Local change forwarding ----
 
   onLocalEntityChange(entity: Entity): void {
-    const bridge = this.bridges.get(entity.namespace);
-    if (bridge) {
-      bridge.pushEntityToDoc(entity);
-    }
+    this.sessions.get(entity.namespace)?.bridge.pushEntityToDoc(entity);
   }
 
   onLocalEntityDelete(entityId: string, namespace: string): void {
-    const bridge = this.bridges.get(namespace);
-    if (bridge) {
-      bridge.deleteEntityFromDoc(entityId);
-    }
+    this.sessions.get(namespace)?.bridge.deleteEntityFromDoc(entityId);
   }
 
   onLocalRelationChange(relation: Relation): void {
-    const bridge = this.bridges.get(relation.namespace);
-    if (bridge) {
-      bridge.pushRelationToDoc(relation);
-    }
+    this.sessions.get(relation.namespace)?.bridge.pushRelationToDoc(relation);
   }
 
   onLocalRelationDelete(relationId: string, namespace: string): void {
-    const bridge = this.bridges.get(namespace);
-    if (bridge) {
-      bridge.deleteRelationFromDoc(relationId);
-    }
+    this.sessions.get(namespace)?.bridge.deleteRelationFromDoc(relationId);
   }
 
   destroy(): void {
-    for (const namespace of Array.from(this.bridges.keys())) {
-      const bridge = this.bridges.get(namespace);
-      bridge?.stopObserving();
+    for (const session of this.sessions.values()) {
+      session.bridge.stopObserving();
+      session.provider.destroy();
+      session.doc.destroy();
     }
-    for (const provider of this.providers.values()) {
-      provider.destroy();
+    this.sessions.clear();
+  }
+
+  // ---- Private helpers ----
+
+  private updateStatus(namespace: string, fn: (s: SyncStatus) => void): void {
+    const session = this.sessions.get(namespace);
+    if (session) {
+      fn(session.status);
     }
-    for (const doc of this.docs.values()) {
-      doc.destroy();
-    }
-    this.bridges.clear();
-    this.providers.clear();
-    this.docs.clear();
-    this.statuses.clear();
   }
 }
 

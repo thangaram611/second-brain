@@ -67,10 +67,16 @@ export class EmbedPipeline {
       if (page.length === 0) break;
       progress.scanned += page.length;
 
-      // Compute hashes for the page, then ask the store which need embedding.
+      // Compute text + hash once per entity, reuse for both staleness check and embedding.
+      const entityData = new Map(
+        page.map((e) => {
+          const text = entityToText(e);
+          return [e.id, { text, contentHash: computeContentHash(text) }] as const;
+        }),
+      );
       const items = page.map((e) => ({
         id: e.id,
-        contentHash: computeContentHash(entityToText(e)),
+        contentHash: entityData.get(e.id)!.contentHash,
       }));
       const staleIds = new Set(this.brain.embeddings!.findStale(items));
       progress.skipped += page.length - staleIds.size;
@@ -79,11 +85,10 @@ export class EmbedPipeline {
       // Embed in batches.
       for (let i = 0; i < stale.length; i += batchSize) {
         const slice = stale.slice(i, i + batchSize);
-        const inputs = slice.map((e) => ({
-          id: e.id,
-          text: entityToText(e),
-          contentHash: computeContentHash(entityToText(e)),
-        }));
+        const inputs = slice.map((e) => {
+          const cached = entityData.get(e.id)!;
+          return { id: e.id, text: cached.text, contentHash: cached.contentHash };
+        });
         try {
           const embedded = await this.generator.generateBatch(inputs, batchSize);
           for (const r of embedded) {

@@ -178,7 +178,7 @@ describe('RelationManager', () => {
         source: { type: 'manual' },
       });
 
-      const { entities, relations } = brain.relations.getNeighbors(entityA.id, 1);
+      const { entities, relations } = brain.traversal.getNeighbors(entityA.id, 1);
       expect(entities).toHaveLength(1);
       expect(entities[0].id).toBe(entityB.id);
       expect(relations).toHaveLength(1);
@@ -198,7 +198,7 @@ describe('RelationManager', () => {
         source: { type: 'manual' },
       });
 
-      const { entities } = brain.relations.getNeighbors(entityA.id, 2);
+      const { entities } = brain.traversal.getNeighbors(entityA.id, 2);
       expect(entities).toHaveLength(2);
       const names = entities.map((e) => e.name).sort();
       expect(names).toEqual(['B', 'C']);
@@ -214,7 +214,7 @@ describe('RelationManager', () => {
         source: { type: 'manual' },
       });
 
-      const paths = brain.relations.findPath(entityA.id, entityB.id);
+      const paths = brain.traversal.findPath(entityA.id, entityB.id);
       expect(paths).toHaveLength(1);
       expect(paths[0]).toHaveLength(1);
       expect(paths[0][0].type).toBe('depends_on');
@@ -234,13 +234,13 @@ describe('RelationManager', () => {
         source: { type: 'manual' },
       });
 
-      const paths = brain.relations.findPath(entityA.id, entityC.id);
+      const paths = brain.traversal.findPath(entityA.id, entityC.id);
       expect(paths).toHaveLength(1);
       expect(paths[0]).toHaveLength(2);
     });
 
     it('returns empty when no path exists', () => {
-      const paths = brain.relations.findPath(entityA.id, entityC.id);
+      const paths = brain.traversal.findPath(entityA.id, entityC.id);
       expect(paths).toHaveLength(0);
     });
   });

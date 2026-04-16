@@ -4,6 +4,8 @@ import { createOllama } from 'ai-sdk-ollama';
 import type { LanguageModel, EmbeddingModel } from 'ai';
 import type { LLMConfig, LLMProvider, EmbeddingProvider } from './llm-config.js';
 
+const GROQ_BASE_URL = 'https://api.groq.com/openai/v1';
+
 /** Resolve the AI SDK chat (language) model for the configured provider. */
 export function resolveChatModel(config: LLMConfig): LanguageModel {
   return chatModelFor(config.provider, config.model, {
@@ -32,28 +34,20 @@ interface ProviderOpts {
   apiKey?: string;
 }
 
+/** Create an OpenAI-compatible provider (covers both openai and groq). */
+function openaiLike(opts: ProviderOpts, defaultBaseURL?: string) {
+  return createOpenAI({
+    baseURL: opts.baseURL ?? defaultBaseURL,
+    apiKey: opts.apiKey,
+  });
+}
+
 function chatModelFor(provider: LLMProvider, model: string, opts: ProviderOpts): LanguageModel {
   switch (provider) {
-    case 'openai': {
-      const oa = createOpenAI({ baseURL: opts.baseURL, apiKey: opts.apiKey });
-      return oa(model);
-    }
-    case 'anthropic': {
-      const an = createAnthropic({ baseURL: opts.baseURL, apiKey: opts.apiKey });
-      return an(model);
-    }
-    case 'ollama': {
-      const ol = createOllama({ baseURL: opts.baseURL });
-      return ol(model);
-    }
-    case 'groq': {
-      // Groq exposes an OpenAI-compatible REST surface.
-      const groq = createOpenAI({
-        baseURL: opts.baseURL ?? 'https://api.groq.com/openai/v1',
-        apiKey: opts.apiKey,
-      });
-      return groq(model);
-    }
+    case 'openai':    return openaiLike(opts)(model);
+    case 'anthropic': return createAnthropic({ baseURL: opts.baseURL, apiKey: opts.apiKey })(model);
+    case 'ollama':    return createOllama({ baseURL: opts.baseURL })(model);
+    case 'groq':      return openaiLike(opts, GROQ_BASE_URL)(model);
   }
 }
 
@@ -63,20 +57,8 @@ function embeddingModelFor(
   opts: ProviderOpts,
 ): EmbeddingModel {
   switch (provider) {
-    case 'openai': {
-      const oa = createOpenAI({ baseURL: opts.baseURL, apiKey: opts.apiKey });
-      return oa.embedding(model);
-    }
-    case 'ollama': {
-      const ol = createOllama({ baseURL: opts.baseURL });
-      return ol.textEmbedding(model);
-    }
-    case 'groq': {
-      const groq = createOpenAI({
-        baseURL: opts.baseURL ?? 'https://api.groq.com/openai/v1',
-        apiKey: opts.apiKey,
-      });
-      return groq.embedding(model);
-    }
+    case 'openai': return openaiLike(opts).embedding(model);
+    case 'ollama': return createOllama({ baseURL: opts.baseURL }).textEmbedding(model);
+    case 'groq':   return openaiLike(opts, GROQ_BASE_URL).embedding(model);
   }
 }

@@ -19,7 +19,7 @@ export { SyncBridge } from './crdt/bridge.js';
 
 // Sync manager
 export { SyncManager } from './sync-manager.js';
-export type { SyncWsEvent } from './sync-manager.js';
+export type { SyncSession, SyncWsEvent } from './sync-manager.js';
 
 // Provider
 export { createSyncProvider } from './provider/hocuspocus-client.js';
