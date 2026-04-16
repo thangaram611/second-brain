@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import type { WebhookSecret } from '@second-brain/collectors';
+import { GitLabProvider, GitHubProvider } from '@second-brain/collectors';
 import {
   getBrain,
   closeBrain,
@@ -42,6 +43,19 @@ for (const [envKey, envValue] of Object.entries(process.env)) {
     webhookSecrets.set(`${match[1]}:${match[2]}`, { kind: 'token', value: envValue });
   }
 }
+
+// Check for HMAC-style secrets too
+for (const [envKey, envValue] of Object.entries(process.env)) {
+  const hmacMatch = envKey.match(/^SECOND_BRAIN_WEBHOOK_HMAC__([a-z]+)__(.+)$/);
+  if (hmacMatch && typeof envValue === 'string' && envValue.length > 0) {
+    webhookSecrets.set(`${hmacMatch[1]}:${hmacMatch[2]}`, { kind: 'hmac', key: envValue });
+  }
+}
+
+// Build provider registry for observe routes
+const providerRegistry = new Map<string, import('@second-brain/collectors').GitProvider>();
+providerRegistry.set('gitlab', new GitLabProvider());
+providerRegistry.set('github', new GitHubProvider());
 
 // Wire sync events to WS broadcast
 syncManager.onSyncEvent = (event) => {
@@ -147,6 +161,7 @@ const app = createApp(brain, {
   observeOptions: {
     bearerToken: process.env.BRAIN_AUTH_TOKEN,
     webhookSecrets,
+    providerRegistry,
   },
   queryOptions: {
     bearerToken: process.env.BRAIN_AUTH_TOKEN,

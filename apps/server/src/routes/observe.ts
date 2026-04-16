@@ -1,7 +1,7 @@
 import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { AuthorSchema } from '@second-brain/types';
-import { GitLabProvider, type MappedObservation, type WebhookSecret } from '@second-brain/collectors';
+import { GitLabProvider, type MappedObservation, type WebhookSecret, type GitProvider } from '@second-brain/collectors';
 import type { ObservationService } from '../services/observation-service.js';
 import { tokenBucket } from '../services/rate-limit.js';
 
@@ -76,13 +76,15 @@ const BranchChangeSchema = z.object({
  * spoof a wiring.
  */
 const MREventSchema = z.object({
-  provider: z.enum(['gitlab']),
+  provider: z.enum(['gitlab', 'github', 'custom']),
   projectId: z.string().min(1),
   deliveryId: z.string().min(1),
   /** Raw webhook envelope — parsed by the provider. */
   rawEvent: z.unknown(),
   /** Inbound HTTP headers forwarded by the relay client. */
   rawHeaders: z.record(z.string(), z.string()),
+  /** Raw webhook body as string for HMAC verification. If absent, empty buffer is used (fine for token-based GitLab verify). */
+  rawBody: z.string().optional(),
   timestamp: z.string().optional(),
 });
 
@@ -131,10 +133,12 @@ export interface ObserveRouteOptions {
    */
   webhookSecrets?: Map<string, WebhookSecret>;
   /**
-   * Injected for tests — override the GitLab provider instance used by
-   * the mr-event route. Defaults to `new GitLabProvider()`.
+   * Phase 10.5 — provider registry keyed by provider name.
+   * Falls back to a default GitLabProvider for 'gitlab' if not provided.
    */
-  gitlabProvider?: import('@second-brain/collectors').GitProvider;
+  providerRegistry?: Map<string, GitProvider>;
+  /** @deprecated Use providerRegistry. Kept for backward compat. */
+  gitlabProvider?: GitProvider;
 }
 
 export function observeRoutes(
@@ -232,7 +236,11 @@ export function observeRoutes(
     }
   });
 
-  const gitlabProvider = options.gitlabProvider ?? new GitLabProvider();
+  // Build provider registry (backward-compat: gitlabProvider option seeds 'gitlab' entry)
+  const providerRegistry = options.providerRegistry ?? new Map<string, GitProvider>();
+  if (!providerRegistry.has('gitlab')) {
+    providerRegistry.set('gitlab', options.gitlabProvider ?? new GitLabProvider());
+  }
   const webhookSecrets = options.webhookSecrets ?? new Map<string, WebhookSecret>();
 
   router.post('/api/observe/mr-event', async (req, res, next) => {
@@ -244,8 +252,15 @@ export function observeRoutes(
         res.status(401).json({ error: 'no-webhook-secret', projectId: payload.projectId });
         return;
       }
-      const verification = gitlabProvider.verifyDelivery({
-        request: { headers: payload.rawHeaders, rawBody: Buffer.from('') },
+
+      const provider = providerRegistry.get(payload.provider);
+      if (!provider) {
+        res.status(400).json({ error: 'unknown-provider', provider: payload.provider });
+        return;
+      }
+
+      const verification = provider.verifyDelivery({
+        request: { headers: payload.rawHeaders, rawBody: Buffer.from(payload.rawBody ?? '', 'utf8') },
         expectedSecret: expected,
       });
       if (!verification.ok) {
@@ -253,7 +268,7 @@ export function observeRoutes(
         return;
       }
 
-      const mapped: MappedObservation[] = await gitlabProvider.mapEvent({
+      const mapped: MappedObservation[] = await provider.mapEvent({
         provider: payload.provider,
         rawBody: payload.rawEvent,
         rawHeaders: payload.rawHeaders,

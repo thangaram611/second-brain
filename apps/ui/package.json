@@ -7,7 +7,9 @@
     "dev": "vite --port 5173",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "check-types": "tsc --noEmit"
+    "check-types": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.14",
@@ -29,6 +31,7 @@
     "@vitejs/plugin-react": "^6.0.1",
     "tailwindcss": "^4.1.0",
     "typescript": "^6.0.2",
-    "vite": "^8.0.8"
+    "vite": "^8.0.8",
+    "vitest": "^4.1.4"
   }
 }

@@ -12,6 +12,17 @@ import type {
   PeerInfo,
 } from './types.js';
 
+import type { OwnershipNode } from '../store/ownership-store.js';
+
+export interface ParallelWorkConflict {
+  entityId: string;
+  entityName: string;
+  entityType: string;
+  namespace: string;
+  actors: string[];
+  branches: string[];
+}
+
 class ApiError extends Error {
   constructor(
     public status: number,
@@ -222,6 +233,17 @@ export const api = {
     },
   },
 
+  parallelWork: {
+    list(params?: { branch?: string; namespace?: string; limit?: number }) {
+      const qs = new URLSearchParams();
+      if (params?.branch) qs.set('branch', params.branch);
+      if (params?.namespace) qs.set('namespace', params.namespace);
+      if (params?.limit) qs.set('limit', String(params.limit));
+      const q = qs.toString();
+      return request<{ conflicts: Array<{ entityId: string; entityName: string; entityType: string; namespace: string; actors: string[]; branches: string[] }> }>(`/query/parallel-work${q ? `?${q}` : ''}`);
+    },
+  },
+
   // --- Admin / Phase 7 ---
 
   query(params: { question: string; namespace?: string; limit?: number }) {
@@ -276,4 +298,15 @@ export const api = {
       body: JSON.stringify(params ?? {}),
     });
   },
+
+  ownership: {
+    tree(path?: string, depth?: number) {
+      const qs = new URLSearchParams();
+      if (path) qs.set('path', path);
+      if (depth) qs.set('depth', String(depth));
+      const q = qs.toString();
+      return request<OwnershipNode>(`/query/ownership-tree${q ? `?${q}` : ''}`);
+    },
+  },
+
 };

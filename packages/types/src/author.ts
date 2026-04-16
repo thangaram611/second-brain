@@ -36,3 +36,13 @@ export function canonicalizeEmail(email: string): string {
 export function gitlabNoreplyEmail(username: string): string {
   return `${username.toLowerCase()}@users.noreply.gitlab.com`;
 }
+
+/**
+ * Canonical noreply address for a GitHub user — used when the user's
+ * profile email is private. GitHub's format is
+ * `<id>+<login>@users.noreply.github.com`. `canonicalizeEmail` strips
+ * the numeric prefix for dedup.
+ */
+export function githubNoreplyEmail(id: number, username: string): string {
+  return `${id}+${username.toLowerCase()}@users.noreply.github.com`;
+}

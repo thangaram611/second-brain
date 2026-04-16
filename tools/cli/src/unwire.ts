@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import lockfile from 'proper-lockfile';
-import { GitLabProvider } from '@second-brain/collectors';
+import { GitLabProvider, GitHubProvider } from '@second-brain/collectors';
 import {
   uninstallClaudeHooks,
   uninstallGitHooks,
@@ -26,6 +26,8 @@ export interface UnwireOptions {
   force?: boolean;
   /** Inject provider for tests. */
   gitlabProvider?: GitLabProvider;
+  /** Inject GitHub provider for tests. */
+  githubProvider?: GitHubProvider;
   /** Inject fetch for tests. */
   fetchImpl?: typeof fetch;
 }
@@ -111,6 +113,30 @@ async function runUnwireInternal(options: UnwireOptions): Promise<UnwireResult> 
     } else {
       warnings.push('no GitLab PAT available — skipped webhook unregister; remove it manually.');
     }
+  } else if (entry?.providerId === 'github' && entry.projectId && entry.webhookId) {
+    const patRes = await resolveSecret('github.pat:github.com', 'SECOND_BRAIN_GITHUB_TOKEN');
+    if (patRes.value) {
+      const provider = options.githubProvider ?? new GitHubProvider({ pat: patRes.value });
+      try {
+        await provider.unregisterWebhook({
+          provider: 'github',
+          projectId: entry.projectId,
+          webhookId: entry.webhookId,
+        });
+        providerUnregistered = true;
+      } catch (err) {
+        if (!options.force) {
+          throw new Error(`failed to unregister GitHub webhook (${errMsg(err)}). Pass --force to proceed.`);
+        }
+        warnings.push(`GitHub webhook unregister failed (${errMsg(err)}). Delete it manually.`);
+      }
+    } else if (!options.force) {
+      throw new Error('no GitHub PAT available. Pass --force for local-only cleanup.');
+    } else {
+      warnings.push('no GitHub PAT — skipped webhook unregister.');
+    }
+  } else if (entry?.providerId === 'custom') {
+    warnings.push('custom provider: remove the webhook manually on your forge.');
   }
 
   // ── Phase 10.3: delete keychain entries ──────────────────────────────
@@ -122,6 +148,12 @@ async function runUnwireInternal(options: UnwireOptions): Promise<UnwireResult> 
   if (entry?.gitlabBaseUrl) {
     const r = await deleteSecret(`gitlab.pat:${hostOf(entry.gitlabBaseUrl)}`);
     if (r.ok && r.value) keychainCleaned++;
+  }
+  if (entry?.providerId === 'github' && entry.projectId) {
+    const r1 = await deleteSecret(`github.webhook-secret:${entry.projectId}`);
+    if (r1.ok && r1.value) keychainCleaned++;
+    const r2 = await deleteSecret(`github.pat:github.com`);
+    if (r2.ok && r2.value) keychainCleaned++;
   }
 
   // ── Remove git hooks ─────────────────────────────────────────────────

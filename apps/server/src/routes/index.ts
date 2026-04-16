@@ -38,6 +38,6 @@ export function registerRoutes(
     app.use(observeRoutes(observations, observeOptions));
   }
   if (options.ownership) {
-    app.use(queryRoutes(options.ownership, options.queryOptions));
+    app.use(queryRoutes(options.ownership, { ...options.queryOptions, brain }));
   }
 }

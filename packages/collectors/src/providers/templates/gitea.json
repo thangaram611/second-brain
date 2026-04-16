@@ -1,0 +1,52 @@
+{
+  "name": "gitea",
+  "version": 1,
+  "verification": {
+    "kind": "hmac",
+    "header": "x-gitea-signature",
+    "algorithm": "sha256",
+    "prefix": ""
+  },
+  "eventTypeHeader": "x-gitea-event",
+  "deliveryIdHeader": "x-gitea-delivery",
+  "mappings": {
+    "pull_request": {
+      "action": "$.action",
+      "number": "$.pull_request.number",
+      "title": "$.pull_request.title",
+      "body": "$.pull_request.body",
+      "state": "$.pull_request.state",
+      "sourceBranch": "$.pull_request.head.ref",
+      "targetBranch": "$.pull_request.base.ref",
+      "authorLogin": "$.pull_request.user.login",
+      "merged": "$.pull_request.merged",
+      "mergedAt": "$.pull_request.merged_at",
+      "webUrl": "$.pull_request.html_url",
+      "draft": "$.pull_request.draft"
+    },
+    "pull_request_review": {
+      "state": "$.review.type",
+      "prNumber": "$.pull_request.number",
+      "authorLogin": "$.review.user.login",
+      "createdAt": "$.review.submitted_at"
+    },
+    "pull_request_comment": {
+      "body": "$.comment.body",
+      "commentId": "$.comment.id",
+      "prNumber": "$.pull_request.number",
+      "authorLogin": "$.comment.user.login",
+      "createdAt": "$.comment.created_at"
+    }
+  },
+  "actionMap": {
+    "opened": "open",
+    "edited": "update",
+    "synchronize": "update",
+    "closed": "close",
+    "merged": "merge",
+    "reopened": "open",
+    "approved": "approve",
+    "rejected": "request_changes"
+  },
+  "noreplyEmailTemplate": "{login}@noreply.gitea.example.com"
+}

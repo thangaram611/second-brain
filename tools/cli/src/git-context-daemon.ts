@@ -1,5 +1,6 @@
 import { startFileChangeCollector, createRelayClient } from '@second-brain/collectors';
 import type { FileChangeCollectorHandle } from '@second-brain/collectors';
+import { startSSERelay, type SSERelayHandle } from './sse-relay.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -22,11 +23,19 @@ const WiredReposEntrySchema = z.object({
   providerId: z.enum(['gitlab', 'github', 'custom']).optional(),
   projectId: z.string().optional(),
   relayUrl: z.string().optional(),
-  /** Phase 10.3 — GitLab self-hosted base URL. */
+  /** Generic provider base URL (e.g., https://api.github.com, https://git.corp.com/api/v4). */
+  providerBaseUrl: z.string().optional(),
+  // ── GitLab-specific (kept for backward compat) ──
+  /** @deprecated Use providerBaseUrl. GitLab self-hosted base URL. */
   gitlabBaseUrl: z.string().optional(),
-  /** Phase 10.3 — numeric GitLab project id (stringified JSON-safe). */
+  /** Phase 10.3 — numeric GitLab project id (stringified). */
   gitlabProjectId: z.string().optional(),
-  /** Phase 10.3 — webhook id returned by GitLab on register. */
+  // ── GitHub-specific ──
+  /** GitHub repository owner (user or org). */
+  githubOwner: z.string().optional(),
+  /** GitHub repository name. */
+  githubRepo: z.string().optional(),
+  /** Phase 10.3+ — webhook id returned by the forge on register. */
   webhookId: z.number().int().optional(),
   installedAt: z.string(),
 });
@@ -134,8 +143,32 @@ export async function runWatch(options: WatchOptions): Promise<FileChangeCollect
     onError: (err) => logLine(`[watch] error ${err instanceof Error ? err.message : String(err)}`),
   });
 
+  // Start SSE relay if a relay channel is configured
+  let sseHandle: SSERelayHandle | null = null;
+  if (entry?.relayUrl) {
+    const targetUrl = `${serverUrl}/api/observe/mr-event`;
+    const headers: Record<string, string> = {};
+    if (bearerToken) {
+      headers['authorization'] = `Bearer ${bearerToken}`;
+    }
+    sseHandle = startSSERelay({
+      channelUrl: entry.relayUrl,
+      targetUrl,
+      headers,
+      onConnected: () => logLine(`[watch] SSE relay connected to ${entry.relayUrl}`),
+      onReconnect: () => logLine(`[watch] SSE relay reconnected`),
+      onEvent: (ev) => logLine(`[watch] SSE relay forwarded: ${ev.deliveryId} (${ev.provider})`),
+      onError: (err) => logLine(`[watch] SSE relay error: ${err.message}`),
+    });
+    logLine(`[watch] SSE relay started for ${entry.relayUrl}`);
+  }
+
   const shutdown = async (): Promise<void> => {
     logLine('[watch] shutdown');
+    if (sseHandle) {
+      sseHandle.close();
+      logLine('[watch] SSE relay closed');
+    }
     await handle.close();
     process.exit(0);
   };

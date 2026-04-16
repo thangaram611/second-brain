@@ -69,6 +69,11 @@ export class OwnershipService {
     this.gitFactory = options?.simpleGit ?? defaultGitFactory;
   }
 
+  /** Resolved repository root path used for directory walking. */
+  get root(): string {
+    return this.repoRoot;
+  }
+
   async query(q: OwnershipQuery): Promise<OwnershipScore[]> {
     const root = q.repoRoot ?? this.repoRoot;
     const limit = q.limit ?? 3;

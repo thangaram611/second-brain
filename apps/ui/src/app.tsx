@@ -8,6 +8,8 @@ import { SettingsPage } from './components/pages/settings.js';
 import { TimelinePage } from './components/pages/timeline.js';
 import { DecisionsPage } from './components/pages/decisions.js';
 import { ContradictionsPage } from './components/pages/contradictions.js';
+import { OwnershipPage } from './components/pages/ownership.js';
+import { WipRadarPage } from './components/pages/wip-radar.js';
 import { useWebSocket } from './hooks/use-websocket.js';
 
 export function App() {
@@ -27,6 +29,8 @@ export function App() {
           <Route path="/timeline" element={<TimelinePage />} />
           <Route path="/decisions" element={<DecisionsPage />} />
           <Route path="/contradictions" element={<ContradictionsPage />} />
+          <Route path="/ownership" element={<OwnershipPage />} />
+          <Route path="/wip-radar" element={<WipRadarPage />} />
         </Routes>
       </main>
     </div>

@@ -10,6 +10,8 @@ import {
   Scale,
   AlertTriangle,
   Upload,
+  Users,
+  Radio,
 } from 'lucide-react';
 import { useSyncStore } from '../../store/sync-store.js';
 import { ImportDialog } from '../import-dialog.js';
@@ -24,6 +26,11 @@ const temporalNavItems = [
   { to: '/timeline', icon: Calendar, label: 'Timeline' },
   { to: '/decisions', icon: Scale, label: 'Decisions' },
   { to: '/contradictions', icon: AlertTriangle, label: 'Contradictions' },
+];
+
+const teamNavItems = [
+  { to: '/ownership', icon: Users, label: 'Ownership' },
+  { to: '/wip-radar', icon: Radio, label: 'WIP Radar' },
 ];
 
 const bottomNavItems = [
@@ -67,6 +74,29 @@ export function Sidebar() {
         </div>
 
         {temporalNavItems.map((item) => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            className={({ isActive }) =>
+              `flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors ${
+                isActive
+                  ? 'bg-zinc-800 text-zinc-100'
+                  : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'
+              }`
+            }
+          >
+            <item.icon className="h-4 w-4" />
+            {item.label}
+          </NavLink>
+        ))}
+
+        <div className="mt-4 mb-1 border-t border-zinc-800 pt-3">
+          <span className="px-3 text-xs font-medium uppercase tracking-wider text-zinc-600">
+            Team
+          </span>
+        </div>
+
+        {teamNavItems.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}

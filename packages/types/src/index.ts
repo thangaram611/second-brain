@@ -30,7 +30,7 @@ export {
 } from './branch-context.js';
 export type { BranchContext, BranchStatusPatch } from './branch-context.js';
 
-export { AuthorSchema, canonicalizeEmail, gitlabNoreplyEmail } from './author.js';
+export { AuthorSchema, canonicalizeEmail, gitlabNoreplyEmail, githubNoreplyEmail } from './author.js';
 export type { Author } from './author.js';
 
 export type {

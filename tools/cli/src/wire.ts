@@ -6,7 +6,7 @@ import * as os from 'node:os';
 import { z } from 'zod';
 import lockfile from 'proper-lockfile';
 import { canonicalizeEmail } from '@second-brain/types';
-import { GitLabProvider, resolveGitLabProject, mintRelayChannel } from '@second-brain/collectors';
+import { GitLabProvider, GitHubProvider, resolveGitLabProject, mintRelayChannel } from '@second-brain/collectors';
 
 const ProjectConfigSchema = z.object({ namespace: z.string().min(1).optional() }).passthrough();
 import {
@@ -43,7 +43,7 @@ export interface WireOptions {
 
   // ── Phase 10.3 — provider setup ────────────────────────────────────────
   /** Forge provider to wire. If omitted, provider setup is skipped. */
-  provider?: 'gitlab';
+  provider?: 'gitlab' | 'github';
   /** GitLab base URL (with or without `/api/v4` suffix). Auto-detected from
       `git remote get-url origin` when omitted. */
   gitlabBaseUrl?: string;
@@ -56,10 +56,20 @@ export interface WireOptions {
   gitlabProvider?: GitLabProvider;
   /** Inject a fetch implementation for tests (project-resolve + relay mint). */
   fetchImpl?: typeof fetch;
+
+  // ── GitHub provider options ─────────────────────────────────────────────
+  /** GitHub PAT. Falls back to SECOND_BRAIN_GITHUB_TOKEN or GITHUB_TOKEN env. */
+  githubToken?: string;
+  /** GitHub owner (user or org). Auto-detected from git remote. */
+  githubOwner?: string;
+  /** GitHub repo name. Auto-detected from git remote. */
+  githubRepo?: string;
+  /** Inject a GitHubProvider instance for tests. */
+  githubProvider?: GitHubProvider;
 }
 
 export interface ProviderWireResult {
-  provider: 'gitlab';
+  provider: 'gitlab' | 'github';
   projectId: string;
   webhookId: number;
   webhookAlreadyExisted: boolean;
@@ -243,6 +253,28 @@ async function runWireInternal(options: WireOptions): Promise<WireResult> {
         `GitLab provider wiring failed: ${err instanceof Error ? err.message : String(err)}. Claude/git hooks are installed; you can retry with \`brain provider refresh gitlab\`.`,
       );
     }
+  } else if (options.provider === 'github') {
+    try {
+      providerResult = await wireGitHubProvider(repoRoot, options, warnings);
+      if (providerResult) {
+        const updated: WiredReposEntry = {
+          ...baseEntry,
+          providerId: 'github',
+          projectId: providerResult.projectId,
+          providerBaseUrl: providerResult.baseUrl,
+          githubOwner: providerResult.projectId.split('/')[0],
+          githubRepo: providerResult.projectId.split('/')[1],
+          webhookId: providerResult.webhookId,
+          relayUrl: providerResult.relayUrl,
+        };
+        wired.wiredRepos[repoHash] = updated;
+        saveWiredRepos(wired);
+      }
+    } catch (err) {
+      warnings.push(
+        `GitHub provider wiring failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   const configPath = path.join(os.homedir(), '.second-brain', 'config.json');
@@ -357,6 +389,66 @@ async function wireGitLabProvider(
     webhookAlreadyExisted: registration.alreadyExisted,
     relayUrl,
     baseUrl,
+  };
+}
+
+async function wireGitHubProvider(
+  repoRoot: string,
+  options: WireOptions,
+  warnings: string[],
+): Promise<ProviderWireResult | undefined> {
+  const remote = readGitRemoteOrigin(repoRoot);
+  const parsed = remote ? parseGitRemote(remote) : null;
+
+  // For GitHub, projectPath is "owner/repo"
+  let owner = options.githubOwner;
+  let repo = options.githubRepo;
+  if (!owner || !repo) {
+    if (parsed && (parsed.host === 'github.com' || parsed.host.includes('github'))) {
+      const parts = parsed.projectPath.split('/');
+      owner = owner ?? parts[0];
+      repo = repo ?? parts[1];
+    }
+  }
+  if (!owner || !repo) {
+    warnings.push('could not infer GitHub owner/repo from git remote; pass --github-owner and --github-repo');
+    return undefined;
+  }
+
+  const pat = options.githubToken ?? process.env.SECOND_BRAIN_GITHUB_TOKEN ?? process.env.GITHUB_TOKEN;
+  if (!pat) {
+    warnings.push('no GitHub PAT provided; skipping webhook setup');
+    return undefined;
+  }
+
+  const projectId = `${owner}/${repo}`;
+  const provider = options.githubProvider ?? new GitHubProvider();
+  await provider.auth({ baseUrl: 'https://api.github.com', pat });
+
+  const relayUrl = await mintRelayChannel({ fetchImpl: options.fetchImpl });
+  const secretKey = crypto.randomBytes(32).toString('hex');
+
+  // Store HMAC secret + PAT in keychain
+  const stored = await storeSecret(`github.webhook-secret:${projectId}`, secretKey);
+  if (!stored.ok && stored.reason === 'runtime-error') {
+    throw new Error('keychain runtime error; refusing to register webhook');
+  }
+  await storeSecret(`github.pat:github.com`, pat);
+
+  const registration = await provider.registerWebhook({
+    provider: 'github',
+    projectId,
+    relayUrl,
+    secret: { kind: 'hmac', key: secretKey },
+  });
+
+  return {
+    provider: 'github',
+    projectId,
+    webhookId: registration.webhookId,
+    webhookAlreadyExisted: registration.alreadyExisted,
+    relayUrl,
+    baseUrl: 'https://api.github.com',
   };
 }
 
