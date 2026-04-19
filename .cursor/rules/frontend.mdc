@@ -1,0 +1,18 @@
+---
+description: "Frontend conventions for React UI app"
+patterns: ["apps/ui/**/*.ts", "apps/ui/**/*.tsx"]
+mode: always
+---
+
+## Frontend Rules
+
+- React 19 with functional components only
+- Zustand for state management (one store per feature in src/store/)
+- Cytoscape.js for graph visualization (diff-based rendering, not full re-render)
+- Tailwind CSS (dark theme: zinc-950 bg). No CSS modules
+- Radix UI for headless components (Dialog, Select, Tabs, Tooltip)
+- Lucide React for icons
+- REST API client in src/lib/api.ts — use it, don't create new fetch calls
+- WebSocket client in src/lib/ws.ts — auto-reconnect with exponential backoff
+- HashRouter for client-side routing (React Router 7)
+- Entity/relation type colors defined in src/lib/colors.ts

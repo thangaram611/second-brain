@@ -1,0 +1,18 @@
+---
+description: "Backend conventions for server, core, and packages"
+patterns: ["packages/**/*.ts", "apps/server/**/*.ts", "apps/relay/**/*.ts", "tools/**/*.ts"]
+mode: always
+---
+
+## Backend Rules
+
+- Use Drizzle ORM for all database queries (schema in packages/core/src/schema/)
+- Validate request bodies with Zod schemas
+- Relations have unique constraint on (sourceId, targetId, type)
+- Use `createOrGet` for idempotent relation creation
+- Entity CRUD goes through Brain facade (packages/core/src/brain.ts)
+- MCP tools in packages/mcp-server/src/tools/ (read-tools.ts, write-tools.ts, pipeline-tools.ts)
+- REST routes in apps/server/src/routes/
+- Always broadcast WebSocket events after entity/relation mutations
+- Error responses: { error: string } with appropriate HTTP status
+- SQLite WAL mode is always enabled

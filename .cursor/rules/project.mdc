@@ -1,0 +1,25 @@
+---
+description: "Core project conventions for Second Brain monorepo"
+mode: always
+---
+
+# Second Brain — Cursor Rules
+
+Developer knowledge graph. pnpm monorepo, Turborepo, Node.js 22+, TypeScript 5.8+ strict, ESM only.
+
+For full context, see @docs/architecture.md and @AGENTS.md.
+
+## Stack
+- SQLite (better-sqlite3) + Drizzle ORM + FTS5 + sqlite-vec
+- Zod v4 for validation, ULIDs for IDs, ISO 8601 timestamps
+- Vitest with in-memory SQLite for tests
+- tsdown for builds, tsc for type-checking
+
+## Rules
+- ESM only. Named exports. Re-export from index.ts
+- Use workspace imports: `@second-brain/core`, `@second-brain/types`
+- No `any`. No path aliases. No UUIDs. No unix timestamps
+- Namespace field on all entities/relations: 'personal' or project ID
+- FTS5 triggers auto-maintain search index — never write to entities_fts
+- Confidence decay is read-side only — never mutate stored confidence
+- batchUpsert for bulk operations (merges observations/tags)

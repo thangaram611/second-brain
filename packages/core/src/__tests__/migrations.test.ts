@@ -126,7 +126,7 @@ describe('StorageDatabase migration integration', () => {
     dbA.close();
   });
 
-  it('applies migration 002: branch_context columns + indexes on entities AND relations', () => {
+  it('creates branch_context virtual columns and indexes on entities AND relations', () => {
     const db = new StorageDatabase({ path: ':memory:', wal: false });
     // Use PRAGMA table_xinfo — generated virtual columns added via ALTER TABLE
     // are invisible to plain table_info but appear in xinfo.

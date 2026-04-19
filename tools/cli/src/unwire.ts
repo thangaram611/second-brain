@@ -83,8 +83,8 @@ async function runUnwireInternal(options: UnwireOptions): Promise<UnwireResult> 
 
   // ── Phase 10.3: unregister provider webhook ──────────────────────────
   let providerUnregistered = false;
-  if (entry?.providerId === 'gitlab' && entry.gitlabProjectId && entry.webhookId) {
-    const baseUrl = entry.gitlabBaseUrl ?? 'https://gitlab.com/api/v4';
+  if (entry?.providerId === 'gitlab' && entry.projectId && entry.webhookId) {
+    const baseUrl = entry.providerBaseUrl ?? 'https://gitlab.com/api/v4';
     const host = hostOf(baseUrl);
     const patRes = await resolveSecret(`gitlab.pat:${host}`, 'SECOND_BRAIN_GITLAB_TOKEN');
     if (patRes.value) {
@@ -94,7 +94,7 @@ async function runUnwireInternal(options: UnwireOptions): Promise<UnwireResult> 
       try {
         await provider.unregisterWebhook({
           provider: 'gitlab',
-          projectId: entry.gitlabProjectId,
+          projectId: entry.projectId,
           webhookId: entry.webhookId,
         });
         providerUnregistered = true;
@@ -105,7 +105,7 @@ async function runUnwireInternal(options: UnwireOptions): Promise<UnwireResult> 
           );
         }
         warnings.push(
-          `GitLab webhook unregister failed (${errMsg(err)}). Delete webhook id=${entry.webhookId} manually at ${entry.gitlabBaseUrl ?? 'gitlab.com'}.`,
+          `GitLab webhook unregister failed (${errMsg(err)}). Delete webhook id=${entry.webhookId} manually at ${entry.providerBaseUrl ?? 'gitlab.com'}.`,
         );
       }
     } else if (!options.force) {
@@ -143,12 +143,12 @@ async function runUnwireInternal(options: UnwireOptions): Promise<UnwireResult> 
 
   // ── Phase 10.3: delete keychain entries ──────────────────────────────
   let keychainCleaned = 0;
-  if (entry?.gitlabProjectId) {
-    const r = await deleteSecret(`gitlab.webhook-token:${entry.gitlabProjectId}`);
+  if (entry?.providerId === 'gitlab' && entry?.projectId) {
+    const r = await deleteSecret(`gitlab.webhook-token:${entry.projectId}`);
     if (r.ok && r.value) keychainCleaned++;
   }
-  if (entry?.gitlabBaseUrl) {
-    const r = await deleteSecret(`gitlab.pat:${hostOf(entry.gitlabBaseUrl)}`);
+  if (entry?.providerId === 'gitlab' && entry?.providerBaseUrl) {
+    const r = await deleteSecret(`gitlab.pat:${hostOf(entry.providerBaseUrl)}`);
     if (r.ok && r.value) keychainCleaned++;
   }
   if (entry?.providerId === 'github' && entry.projectId) {

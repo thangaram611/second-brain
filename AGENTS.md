@@ -1,34 +1,54 @@
 # Second Brain — Agent Instructions
 
-This is a pnpm monorepo using Turborepo. Node.js 22+, TypeScript 5.8+ in strict mode.
+Developer knowledge graph. pnpm monorepo, Turborepo, Node.js 22+, TypeScript 5.8+ strict, ESM only.
 
-## Structure
+Each package/app has its own AGENTS.md with package-specific instructions.
 
-- `packages/types` — Shared TypeScript types (entity, relation, search)
-- `packages/core` — Knowledge graph engine (CRUD, search, storage, temporal)
-- `packages/ingestion` — Auto-growth pipeline (git, AST, conversations, GitHub, docs)
-- `packages/sync` — Yjs CRDT sync layer
-- `packages/mcp-server` — MCP interface (stdio + streamable HTTP)
-- `apps/server` — Express REST + WebSocket server
-- `apps/ui` — React web app (Vite + Tailwind + Cytoscape.js)
-- `apps/relay` — y-websocket relay server
-- `tools/cli` — `brain` CLI tool
+## Monorepo Map
+
+```
+packages/types      → Shared TS types
+packages/core       → Graph engine (SQLite + Drizzle + FTS5 + sqlite-vec)
+packages/collectors → Data collectors + streaming providers
+packages/ingestion  → LLM extraction + embedding pipeline
+packages/sync       → Yjs CRDT sync bridge
+packages/mcp-server → MCP tools (32 tools, stdio + HTTP)
+apps/server         → Express 5 REST + WebSocket (:7430)
+apps/ui             → React 19 + Cytoscape.js + Zustand (:5173)
+apps/relay          → Hocuspocus CRDT relay (:7421)
+tools/cli           → brain CLI (Commander.js)
+```
 
 ## Commands
 
 ```bash
-pnpm install          # Install all dependencies
-pnpm build            # Build all packages
-pnpm test             # Run all tests
-pnpm check-types      # Type-check all packages
-pnpm dev              # Start dev mode
+pnpm install / build / test / check-types / lint / dev / clean
 ```
+
+Per-package: `cd <pkg> && pnpm test|build|dev`
 
 ## Conventions
 
-- All packages use ESM (`"type": "module"`)
-- IDs are ULIDs (sortable, unique)
-- Timestamps are ISO 8601 strings
-- SQLite via better-sqlite3, schema via Drizzle ORM
-- Every entity/relation has a `namespace` field: `'personal'` for local-only, project ID for synced
-- Tests use Vitest with in-memory SQLite
+- ESM only (`"type": "module"`), `.mjs`/`.d.mts` output, `tsdown` for builds
+- ULIDs via `ulidx` for IDs — never UUID
+- ISO 8601 strings for timestamps — never unix/Date
+- SQLite (better-sqlite3) + Drizzle ORM, WAL mode
+- Zod v4 for external input validation
+- Namespace on all entities/relations: `'personal'` = local, project ID = synced
+- Vitest + in-memory SQLite (`:memory:`) for tests
+- Named exports, re-export from package `index.ts`
+- Workspace imports (`@second-brain/core`, `@second-brain/types`)
+- Strict mode, no `any`, no path aliases
+
+## Data Model
+
+- **15 entity types**: concept, decision, pattern, person, file, symbol, event, tool, fact, conversation, reference, pull_request, merge_request, branch, review
+- **20 relation types**: relates_to, depends_on, implements, supersedes, contradicts, derived_from, authored_by, decided_in, uses, tests, contains, co_changes_with, preceded_by, blocks, reviewed_by, merged_in_mr, merged_in_pr, touches_file, owns, parallel_with
+
+Defined in `packages/types/src/entity.ts` and `packages/types/src/relation.ts`.
+
+## Docs
+
+- [docs/architecture.md](./docs/architecture.md) — Full technical architecture
+- [docs/getting-started.md](./docs/getting-started.md) — Usage guide
+- [docs/api-reference.md](./docs/api-reference.md) — REST API + MCP + CLI reference

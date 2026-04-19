@@ -19,8 +19,6 @@ const WiredReposEntrySchema = z.object({
   providerId: z.enum(['gitlab', 'github', 'custom']).optional(),
   projectId: z.string().optional(),
   relayUrl: z.string().optional(),
-  gitlabBaseUrl: z.string().optional(),
-  gitlabProjectId: z.string().optional(),
   webhookId: z.number().int().optional(),
   installedAt: z.string(),
 });
@@ -57,10 +55,10 @@ export function buildProviderNamespaceEntries(
 ): Array<{ provider: 'gitlab' | 'github' | 'custom'; projectId: string; namespace: string }> {
   const out: Array<{ provider: 'gitlab' | 'github' | 'custom'; projectId: string; namespace: string }> = [];
   for (const entry of Object.values(config.wiredRepos)) {
-    if (entry.providerId && entry.gitlabProjectId) {
+    if (entry.providerId && entry.projectId) {
       out.push({
         provider: entry.providerId,
-        projectId: entry.gitlabProjectId,
+        projectId: entry.projectId,
         namespace: entry.namespace,
       });
     }

@@ -25,11 +25,6 @@ const WiredReposEntrySchema = z.object({
   relayUrl: z.string().optional(),
   /** Generic provider base URL (e.g., https://api.github.com, https://git.corp.com/api/v4). */
   providerBaseUrl: z.string().optional(),
-  // ── GitLab-specific (kept for backward compat) ──
-  /** @deprecated Use providerBaseUrl. GitLab self-hosted base URL. */
-  gitlabBaseUrl: z.string().optional(),
-  /** Phase 10.3 — numeric GitLab project id (stringified). */
-  gitlabProjectId: z.string().optional(),
   // ── GitHub-specific ──
   /** GitHub repository owner (user or org). */
   githubOwner: z.string().optional(),

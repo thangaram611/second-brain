@@ -19,12 +19,19 @@ const CREATE_TABLES_SQL = `
     source_actor TEXT,
     tags TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    branch_context_branch TEXT GENERATED ALWAYS AS (json_extract(properties, '$.branchContext.branch')) VIRTUAL,
+    branch_context_status TEXT GENERATED ALWAYS AS (json_extract(properties, '$.branchContext.status')) VIRTUAL
   );
 
   CREATE INDEX IF NOT EXISTS idx_entities_type_namespace ON entities(type, namespace);
   CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
   CREATE INDEX IF NOT EXISTS idx_entities_namespace_updated ON entities(namespace, updated_at);
+  CREATE INDEX IF NOT EXISTS idx_entities_event_time ON entities(event_time);
+  CREATE INDEX IF NOT EXISTS idx_entities_ingest_time ON entities(ingest_time);
+  CREATE INDEX IF NOT EXISTS idx_entities_created_at ON entities(created_at);
+  CREATE INDEX IF NOT EXISTS idx_entities_branch ON entities(branch_context_branch);
+  CREATE INDEX IF NOT EXISTS idx_entities_branch_status ON entities(branch_context_branch, branch_context_status);
 
   CREATE TABLE IF NOT EXISTS relations (
     id TEXT PRIMARY KEY,
@@ -42,25 +49,26 @@ const CREATE_TABLES_SQL = `
     event_time TEXT NOT NULL,
     ingest_time TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    branch_context_branch TEXT GENERATED ALWAYS AS (json_extract(properties, '$.branchContext.branch')) VIRTUAL,
+    branch_context_status TEXT GENERATED ALWAYS AS (json_extract(properties, '$.branchContext.status')) VIRTUAL
   );
 
   CREATE INDEX IF NOT EXISTS idx_relations_source_type ON relations(source_id, type);
   CREATE INDEX IF NOT EXISTS idx_relations_target_type ON relations(target_id, type);
   CREATE INDEX IF NOT EXISTS idx_relations_namespace_type ON relations(namespace, type);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_relations_unique_edge ON relations(source_id, target_id, type);
+  CREATE INDEX IF NOT EXISTS idx_relations_type ON relations(type);
+  CREATE INDEX IF NOT EXISTS idx_relations_branch ON relations(branch_context_branch);
+  CREATE INDEX IF NOT EXISTS idx_relations_branch_status ON relations(branch_context_branch, branch_context_status);
 
   CREATE TABLE IF NOT EXISTS embeddings (
     entity_id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
     vector BLOB,
     model TEXT NOT NULL,
+    content_hash TEXT,
     created_at TEXT NOT NULL
   );
-
-  CREATE INDEX IF NOT EXISTS idx_entities_event_time ON entities(event_time);
-  CREATE INDEX IF NOT EXISTS idx_entities_ingest_time ON entities(ingest_time);
-  CREATE INDEX IF NOT EXISTS idx_entities_created_at ON entities(created_at);
-  CREATE INDEX IF NOT EXISTS idx_relations_type ON relations(type);
 `;
 
 const CREATE_FTS_SQL = `
@@ -113,13 +121,9 @@ const CREATE_FTS_SQL = `
 `;
 
 /**
- * v1 = the baseline schema as of Phase 7.
- *
- * Also adds the `content_hash` column to `embeddings` — prior to the migration
- * runner this was applied by an ad-hoc ALTER on every open; now it lives inside
- * the versioned initial migration. Uses IF NOT EXISTS / duplicate-column
- * tolerance so it is safe to re-run on DBs that were already partially created
- * by pre-migration code paths.
+ * v1 — Complete initial schema. Creates tables for entities, relations,
+ * embeddings, and FTS5 full-text search with sync triggers. Includes
+ * virtual generated columns for branch context filtering.
  */
 export const migration001: Migration = {
   version: 1,
@@ -127,11 +131,5 @@ export const migration001: Migration = {
   up(sqlite: Database.Database) {
     sqlite.exec(CREATE_TABLES_SQL);
     sqlite.exec(CREATE_FTS_SQL);
-    try {
-      sqlite.exec(`ALTER TABLE embeddings ADD COLUMN content_hash TEXT`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (!/duplicate column name/i.test(message)) throw err;
-    }
   },
 };

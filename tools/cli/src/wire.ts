@@ -242,8 +242,7 @@ async function runWireInternal(options: WireOptions): Promise<WireResult> {
           ...baseEntry,
           providerId: 'gitlab',
           projectId: providerResult.projectId,
-          gitlabBaseUrl: providerResult.baseUrl,
-          gitlabProjectId: providerResult.projectId,
+          providerBaseUrl: providerResult.baseUrl,
           webhookId: providerResult.webhookId,
           relayUrl: providerResult.relayUrl,
         };

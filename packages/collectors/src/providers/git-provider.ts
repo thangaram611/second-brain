@@ -3,7 +3,7 @@
  *
  * A `GitProvider` wraps the *live webhook + backfill* half of forge
  * ingestion. It's deliberately orthogonal to `Collector` (the batch
- * `pollEvents+emit` shape used by `GitLabCollector` and `GitHubCollector`)
+ * `pollEvents+emit` shape used by `GitHubCollector`)
  * — those stay around for offline bulk imports; this interface handles
  * per-event streaming.
  *

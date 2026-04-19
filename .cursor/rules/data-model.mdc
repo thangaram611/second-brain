@@ -1,0 +1,21 @@
+---
+description: "Data model reference for entities and relations"
+mode: manual
+---
+
+## Entity Types (15)
+concept, decision, pattern, person, file, symbol, event, tool, fact, conversation, reference, implementation, pull_request, merge_request, branch
+
+## Relation Types (20)
+relates_to, depends_on, implements, supersedes, contradicts, derived_from, authored_by, decided_in, uses, tests, contains, co_changes_with, preceded_by, blocks, reviewed_by, merged_in_mr, merged_in_pr, touches_file, owns, parallel_with
+
+## Entity Shape
+id (ULID), type, name, namespace, observations (string[]), properties (Record), confidence (0-1), eventTime, ingestTime, lastAccessedAt, accessCount, source (type/ref/actor), tags (string[]), createdAt, updatedAt
+
+## Relation Shape
+id (ULID), type, sourceId, targetId, namespace, properties (Record), confidence, weight, bidirectional, source (type/ref/actor), eventTime, ingestTime, createdAt, updatedAt
+
+## Key Constraints
+- Relation unique: (sourceId, targetId, type)
+- Entity batchUpsert dedupes on: (name, namespace, type) — merges observations/tags
+- Confidence decay rates: fact=0.01/day, concept=0.005/day, decision=0.003/day. person/file/symbol=0 (never decay)

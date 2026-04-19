@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import request from 'supertest';
 import { Brain } from '@second-brain/core';
-import { GitLabProvider, type WebhookSecret } from '@second-brain/collectors';
+import { GitLabProvider, type WebhookSecret, type GitProvider } from '@second-brain/collectors';
 import { createApp } from '../app.js';
 import { ObservationService } from '../services/observation-service.js';
 import { PromotionService } from '../services/promotion-service.js';
@@ -43,9 +43,10 @@ beforeEach(() => {
     [PROVIDER_KEY, { kind: 'token', value: SECRET }],
   ]);
   const gitlabProvider = new GitLabProvider({ pat: 'glpat-test', fetchImpl: buildFetch() });
+  const providerRegistry = new Map<string, GitProvider>([['gitlab', gitlabProvider]]);
   app = createApp(brain, {
     observations,
-    observeOptions: { webhookSecrets, gitlabProvider },
+    observeOptions: { webhookSecrets, providerRegistry },
   });
 });
 

@@ -1,7 +1,7 @@
 import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { AuthorSchema } from '@second-brain/types';
-import { GitLabProvider, type MappedObservation, type WebhookSecret, type GitProvider } from '@second-brain/collectors';
+import { type MappedObservation, type WebhookSecret, type GitProvider } from '@second-brain/collectors';
 import type { ObservationService } from '../services/observation-service.js';
 import { tokenBucket } from '../services/rate-limit.js';
 
@@ -134,11 +134,8 @@ export interface ObserveRouteOptions {
   webhookSecrets?: Map<string, WebhookSecret>;
   /**
    * Phase 10.5 — provider registry keyed by provider name.
-   * Falls back to a default GitLabProvider for 'gitlab' if not provided.
    */
   providerRegistry?: Map<string, GitProvider>;
-  /** @deprecated Use providerRegistry. Kept for backward compat. */
-  gitlabProvider?: GitProvider;
 }
 
 export function observeRoutes(
@@ -236,11 +233,7 @@ export function observeRoutes(
     }
   });
 
-  // Build provider registry (backward-compat: gitlabProvider option seeds 'gitlab' entry)
   const providerRegistry = options.providerRegistry ?? new Map<string, GitProvider>();
-  if (!providerRegistry.has('gitlab')) {
-    providerRegistry.set('gitlab', options.gitlabProvider ?? new GitLabProvider());
-  }
   const webhookSecrets = options.webhookSecrets ?? new Map<string, WebhookSecret>();
 
   router.post('/api/observe/mr-event', async (req, res, next) => {

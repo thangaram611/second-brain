@@ -1,0 +1,102 @@
+# Second Brain — Windsurf Rules
+
+## Project Overview
+
+Developer knowledge graph — pnpm monorepo with Turborepo. Node.js 22+, TypeScript 5.8+ strict mode, ESM only.
+
+For full architecture: see docs/architecture.md
+For agent instructions: see AGENTS.md
+
+## Tech Stack
+
+- Runtime: Node.js 22+, ESM only ("type": "module")
+- Language: TypeScript 5.8+ strict mode
+- Database: SQLite (better-sqlite3) + Drizzle ORM, WAL mode
+- Search: FTS5 (BM25) + sqlite-vec (cosine KNN), Reciprocal Rank Fusion
+- Validation: Zod v4
+- Testing: Vitest, in-memory SQLite
+- Build: tsdown (ESM), tsc (type-check)
+- Frontend: React 19, Zustand, Cytoscape.js, Tailwind CSS, Radix UI
+- Sync: Yjs CRDTs via Hocuspocus relay
+- IDs: ULIDs (ulidx). Never UUID
+- Timestamps: ISO 8601 strings. Never unix timestamps
+
+## Monorepo
+
+packages/types      — Shared TypeScript types
+packages/core       — Knowledge graph engine (Brain class in src/brain.ts)
+packages/collectors — Data collectors + streaming providers
+packages/ingestion  — LLM extraction + embedding pipeline
+packages/sync       — Yjs CRDT sync bridge
+packages/mcp-server — MCP tools (32 tools, stdio + HTTP)
+apps/server         — Express 5 REST API + WebSocket (port 7430)
+apps/ui             — React 19 + Cytoscape.js (port 5173)
+apps/relay          — Hocuspocus CRDT relay (port 7421)
+tools/cli           — brain CLI (Commander.js)
+
+## Commands
+
+pnpm install, pnpm build, pnpm test, pnpm check-types, pnpm dev
+
+## Coding Rules
+
+### Always
+- ESM only. Named exports. Re-export from index.ts
+- Use workspace imports: @second-brain/core, @second-brain/types
+- Zod schemas for all external input validation
+- ULIDs for IDs (via ulidx)
+- ISO 8601 for timestamps
+- Namespace field on all entities/relations
+- In-memory SQLite for tests
+- Try-catch with descriptive errors
+- batchUpsert for bulk operations
+
+### Never
+- Use `any` type
+- Use path aliases
+- Use UUIDs
+- Use unix timestamps or Date objects in storage
+- Write to entities_fts directly (auto-maintained via triggers)
+- Mutate stored confidence (decay is read-side only)
+- Sync 'personal' namespace
+- Import from package internals (use public API)
+
+## Backend Patterns
+
+- Drizzle ORM for queries (schema in packages/core/src/schema/)
+- Brain class is main facade (packages/core/src/brain.ts)
+- Relations: unique constraint on (sourceId, targetId, type)
+- Use createOrGet for idempotent relations
+- WebSocket broadcast after mutations
+- MCP tools: packages/mcp-server/src/tools/
+
+## Frontend Patterns
+
+- React 19 functional components
+- Zustand stores (one per feature in apps/ui/src/store/)
+- Cytoscape.js with diff-based rendering
+- Tailwind dark theme (zinc-950 bg)
+- REST client: apps/ui/src/lib/api.ts
+- WebSocket: apps/ui/src/lib/ws.ts (auto-reconnect)
+- HashRouter (React Router 7)
+
+## Testing
+
+- Vitest with globals (no imports for describe/it/expect)
+- In-memory SQLite for all DB tests
+- Co-located: __tests__/*.test.ts
+- Use Brain class directly (not HTTP)
+- Test happy path + error cases
+
+## Data Model
+
+Entity types (15): concept, decision, pattern, person, file, symbol, event, tool, fact, conversation, reference, implementation, pull_request, merge_request, branch
+
+Relation types (20): relates_to, depends_on, implements, supersedes, contradicts, derived_from, authored_by, decided_in, uses, tests, contains, co_changes_with, preceded_by, blocks, reviewed_by, merged_in_mr, merged_in_pr, touches_file, owns, parallel_with
+
+## Documentation
+
+- docs/architecture.md — Full technical architecture
+- docs/getting-started.md — Usage guide
+- docs/api-reference.md — REST API + MCP + CLI reference
+- AGENTS.md — Detailed agent instructions

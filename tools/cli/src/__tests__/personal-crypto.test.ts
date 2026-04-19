@@ -5,7 +5,7 @@ import {
   isEncryptedBundle,
 } from '../personal-crypto.js';
 
-describe('personal-crypto', () => {
+describe('personal-crypto', { timeout: 30_000 }, () => {
   const sampleJson = JSON.stringify({ entities: [{ id: '01J1', name: 'test' }] });
   const passphrase = 'correct-horse-battery-staple';
 

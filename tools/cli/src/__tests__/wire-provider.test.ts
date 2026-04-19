@@ -143,7 +143,7 @@ describe('brain wire + provider', () => {
     const wired = loadWiredRepos();
     const entry = Object.values(wired.wiredRepos)[0];
     expect(entry.providerId).toBe('gitlab');
-    expect(entry.gitlabProjectId).toBe('123');
+    expect(entry.projectId).toBe('123');
     expect(entry.webhookId).toBe(777);
     expect(entry.relayUrl).toBe('https://private-relay.example');
   });

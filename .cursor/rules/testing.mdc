@@ -1,0 +1,16 @@
+---
+description: "Testing conventions"
+patterns: ["**/*.test.ts", "**/__tests__/**"]
+mode: always
+---
+
+## Testing Rules
+
+- Vitest with globals enabled (describe, it, expect — no imports needed)
+- In-memory SQLite for all database tests (`:memory:`)
+- Test files co-located as `__tests__/*.test.ts` or `*.test.ts`
+- Use Brain class directly for integration tests (not HTTP)
+- Clean up: each test should create its own Brain instance
+- No mocking of SQLite — use real in-memory database
+- Assert both happy path and error cases
+- Test entity/relation CRUD, search, temporal queries as applicable

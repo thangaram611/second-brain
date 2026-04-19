@@ -19,8 +19,6 @@ export { GitHubCollector } from './github/index.js';
 export type { GitHubCollectorOptions } from './github/index.js';
 export { GitHubPRSchema, GitHubIssueSchema, GitHubReviewSchema } from './github/index.js';
 export type { GitHubPR, GitHubIssue, GitHubReview } from './github/index.js';
-export { GitLabCollector } from './gitlab/index.js';
-export type { GitLabCollectorOptions } from './gitlab/index.js';
 export { GitLabMergeRequestSchema, GitLabIssueSchema } from './gitlab/index.js';
 export type { GitLabMergeRequest, GitLabIssue } from './gitlab/index.js';
 export * from './conversation/index.js';
