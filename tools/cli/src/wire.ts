@@ -9,10 +9,8 @@ import { canonicalizeEmail } from '@second-brain/types';
 import { GitLabProvider, GitHubProvider, resolveGitLabProject, mintRelayChannel } from '@second-brain/collectors';
 
 const ProjectConfigSchema = z.object({ namespace: z.string().min(1).optional() }).passthrough();
-import {
-  installClaudeHooks,
-  type InstallHooksResult,
-} from './install-claude-hooks.js';
+import type { InstallHooksResult } from './install-claude-hooks.js';
+import { ADAPTERS, type AdapterName } from './adapters/index.js';
 import {
   installGitHooks,
   type InstallGitHooksResult,
@@ -38,6 +36,12 @@ export interface WireOptions {
   requireProject?: boolean;
   /** Also install Claude Code session hooks (user scope). Default true. */
   installClaudeSession?: boolean;
+  /**
+   * List of assistants to install hooks for (PR3). Defaults to `['claude']` to
+   * preserve back-compat. Pass `['claude','cursor','codex','copilot']` (or any
+   * subset) to wire multiple at once. Per-adapter failures degrade to warnings.
+   */
+  installAssistants?: AdapterName[];
   /** Skip if claude-mem already present. */
   skipIfClaudeMem?: boolean;
   /** Override `brain-hook` binary name. */
@@ -212,13 +216,45 @@ async function runWireInternal(options: WireOptions): Promise<WireResult> {
   });
 
   let claudeHooks: InstallHooksResult | undefined;
-  if (options.installClaudeSession ?? true) {
-    claudeHooks = installClaudeHooks({
-      scope: 'user',
-      tool: 'claude',
-      skipIfClaudeMem: options.skipIfClaudeMem,
-      hookCommand: options.hookCommand,
-    });
+  // Resolve the assistant list. The legacy `installClaudeSession` flag is
+  // honored for back-compat — when it is set to false explicitly, we skip
+  // ALL assistant hooks (callers that disable Claude expect no hooks).
+  let assistants: AdapterName[];
+  if (options.installClaudeSession === false) {
+    assistants = [];
+  } else {
+    assistants = options.installAssistants ?? ['claude'];
+  }
+
+  for (const name of assistants) {
+    const adapter = ADAPTERS[name];
+    try {
+      const result = adapter.install({
+        scope: 'user',
+        home: os.homedir(),
+        cwd: repoRoot,
+        hookCommand: options.hookCommand,
+        skipIfClaudeMem: options.skipIfClaudeMem,
+      });
+      if (name === 'claude') {
+        // Preserve the original Claude-only return shape used downstream.
+        const sidecar = result.auxFiles.find((p) => p.endsWith('settings.brain-hooks.json')) ?? '';
+        claudeHooks = {
+          settingsPath: result.configPath,
+          sidecarPath: sidecar,
+          addedHooks: result.addedEvents,
+          coexistedWithClaudeMem: result.warnings.some((w) => w.toLowerCase().includes('claude-mem')),
+          skipped: result.skipped,
+          backupPath: result.backupPath,
+        };
+      }
+      for (const w of result.warnings) {
+        warnings.push(`${name}: ${w}`);
+      }
+    } catch (err) {
+      // Per-adapter failure is a warning, never aborts wire.
+      warnings.push(`${name}: install failed — ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   const repoHash = computeRepoHash(repoRoot);

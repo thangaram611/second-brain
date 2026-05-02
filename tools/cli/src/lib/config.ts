@@ -23,6 +23,23 @@ export function buildAuthHeaders(token?: string): Record<string, string> {
   return resolved ? { Authorization: `Bearer ${resolved}` } : {};
 }
 
+/**
+ * Async variant that consults `resolve-token.ts` (env → credentials file +
+ * keychain). Falls back to plain `buildAuthHeaders()` if no token is found.
+ *
+ * Use this from long-running paths (CLI commands, hook binary). The sync
+ * `buildAuthHeaders` remains for callers that already have a token in hand.
+ */
+export async function buildAuthHeadersAsync(
+  token?: string,
+): Promise<Record<string, string>> {
+  if (token) return { Authorization: `Bearer ${token}` };
+  const { resolveToken } = await import('./resolve-token.js');
+  const resolved = await resolveToken();
+  if (resolved) return { Authorization: `Bearer ${resolved.token}` };
+  return {};
+}
+
 export function getDbPath(): string {
   return process.env.BRAIN_DB_PATH ?? DEFAULT_DB_PATH;
 }

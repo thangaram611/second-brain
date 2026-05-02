@@ -1,3 +1,9 @@
+/**
+ * Smoke test for the legacy `installClaudeHooks` / `uninstallClaudeHooks`
+ * surface. The full Claude installer behavior is covered in
+ * `src/adapters/__tests__/claude.test.ts`; this file just makes sure the
+ * back-compat re-export from `install-claude-hooks.ts` keeps working.
+ */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -20,7 +26,7 @@ afterEach(() => {
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
-describe('installClaudeHooks', () => {
+describe('installClaudeHooks (legacy alias)', () => {
   it('writes all hook entries to a fresh settings.json (user scope)', () => {
     const result = installClaudeHooks({ scope: 'user', tool: 'claude', homeDir: tmp });
     expect(result.addedHooks.sort()).toEqual([...CLAUDE_HOOK_EVENTS].sort());
@@ -29,15 +35,14 @@ describe('installClaudeHooks', () => {
     for (const event of CLAUDE_HOOK_EVENTS) {
       expect(hooks[event]).toBeTruthy();
       const cmd = hooks[event][0].hooks[0].command;
+      // Every brain-hook command starts with the binary name and carries the
+      // sentinel comment marker `# brain:v2` for stable dedup.
       expect(cmd.startsWith('brain-hook')).toBe(true);
+      expect(cmd).toContain('# brain:v2');
     }
-    // PreToolUse should carry a matcher.
-    expect(hooks.PreToolUse[0].matcher).toBe('.*');
-    // UserPromptSubmit should NOT carry a matcher per Claude Code spec.
-    expect(hooks.UserPromptSubmit[0].matcher).toBeUndefined();
   });
 
-  it('coexists with an existing claude-mem hook by default', () => {
+  it('coexists with claude-mem by default (smoke)', () => {
     const dir = path.join(tmp, '.claude');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(
@@ -52,38 +57,14 @@ describe('installClaudeHooks', () => {
     const result = installClaudeHooks({ scope: 'user', tool: 'claude', homeDir: tmp });
     expect(result.coexistedWithClaudeMem).toBe(true);
     const hooks = JSON.parse(fs.readFileSync(result.settingsPath, 'utf8')).hooks;
-    const cmds = hooks.SessionStart.flatMap((g: { hooks: { command: string }[] }) => g.hooks.map((h) => h.command));
-    expect(cmds).toContain('claude-mem session-start');
-    expect(cmds).toContain('brain-hook session-start');
-  });
-
-  it('with --exclusive backs up and strips claude-mem hooks', () => {
-    const dir = path.join(tmp, '.claude');
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(
-      path.join(dir, 'settings.json'),
-      JSON.stringify({
-        hooks: {
-          SessionStart: [{ hooks: [{ type: 'command', command: 'claude-mem session-start' }] }],
-        },
-      }),
+    const cmds: string[] = hooks.SessionStart.flatMap(
+      (g: { hooks: { command: string }[] }) => g.hooks.map((h) => h.command),
     );
-
-    const result = installClaudeHooks({
-      scope: 'user',
-      tool: 'claude',
-      homeDir: tmp,
-      exclusive: true,
-    });
-    expect(result.backupPath).toBeTruthy();
-    expect(fs.existsSync(result.backupPath!)).toBe(true);
-    const hooks = JSON.parse(fs.readFileSync(result.settingsPath, 'utf8')).hooks;
-    const cmds = hooks.SessionStart.flatMap((g: { hooks: { command: string }[] }) => g.hooks.map((h) => h.command));
-    expect(cmds).not.toContain('claude-mem session-start');
-    expect(cmds).toContain('brain-hook session-start');
+    expect(cmds).toContain('claude-mem session-start');
+    expect(cmds.some((c) => c.startsWith('brain-hook session-start'))).toBe(true);
   });
 
-  it('with --skip-if-claude-mem skips install when claude-mem present', () => {
+  it('--skip-if-claude-mem skips when claude-mem present', () => {
     const dir = path.join(tmp, '.claude');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(
@@ -105,25 +86,10 @@ describe('installClaudeHooks', () => {
     expect(result.addedHooks).toHaveLength(0);
   });
 
-  it('uninstall restores prior state without touching claude-mem', () => {
-    const dir = path.join(tmp, '.claude');
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(
-      path.join(dir, 'settings.json'),
-      JSON.stringify({
-        hooks: {
-          SessionStart: [{ hooks: [{ type: 'command', command: 'claude-mem session-start' }] }],
-        },
-      }),
-    );
-
+  it('uninstall removes brain hook entries', () => {
     installClaudeHooks({ scope: 'user', tool: 'claude', homeDir: tmp });
     const removed = uninstallClaudeHooks({ scope: 'user', homeDir: tmp });
     expect(removed.removed.length).toBeGreaterThan(0);
-    const hooks = JSON.parse(fs.readFileSync(removed.settingsPath, 'utf8')).hooks ?? {};
-    const cmds = (hooks.SessionStart ?? []).flatMap((g: { hooks: { command: string }[] }) => g.hooks.map((h) => h.command));
-    expect(cmds).toContain('claude-mem session-start');
-    expect(cmds).not.toContain('brain-hook session-start');
   });
 
   it('project scope writes to <cwd>/.claude/settings.json', () => {
@@ -138,7 +104,7 @@ describe('installClaudeHooks', () => {
   });
 });
 
-describe('detectClaudeMem / stripClaudeMem', () => {
+describe('detectClaudeMem / stripClaudeMem (legacy)', () => {
   it('recognizes both bare and npx command forms', () => {
     expect(detectClaudeMem({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'claude-mem hook' }] }] } })).toBe(true);
     expect(detectClaudeMem({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'npx @claude-mem/cli' }] }] } })).toBe(true);
