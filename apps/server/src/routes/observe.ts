@@ -17,6 +17,8 @@ const SessionStartSchema = z.object({
 const PromptSubmitSchema = z.object({
   sessionId: z.string().min(1),
   prompt: z.string(),
+  /** Optional cwd; falls back to the session-start cwd cached server-side. */
+  cwd: z.string().optional(),
   timestamp: z.string().optional(),
 });
 
@@ -29,6 +31,8 @@ const ToolUseSchema = z.object({
   durationMs: z.number().optional(),
   timestamp: z.string().optional(),
   filePaths: z.array(z.string()).optional(),
+  /** Optional cwd; falls back to the session-start cwd cached server-side. */
+  cwd: z.string().optional(),
 });
 
 const SessionEndSchema = z.object({
@@ -175,16 +179,24 @@ export function observeRoutes(
     }
   });
 
-  router.post('/api/observe/prompt-submit', (req, res) => {
-    const payload = PromptSubmitSchema.parse(req.body);
-    const result = observations.handlePromptSubmit(payload);
-    res.json(result);
+  router.post('/api/observe/prompt-submit', async (req, res, next) => {
+    try {
+      const payload = PromptSubmitSchema.parse(req.body);
+      const result = await observations.handlePromptSubmit(payload);
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
   });
 
-  router.post('/api/observe/tool-use', (req, res) => {
-    const payload = ToolUseSchema.parse(req.body);
-    const result = observations.handleToolUse(payload);
-    res.status(201).json(result);
+  router.post('/api/observe/tool-use', async (req, res, next) => {
+    try {
+      const payload = ToolUseSchema.parse(req.body);
+      const result = await observations.handleToolUse(payload);
+      res.status(201).json(result);
+    } catch (err) {
+      next(err);
+    }
   });
 
   router.post('/api/observe/stop', (req, res) => {

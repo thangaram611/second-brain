@@ -87,6 +87,9 @@ importers:
       '@second-brain/ingestion':
         specifier: workspace:*
         version: link:../../packages/ingestion
+      '@second-brain/mcp-server':
+        specifier: workspace:*
+        version: link:../../packages/mcp-server
       '@second-brain/sync':
         specifier: workspace:*
         version: link:../../packages/sync

@@ -6,6 +6,8 @@ import { SerialQueue } from './serial-queue.js';
 import type { PromotionService } from './promotion-service.js';
 import { resolveAuthor } from '../lib/resolve-author.js';
 import type { PersonalityExtractor } from './personality-extractor.js';
+import { HookContextCache } from './hook-context-cache.js';
+import { HookContextRouter } from './hook-context-router.js';
 
 export interface SessionStartPayload {
   sessionId: string;
@@ -20,6 +22,8 @@ export interface SessionStartPayload {
 export interface PromptSubmitPayload {
   sessionId: string;
   prompt: string;
+  /** Optional working directory; falls back to last session-start cwd. */
+  cwd?: string;
   timestamp?: string;
 }
 
@@ -32,6 +36,8 @@ export interface ToolUsePayload {
   durationMs?: number;
   timestamp?: string;
   filePaths?: string[];
+  /** Optional working directory; falls back to last session-start cwd. */
+  cwd?: string;
 }
 
 export interface SessionEndPayload {
@@ -96,6 +102,8 @@ export interface ObservationServiceOptions {
   contextNamespaces?: string[];
   /** Max entities in a context block. */
   contextLimit?: number;
+  /** Override the in-process hook context cache (test seam). */
+  hookContextCache?: HookContextCache;
 }
 
 export interface ObservationCounters {
@@ -188,6 +196,8 @@ export class ObservationService {
   private readonly now: () => string;
   private readonly contextNamespaces: string[];
   private readonly contextLimit: number;
+  readonly hookContextCache: HookContextCache;
+  private readonly hookContextRouter: HookContextRouter;
 
   constructor(
     private brain: Brain,
@@ -198,6 +208,8 @@ export class ObservationService {
     this.now = options.now ?? (() => new Date().toISOString());
     this.contextNamespaces = options.contextNamespaces ?? ['personal'];
     this.contextLimit = options.contextLimit ?? 15;
+    this.hookContextCache = options.hookContextCache ?? new HookContextCache();
+    this.hookContextRouter = new HookContextRouter(this.hookContextCache);
   }
 
   private sourceFor(tool?: string, sessionId?: string): EntitySource {
@@ -267,6 +279,10 @@ export class ObservationService {
       const author = await resolveAuthor(payload.cwd);
       if (author) this.currentAuthor.set(payload.sessionId, author);
     }
+    // Record cwd for fallback on later events that omit it.
+    if (payload.cwd) {
+      this.hookContextCache.setCwd(payload.sessionId, payload.cwd);
+    }
     const conversationId = this.ensureConversationEntity(payload.sessionId, payload);
     const contextBlock = await this.buildStartContextBlock(payload);
     return {
@@ -274,6 +290,16 @@ export class ObservationService {
       namespace: sessionNamespace(payload.sessionId),
       contextBlock,
     };
+  }
+
+  /** Resolve cwd for a hook event — explicit value wins, else cached, else empty. */
+  private resolveCwd(sessionId: string, cwd?: string): string {
+    if (cwd && cwd.length > 0) {
+      // Bump the cache so subsequent events benefit from the fresh value.
+      this.hookContextCache.setCwd(sessionId, cwd);
+      return cwd;
+    }
+    return this.hookContextCache.getCwd(sessionId) ?? '';
   }
 
   async buildStartContextBlock(payload: SessionStartPayload): Promise<string> {
@@ -306,7 +332,9 @@ export class ObservationService {
     return lines.join('\n');
   }
 
-  handlePromptSubmit(payload: PromptSubmitPayload): { conversationId: string } {
+  async handlePromptSubmit(
+    payload: PromptSubmitPayload,
+  ): Promise<{ conversationId: string; contextBlock: string | null }> {
     this.counters.hook_events_total++;
     const { redacted, stripped } = stripPrivateBlocks(payload.prompt);
     if (stripped > 0) this.counters.private_blocks_filtered += stripped;
@@ -315,10 +343,27 @@ export class ObservationService {
     if (redacted.trim()) {
       this.brain.entities.addObservation(conversationId, `user: ${redacted}`);
     }
-    return { conversationId };
+
+    // Cwd is unused by the prompt route today (search is namespace-scoped),
+    // but we still resolve+update the cache so later tool-use events benefit.
+    this.resolveCwd(payload.sessionId, payload.cwd);
+
+    const ns = sessionNamespace(payload.sessionId);
+    const { contextBlock } = await this.hookContextRouter.routeContext({
+      toolName: 'prompt-submit',
+      toolInput: { prompt: redacted },
+      cwd: this.hookContextCache.getCwd(payload.sessionId) ?? '',
+      sessionId: payload.sessionId,
+      namespace: ns,
+      brain: this.brain,
+    });
+
+    return { conversationId, contextBlock };
   }
 
-  handleToolUse(payload: ToolUsePayload): { eventId: string } {
+  async handleToolUse(
+    payload: ToolUsePayload,
+  ): Promise<{ eventId: string; contextBlock: string | null }> {
     this.counters.hook_events_total++;
     const ns = sessionNamespace(payload.sessionId);
     const convId = this.ensureConversationEntity(payload.sessionId);
@@ -364,7 +409,24 @@ export class ObservationService {
       });
     }
 
-    return { eventId: event.id };
+    // Only the pre-phase routes through the context router — pre-tool is when
+    // the assistant's about to act, so injection is useful then. Post-tool
+    // events stay observe-only to keep the post-call latency floor low.
+    let contextBlock: string | null = null;
+    if (payload.phase === 'pre') {
+      const cwd = this.resolveCwd(payload.sessionId, payload.cwd);
+      const route = await this.hookContextRouter.routeContext({
+        toolName: payload.toolName,
+        toolInput: payload.input,
+        cwd,
+        sessionId: payload.sessionId,
+        namespace: ns,
+        brain: this.brain,
+      });
+      contextBlock = route.contextBlock;
+    }
+
+    return { eventId: event.id, contextBlock };
   }
 
   private upsertFileEntity(ns: string, filePath: string, actor?: string): Entity {

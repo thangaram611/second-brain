@@ -18,6 +18,7 @@
     "@second-brain/collectors": "workspace:*",
     "@second-brain/core": "workspace:*",
     "@second-brain/ingestion": "workspace:*",
+    "@second-brain/mcp-server": "workspace:*",
     "@second-brain/sync": "workspace:*",
     "@second-brain/types": "workspace:*",
     "argon2": "^0.44.0",
