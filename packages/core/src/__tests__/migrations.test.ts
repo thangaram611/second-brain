@@ -159,6 +159,50 @@ describe('StorageDatabase migration integration', () => {
     db.close();
   });
 
+  it('creates a partial composite index on (namespace, source_ref) via migration002', () => {
+    const db = new StorageDatabase({ path: ':memory:', wal: false });
+    const idx = db.sqlite
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name = 'idx_entities_namespace_source_ref'",
+      )
+      .all() as Array<{ name: string }>;
+    expect(idx).toHaveLength(1);
+    db.close();
+  });
+
+  it('filters entities by source_ref via the migration002 index', () => {
+    const db = new StorageDatabase({ path: ':memory:', wal: false });
+    const now = new Date().toISOString();
+    const insert = db.sqlite.prepare(
+      `INSERT INTO entities (id, type, name, source_type, source_ref, namespace, event_time, ingest_time, created_at, updated_at)
+       VALUES (?, 'file', ?, 'git', ?, 'project-a', ?, ?, ?, ?)`,
+    );
+    insert.run('e1', 'src/auth.ts', 'src/auth.ts', now, now, now, now);
+    insert.run('e2', 'src/login.tsx', 'src/login.tsx', now, now, now, now);
+    insert.run('e3', 'README.md', 'README.md', now, now, now, now);
+    insert.run('e4', 'src/auth.ts', 'src/auth.ts', now, now, now, now);
+    db.sqlite
+      .prepare(
+        `INSERT INTO entities (id, type, name, source_type, source_ref, namespace, event_time, ingest_time, created_at, updated_at)
+         VALUES ('e5', 'file', 'src/auth.ts', 'git', 'src/auth.ts', 'project-b', ?, ?, ?, ?)`,
+      )
+      .run(now, now, now, now);
+
+    const rows = db.sqlite
+      .prepare(
+        `SELECT id FROM entities WHERE namespace = ? AND source_ref = ? ORDER BY id`,
+      )
+      .all('project-a', 'src/auth.ts') as Array<{ id: string }>;
+    expect(rows.map((r) => r.id)).toEqual(['e1', 'e4']);
+
+    const plan = db.sqlite
+      .prepare(`EXPLAIN QUERY PLAN SELECT id FROM entities WHERE namespace = ? AND source_ref = ?`)
+      .all('project-a', 'src/auth.ts') as Array<{ detail: string }>;
+    const planText = plan.map((p) => p.detail).join('\n');
+    expect(planText).toMatch(/idx_entities_namespace_source_ref/);
+    db.close();
+  });
+
   it('filters entities by branch_context_branch via the generated column index', () => {
     const db = new StorageDatabase({ path: ':memory:', wal: false });
     const now = new Date().toISOString();
