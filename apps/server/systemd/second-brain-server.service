@@ -1,0 +1,63 @@
+# Second Brain — REST API + WebSocket server (apps/server)
+#
+# Install:
+#   1. Replace every <PLACEHOLDER> below with your real value.
+#   2. Copy this file to /etc/systemd/system/second-brain-server.service
+#   3. Create the env file at /etc/second-brain/server.env (see deployment-systemd.md)
+#   4. systemctl daemon-reload
+#   5. systemctl enable --now second-brain-server
+#
+# Inspect logs with: journalctl -u second-brain-server -f
+#
+# See docs/deployment-systemd.md for the full guide.
+
+[Unit]
+Description=Second Brain API server (apps/server)
+Documentation=https://github.com/second-brain/second-brain
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# Run as a non-root user that owns <INSTALL_DIR> and the SQLite database.
+User=<USER>
+Group=<USER>
+
+# Absolute path to the cloned repository (must be readable+writable by <USER>).
+WorkingDirectory=<INSTALL_DIR>
+
+# Loaded BEFORE ExecStart. See docs/deployment-systemd.md for required vars.
+EnvironmentFile=/etc/second-brain/server.env
+
+# <NODE_BIN> is the absolute path to your Node.js 22+ binary (e.g. /usr/bin/node
+# or /home/<USER>/.nvm/versions/node/v22.x.x/bin/node). <PNPM_BIN> is the
+# absolute path to pnpm (e.g. /usr/local/bin/pnpm).
+#
+# Default: invoke the workspace start script. Once apps/server defines
+# `"start": "node dist/index.mjs"`, this is the canonical command. If you
+# prefer to skip pnpm at runtime, replace this line with:
+#   ExecStart=<NODE_BIN> <INSTALL_DIR>/apps/server/dist/index.mjs
+ExecStart=<PNPM_BIN> --filter @second-brain/server start
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+
+# Stdout/stderr go to the journal (journalctl -u second-brain-server).
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=second-brain-server
+
+# Hardening — adjust if your <INSTALL_DIR> is outside /home or /opt.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=<INSTALL_DIR> /var/lib/second-brain
+
+# File descriptor limit for many concurrent WebSocket clients.
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

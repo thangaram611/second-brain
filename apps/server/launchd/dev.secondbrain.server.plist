@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Second Brain — REST API + WebSocket server (macOS launchd agent).
+
+  Replace every __PLACEHOLDER__ below before installing, then:
+    cp apps/server/launchd/dev.secondbrain.server.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/dev.secondbrain.server.plist
+    launchctl unload ~/Library/LaunchAgents/dev.secondbrain.server.plist  # to stop
+
+  Placeholders:
+    __PNPM_BIN__     — absolute path to pnpm (run `which pnpm`)
+    __NODE_BIN__     — absolute path to node 22+ (run `which node`)
+    __INSTALL_DIR__  — absolute path to the cloned second-brain repo
+    __HOME__         — absolute path to the user's home directory
+
+  Tail logs:
+    tail -f /tmp/second-brain-server.out.log /tmp/second-brain-server.err.log
+
+  See docs/deployment-launchd.md for the full guide.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>dev.secondbrain.server</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <!-- To bypass pnpm and run node directly, replace these three strings
+             with: __NODE_BIN__  and  __INSTALL_DIR__/apps/server/dist/index.mjs -->
+        <string>__PNPM_BIN__</string>
+        <string>--filter</string>
+        <string>@second-brain/server</string>
+        <string>start</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__INSTALL_DIR__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>NODE_ENV</key>
+        <string>production</string>
+        <key>PATH</key>
+        <!-- launchd has a minimal PATH; include directories holding pnpm/node. -->
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>BRAIN_DB_PATH</key>
+        <string>__HOME__/.second-brain/personal.db</string>
+        <key>BRAIN_API_PORT</key>
+        <string>7430</string>
+        <!-- Add additional environment variables here (e.g. BRAIN_AUTH_TOKEN,
+             BRAIN_LLM_PROVIDER, etc.). -->
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/second-brain-server.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/second-brain-server.err.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

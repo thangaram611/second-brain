@@ -1,0 +1,58 @@
+# Second Brain — Yjs CRDT relay (apps/relay)
+#
+# Install:
+#   1. Replace every <PLACEHOLDER> below with your real value.
+#   2. Copy this file to /etc/systemd/system/second-brain-relay.service
+#   3. Create the env file at /etc/second-brain/relay.env containing at least:
+#        RELAY_AUTH_SECRET=<your-shared-secret>
+#        RELAY_PORT=7421
+#        RELAY_PERSIST_DIR=/var/lib/second-brain/relay
+#   4. systemctl daemon-reload
+#   5. systemctl enable --now second-brain-relay
+#
+# Inspect logs with: journalctl -u second-brain-relay -f
+#
+# See docs/deployment-systemd.md for the full guide.
+
+[Unit]
+Description=Second Brain Yjs relay (apps/relay)
+Documentation=https://github.com/second-brain/second-brain
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# Run as a non-root user that owns <INSTALL_DIR> and the relay persist dir.
+User=<USER>
+Group=<USER>
+
+# Absolute path to the cloned repository.
+WorkingDirectory=<INSTALL_DIR>
+
+# Loaded BEFORE ExecStart. RELAY_AUTH_SECRET MUST be set here.
+EnvironmentFile=/etc/second-brain/relay.env
+
+# <PNPM_BIN> is the absolute path to pnpm (e.g. /usr/local/bin/pnpm).
+# After `pnpm build`, the relay artefact is apps/relay/dist/index.mjs — to
+# bypass pnpm at runtime, swap this line for:
+#   ExecStart=<NODE_BIN> <INSTALL_DIR>/apps/relay/dist/index.mjs
+ExecStart=<PNPM_BIN> --filter @second-brain/relay start
+
+Restart=on-failure
+RestartSec=5s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=second-brain-relay
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=<INSTALL_DIR> /var/lib/second-brain/relay
+
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

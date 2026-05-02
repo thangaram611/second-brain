@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Second Brain — Yjs CRDT relay (macOS launchd agent).
+
+  Replace every __PLACEHOLDER__ below before installing, then:
+    cp apps/relay/launchd/dev.secondbrain.relay.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/dev.secondbrain.relay.plist
+    launchctl unload ~/Library/LaunchAgents/dev.secondbrain.relay.plist  # to stop
+
+  Placeholders:
+    __PNPM_BIN__           — absolute path to pnpm (run `which pnpm`)
+    __NODE_BIN__           — absolute path to node 22+ (run `which node`)
+    __INSTALL_DIR__        — absolute path to the cloned second-brain repo
+    __HOME__               — absolute path to the user's home directory
+    __RELAY_AUTH_SECRET__  — the shared sync secret (REQUIRED)
+
+  Tail logs:
+    tail -f /tmp/second-brain-relay.out.log /tmp/second-brain-relay.err.log
+
+  See docs/deployment-launchd.md for the full guide.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>dev.secondbrain.relay</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <!-- To bypass pnpm and run node directly, replace these three strings
+             with: __NODE_BIN__  and  __INSTALL_DIR__/apps/relay/dist/index.mjs -->
+        <string>__PNPM_BIN__</string>
+        <string>--filter</string>
+        <string>@second-brain/relay</string>
+        <string>start</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__INSTALL_DIR__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>NODE_ENV</key>
+        <string>production</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>RELAY_PORT</key>
+        <string>7421</string>
+        <key>RELAY_PERSIST_DIR</key>
+        <string>__HOME__/.second-brain/relay</string>
+        <!-- REQUIRED — replace with your shared team secret. -->
+        <key>RELAY_AUTH_SECRET</key>
+        <string>__RELAY_AUTH_SECRET__</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/second-brain-relay.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/second-brain-relay.err.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

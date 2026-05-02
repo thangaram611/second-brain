@@ -113,6 +113,22 @@ brain import           # Import graph data
 - [Getting Started](docs/getting-started.md) — End-to-end usage guide
 - [API Reference](docs/api-reference.md) — REST API, MCP tools, and CLI reference
 - [Providers](docs/providers.md) — GitHub/GitLab integration setup
+- [Deployment (systemd)](docs/deployment-systemd.md) — Linux production guide
+- [Deployment (launchd)](docs/deployment-launchd.md) — macOS dev/personal guide
+
+## Deployment
+
+Second Brain ships as a plain Node.js workspace — no container runtime is
+required. To run the server and relay as long-lived services, use the unit
+templates checked into the repo:
+
+| Platform | Template | Guide |
+|----------|----------|-------|
+| Linux (production) | `apps/server/systemd/*.service`, `apps/relay/systemd/*.service` | [docs/deployment-systemd.md](docs/deployment-systemd.md) |
+| macOS (dev/personal) | `apps/server/launchd/*.plist`, `apps/relay/launchd/*.plist` | [docs/deployment-launchd.md](docs/deployment-launchd.md) |
+
+For local development, `pnpm dev` from the repo root remains the fastest path —
+no installation needed.
 
 ## AI Tool Integration
 

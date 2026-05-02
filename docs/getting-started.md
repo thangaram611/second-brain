@@ -389,6 +389,18 @@ pnpm --filter @second-brain/ui dev        # UI only
 pnpm --filter @second-brain/relay dev     # Relay only
 ```
 
+For long-lived deployments (server + relay running across reboots/logouts), use
+the unit templates checked into the repo:
+
+- **Linux production** → [docs/deployment-systemd.md](./deployment-systemd.md)
+  (templates at `apps/server/systemd/` and `apps/relay/systemd/`)
+- **macOS dev/personal** → [docs/deployment-launchd.md](./deployment-launchd.md)
+  (templates at `apps/server/launchd/` and `apps/relay/launchd/`)
+
+Once `apps/server/package.json` defines a `start` script, the canonical
+production launch command is `pnpm --filter @second-brain/server start` (the
+deployment guides cover the interim direct-`node` invocation).
+
 ---
 
 ## Wire a Repository
