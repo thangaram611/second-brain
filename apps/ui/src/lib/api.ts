@@ -13,6 +13,7 @@ import type {
 } from './types.js';
 
 import type { OwnershipNode } from '../store/ownership-store.js';
+import { useAuthStore } from '../store/auth-store.js';
 
 export interface ParallelWorkConflict {
   entityId: string;
@@ -42,11 +43,50 @@ class ApiError extends Error {
   }
 }
 
+function isMutating(method: string | undefined): boolean {
+  if (!method) return false;
+  const m = method.toUpperCase();
+  return m !== 'GET' && m !== 'HEAD' && m !== 'OPTIONS';
+}
+
+/**
+ * Hard-redirect to /login. Uses HashRouter convention to match main.tsx.
+ * Exported (via auth-store) so route-mock layers in tests can intercept.
+ */
+function redirectToLogin(): void {
+  if (typeof window === 'undefined') return;
+  if (window.location.hash === '#/login' || window.location.pathname === '/login') return;
+  window.location.hash = '#/login';
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  // Build headers — start from any caller-supplied headers and layer in
+  // Content-Type + the CSRF token (only on mutating verbs, only if we have one).
+  const incomingHeaders = new Headers(init?.headers);
+  if (!incomingHeaders.has('Content-Type')) {
+    incomingHeaders.set('Content-Type', 'application/json');
+  }
+  if (isMutating(init?.method)) {
+    const csrf = useAuthStore.getState().csrfToken;
+    if (csrf) incomingHeaders.set('X-CSRF-Token', csrf);
+  }
+
   const res = await fetch(`/api${path}`, {
-    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     ...init,
+    headers: incomingHeaders,
   });
+
+  if (res.status === 401) {
+    // In pat-mode the session expired or never existed — bounce to /login.
+    // In open or unknown mode, surface the error like any other (the server
+    // shouldn't 401 in open mode, but if it does we don't want to loop).
+    const mode = useAuthStore.getState().mode;
+    if (mode === 'pat') {
+      redirectToLogin();
+    }
+  }
+
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
     throw new ApiError(res.status, body.error ?? res.statusText);
@@ -305,6 +345,14 @@ export const api = {
   ownership: {
     tree(path?: string, depth?: number) {
       return request<OwnershipNode>(`/query/ownership-tree${buildQuery({ path, depth })}`);
+    },
+  },
+
+  auth: {
+    rotatePat() {
+      return request<{ pat: string; tokenId: string; expiresAt: string | null }>('/auth/rotate', {
+        method: 'POST',
+      });
     },
   },
 

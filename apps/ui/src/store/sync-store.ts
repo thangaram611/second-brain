@@ -1,6 +1,22 @@
 import { create } from 'zustand';
 import { api } from '../lib/api.js';
+import { useAuthStore } from './auth-store.js';
 import type { SyncStatus, PeerInfo } from '../lib/types.js';
+
+/**
+ * Default relay URL used when the server's whoami response does not yet
+ * carry a `relayUrl` field (back-compat with pre-PR1 servers, and used by
+ * solo `'open'` mode where there is no team manifest).
+ */
+export const DEFAULT_RELAY_URL = 'ws://localhost:7421';
+
+/**
+ * Resolve the effective relay URL — prefer the value the server surfaced
+ * via /api/auth/whoami (kept in auth-store), fall back to the default.
+ */
+export function getEffectiveRelayUrl(): string {
+  return useAuthStore.getState().relayUrl ?? DEFAULT_RELAY_URL;
+}
 
 interface SyncState {
   statuses: SyncStatus[];
@@ -10,7 +26,7 @@ interface SyncState {
 
   fetchStatuses: () => Promise<void>;
   fetchPeers: (namespace: string) => Promise<void>;
-  joinSync: (config: { namespace: string; relayUrl: string; token: string }) => Promise<void>;
+  joinSync: (config: { namespace: string; relayUrl?: string; token: string }) => Promise<void>;
   leaveSync: (namespace: string) => Promise<void>;
 
   // WebSocket event handlers
@@ -48,7 +64,11 @@ export const useSyncStore = create<SyncState>((set, get) => ({
   async joinSync(config) {
     set({ loading: true, error: null });
     try {
-      const status = await api.sync.join(config);
+      // If the caller didn't supply a relayUrl, use the value surfaced by
+      // the server's whoami response (auth-store), falling back to the
+      // hardcoded default for solo back-compat.
+      const relayUrl = config.relayUrl ?? getEffectiveRelayUrl();
+      const status = await api.sync.join({ ...config, relayUrl });
       set((s) => ({
         statuses: [...s.statuses.filter(st => st.namespace !== config.namespace), status],
         loading: false,

@@ -1,8 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Database, Server, Cpu, RefreshCw, Users } from 'lucide-react';
+import { Database, Server, Cpu, RefreshCw, Users, Key, Copy, Check, LogOut } from 'lucide-react';
 import { useStatsStore } from '../../store/stats-store.js';
-import { useSyncStore } from '../../store/sync-store.js';
+import { useSyncStore, DEFAULT_RELAY_URL } from '../../store/sync-store.js';
+import { useAuthStore } from '../../store/auth-store.js';
+import { api } from '../../lib/api.js';
 import { Card } from '../ui/card.js';
+import { Button } from '../ui/button.js';
+import { Input } from '../ui/input.js';
 import { EmbeddingStatusPanel } from '../embedding-status-panel.js';
 import type { SyncConnectionState } from '../../lib/types.js';
 
@@ -19,22 +23,61 @@ function SyncDot({ state }: { state: SyncConnectionState }) {
 export function SettingsPage() {
   const { stats, fetchStats } = useStatsStore();
   const { statuses, loading: syncLoading, error: syncError, fetchStatuses, joinSync, leaveSync } = useSyncStore();
+  const user = useAuthStore((s) => s.user);
+  const mode = useAuthStore((s) => s.mode);
+  const relayUrl = useAuthStore((s) => s.relayUrl);
+  const logout = useAuthStore((s) => s.logout);
 
   const [joinNamespace, setJoinNamespace] = useState('');
-  const [joinRelayUrl, setJoinRelayUrl] = useState('ws://localhost:7421');
   const [joinToken, setJoinToken] = useState('');
+
+  // PAT rotation state — the new PAT is only shown ONCE, then cleared.
+  const [rotatedPat, setRotatedPat] = useState<string | null>(null);
+  const [rotateError, setRotateError] = useState<string | null>(null);
+  const [rotating, setRotating] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     fetchStats();
     fetchStatuses();
   }, [fetchStats, fetchStatuses]);
 
+  const effectiveRelayUrl = relayUrl ?? DEFAULT_RELAY_URL;
+
   function handleJoin(e: React.FormEvent) {
     e.preventDefault();
-    if (!joinNamespace || !joinRelayUrl || !joinToken) return;
-    joinSync({ namespace: joinNamespace, relayUrl: joinRelayUrl, token: joinToken });
+    if (!joinNamespace || !joinToken) return;
+    // relayUrl is taken from auth-store / whoami; sync-store falls back
+    // to the default if it's not set yet.
+    joinSync({ namespace: joinNamespace, token: joinToken });
     setJoinNamespace('');
     setJoinToken('');
+  }
+
+  async function handleRotate() {
+    setRotating(true);
+    setRotateError(null);
+    setRotatedPat(null);
+    setCopied(false);
+    try {
+      const result = await api.auth.rotatePat();
+      setRotatedPat(result.pat);
+    } catch (e) {
+      setRotateError(e instanceof Error ? e.message : 'Failed to rotate PAT');
+    } finally {
+      setRotating(false);
+    }
+  }
+
+  async function handleCopy() {
+    if (!rotatedPat) return;
+    try {
+      await navigator.clipboard.writeText(rotatedPat);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // clipboard may be unavailable in non-secure contexts; ignore.
+    }
   }
 
   return (
@@ -42,6 +85,100 @@ export function SettingsPage() {
       <h1 className="mb-6 text-2xl font-bold text-zinc-100">Settings</h1>
 
       <div className="space-y-4">
+        {mode === 'pat' && user && (
+          <Card>
+            <h2 className="mb-3 flex items-center gap-2 font-medium text-zinc-200">
+              <Key className="h-4 w-4 text-fuchsia-400" />
+              Account
+              <button
+                onClick={() => void logout()}
+                className="ml-auto inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300"
+                title="Sign out"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                Sign out
+              </button>
+            </h2>
+            <dl className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <dt className="text-zinc-500">Email</dt>
+                <dd className="text-zinc-300">{user.email}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-zinc-500">User ID</dt>
+                <dd className="font-mono text-xs text-zinc-400">{user.id}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-zinc-500">Namespace</dt>
+                <dd className="font-mono text-zinc-300">{user.namespace}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-zinc-500">Relay URL</dt>
+                <dd className="font-mono text-xs text-zinc-300">{effectiveRelayUrl}</dd>
+              </div>
+            </dl>
+
+            <div className="mt-4 border-t border-zinc-800 pt-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-zinc-200">Rotate Personal Access Token</p>
+                  <p className="text-xs text-zinc-500">
+                    Mints a new PAT and revokes the current one.
+                  </p>
+                </div>
+                <Button
+                  onClick={() => void handleRotate()}
+                  disabled={rotating}
+                  variant="secondary"
+                  size="sm"
+                >
+                  {rotating ? 'Rotating...' : 'Rotate PAT'}
+                </Button>
+              </div>
+
+              {rotateError && (
+                <p className="mt-3 text-xs text-red-400" role="alert">
+                  {rotateError}
+                </p>
+              )}
+
+              {rotatedPat && (
+                <div
+                  className="mt-3 rounded-md border border-amber-700/50 bg-amber-900/10 p-3"
+                  role="status"
+                  aria-live="polite"
+                >
+                  <p className="mb-2 text-xs font-medium text-amber-300">
+                    New PAT — copy it now. It will not be shown again.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 break-all rounded bg-zinc-900 px-2 py-1.5 font-mono text-xs text-zinc-200">
+                      {rotatedPat}
+                    </code>
+                    <button
+                      onClick={() => void handleCopy()}
+                      className="inline-flex items-center gap-1 rounded-md bg-zinc-700 px-2 py-1.5 text-xs text-zinc-200 hover:bg-zinc-600"
+                      title="Copy to clipboard"
+                    >
+                      {copied ? (
+                        <>
+                          <Check className="h-3.5 w-3.5" />
+                          Copied
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="h-3.5 w-3.5" />
+                          Copy
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </Card>
+        )}
+
         <Card>
           <h2 className="mb-3 flex items-center gap-2 font-medium text-zinc-200">
             <Database className="h-4 w-4 text-indigo-400" />
@@ -80,6 +217,10 @@ export function SettingsPage() {
             <div className="flex justify-between">
               <dt className="text-zinc-500">WebSocket</dt>
               <dd className="font-mono text-zinc-300">ws://localhost:7430/ws</dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-zinc-500">Relay</dt>
+              <dd className="font-mono text-zinc-300">{effectiveRelayUrl}</dd>
             </div>
           </dl>
         </Card>
@@ -159,35 +300,28 @@ export function SettingsPage() {
           )}
 
           <form onSubmit={handleJoin} className="space-y-2">
-            <p className="text-xs font-medium text-zinc-500">Join a sync namespace</p>
-            <input
+            <p className="text-xs font-medium text-zinc-500">
+              Join a sync namespace (relay <code className="font-mono">{effectiveRelayUrl}</code>)
+            </p>
+            <Input
               type="text"
               placeholder="Namespace"
               value={joinNamespace}
               onChange={(e) => setJoinNamespace(e.target.value)}
-              className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-600 focus:border-cyan-600 focus:outline-none"
             />
-            <input
-              type="text"
-              placeholder="Relay URL"
-              value={joinRelayUrl}
-              onChange={(e) => setJoinRelayUrl(e.target.value)}
-              className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-600 focus:border-cyan-600 focus:outline-none"
-            />
-            <input
-              type="text"
+            <Input
+              type="password"
               placeholder="Token"
               value={joinToken}
               onChange={(e) => setJoinToken(e.target.value)}
-              className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-600 focus:border-cyan-600 focus:outline-none"
             />
-            <button
+            <Button
               type="submit"
-              disabled={!joinNamespace || !joinRelayUrl || !joinToken || syncLoading}
-              className="rounded-md bg-cyan-700 px-4 py-1.5 text-sm font-medium text-zinc-100 hover:bg-cyan-600 disabled:opacity-50"
+              disabled={!joinNamespace || !joinToken || syncLoading}
+              size="sm"
             >
               Join
-            </button>
+            </Button>
           </form>
         </Card>
       </div>
