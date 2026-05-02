@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import path from 'node:path';
 import type { WebhookSecret } from '@second-brain/collectors';
 import { GitLabProvider, GitHubProvider } from '@second-brain/collectors';
 import {
@@ -13,8 +14,30 @@ import {
   buildProviderNamespaceEntries,
 } from './lib/wired-repos-loader.js';
 import { startPersonalityScheduler } from './services/personality-scheduler.js';
+import { loadSigningKeys, requireSigningKeys } from './lib/signing-keys.js';
+import { UsersService } from './services/users.js';
+import type { AuthMode } from './middleware/auth.js';
 
 const PORT = Number(process.env.BRAIN_API_PORT ?? 7430);
+
+// --- Auth bootstrap (PR1) ---
+const rawAuthMode = process.env.BRAIN_AUTH_MODE ?? 'open';
+const authMode: AuthMode = rawAuthMode === 'pat' ? 'pat' : 'open';
+const signingKeys = loadSigningKeys();
+if (authMode === 'pat') {
+  requireSigningKeys(signingKeys);
+  if (process.env.BRAIN_AUTH_TOKEN) {
+    console.warn(
+      '[second-brain] WARNING: BRAIN_AUTH_TOKEN is set in team mode (BRAIN_AUTH_MODE=pat). ' +
+        'Legacy bearer auth will continue to work as an admin fallback; remove the env var ' +
+        'after team migration to disable the fallback.',
+    );
+  }
+}
+
+const usersDbPath =
+  process.env.BRAIN_USERS_DB_PATH ?? path.join(process.cwd(), 'users.db');
+const usersService = new UsersService({ path: usersDbPath });
 
 const { brain, syncManager, observations, ownership, personality: personalityExtractor } = getServices();
 
@@ -82,6 +105,12 @@ const app = createApp(brain, {
   queryOptions: {
     bearerToken: process.env.BRAIN_AUTH_TOKEN,
   },
+  auth: {
+    mode: authMode,
+    users: usersService,
+    inviteSigningKey: signingKeys.inviteSigningKey,
+    legacyBearerToken: process.env.BRAIN_AUTH_TOKEN ?? null,
+  },
 });
 const server = createServer(app);
 
@@ -97,6 +126,11 @@ function shutdown() {
   server.close();
   closeSyncManager();
   closeBrain();
+  try {
+    usersService.close();
+  } catch {
+    // best-effort
+  }
   process.exit(0);
 }
 

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import {
   exportJson,
   exportJsonLd,
@@ -15,6 +16,9 @@ import {
   tryCreateLLMExtractor,
   tryCreateEmbeddingGenerator,
 } from '@second-brain/collectors';
+import { newJti, signInvite, type InvitePayload } from '../lib/invite.js';
+import type { UsersService } from '../services/users.js';
+import { requireAdmin, type RequestWithUser } from '../middleware/auth.js';
 
 const serverLogger = createLogger('server.admin');
 import {
@@ -24,6 +28,21 @@ import {
   QueryGraphSchema,
 } from '../schemas.js';
 
+export interface AdminAuthOptions {
+  users?: UsersService;
+  inviteSigningKey?: string | null;
+  /** Override clock for tests. */
+  now?: () => number;
+}
+
+const ScopeSchema = z.enum(['hook:read', 'read', 'write', 'admin']);
+const CreateInviteSchema = z.object({
+  namespace: z.string().min(1),
+  role: z.enum(['member', 'admin']).default('member'),
+  scopes: z.array(ScopeSchema).default(['read', 'write']),
+  ttlMs: z.number().int().positive().default(24 * 60 * 60 * 1000),
+});
+
 /**
  * Admin / pipeline routes added in Phase 7:
  *   POST /api/reindex            — rebuild FTS index
@@ -31,9 +50,14 @@ import {
  *   POST /api/import             — load entities + relations from a payload
  *   POST /api/rebuild-embeddings — re-embed entities (requires LLM config)
  *   POST /api/query              — natural-language query
+ *
+ * Phase auth/PR1 additions (only mounted when `authOptions.users` is set):
+ *   POST   /api/admin/invites    — mint a single-use HMAC invite (admin only)
+ *   DELETE /api/admin/tokens/:id — revoke a token (admin only)
  */
-export function adminRoutes(brain: Brain): Router {
+export function adminRoutes(brain: Brain, authOptions: AdminAuthOptions = {}): Router {
   const router = Router();
+  const now = authOptions.now ?? Date.now;
 
   router.post('/api/reindex', (_req, res) => {
     brain.storage.sqlite.exec("INSERT INTO entities_fts(entities_fts) VALUES('rebuild')");
@@ -166,6 +190,63 @@ export function adminRoutes(brain: Brain): Router {
       results,
     });
   });
+
+  // --- Auth admin: invites + token revocation -----------------------------
+
+  if (authOptions.users) {
+    const users = authOptions.users;
+
+    router.post('/api/admin/invites', requireAdmin, (req: RequestWithUser, res, next) => {
+      try {
+        if (!authOptions.inviteSigningKey) {
+          res.status(503).json({ error: 'invites-not-configured' });
+          return;
+        }
+        const body = CreateInviteSchema.parse(req.body ?? {});
+        const jti = newJti();
+        const expiresAt = Math.floor((now() + body.ttlMs) / 1000); // seconds
+        const payload: InvitePayload = {
+          jti,
+          namespace: body.namespace,
+          role: body.role,
+          scopes: body.scopes,
+          exp: expiresAt,
+        };
+        const token = signInvite(payload, authOptions.inviteSigningKey);
+        users.insertInvite({
+          jti,
+          namespace: body.namespace,
+          role: body.role,
+          scopes: [...body.scopes],
+          expiresAt,
+          consumedAt: null,
+          signature: token,
+          createdAt: now(),
+        });
+        res.status(201).json({ invite: token, jti, expiresAt: expiresAt * 1000 });
+      } catch (err) {
+        next(err);
+      }
+    });
+
+    router.delete('/api/admin/tokens/:id', requireAdmin, (req, res, next) => {
+      try {
+        const tokenId = req.params.id;
+        if (typeof tokenId !== 'string' || tokenId.length === 0) {
+          res.status(400).json({ error: 'missing-token-id' });
+          return;
+        }
+        const ok = users.revokeToken(tokenId);
+        if (!ok) {
+          res.status(404).json({ error: 'token-not-found-or-already-revoked' });
+          return;
+        }
+        res.status(204).end();
+      } catch (err) {
+        next(err);
+      }
+    });
+  }
 
   return router;
 }
