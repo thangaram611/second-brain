@@ -56,7 +56,7 @@ describe('POST /api/auth/redeem-invite', () => {
       .send({ invite })
       .expect(201);
 
-    expect(res.body.pat).toMatch(/^sbp_[a-z0-9]{8}_[A-Z2-7]+$/);
+    expect(res.body.pat).toMatch(/^sbp_[a-z0-9]{8}_[A-Za-z0-9]{32}_[A-Za-z0-9]{6}$/);
     expect(res.body.tokenId).toMatch(/^[a-z0-9]{8}$/);
     expect(res.body.userId).toMatch(/^usr_/);
     expect(res.body.expiresAt).toBeDefined();
@@ -184,7 +184,17 @@ describe('login + session + CSRF', () => {
   });
 
   it('login rejects bad credentials', async () => {
-    await request(app).post('/api/auth/login').send({ email: 'no@one.test', pat: 'sbp_xxxxxxxx_AAAA' }).expect(401);
+    // Seed a real user so the route gets past the email-lookup guard, then
+    // present a well-formed-but-unbound PAT (valid CRC32, parsePat succeeds,
+    // tokenId points at no row in `tokens`). This exercises `verifyPat` and
+    // proves we 401 on the verify step rather than the email lookup.
+    const { email } = await bootstrapUserAndPat();
+    const fictionalPat = 'sbp_xxxxxxxx_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_3i8aJj';
+    expect(fictionalPat).toMatch(/^sbp_[a-z0-9]{8}_[A-Za-z0-9]{32}_[A-Za-z0-9]{6}$/);
+    await request(app)
+      .post('/api/auth/login')
+      .send({ email, pat: fictionalPat })
+      .expect(401);
   });
 
   it('whoami via session cookie works without bearer', async () => {

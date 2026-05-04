@@ -74,7 +74,7 @@ describe('OwnershipService', () => {
       repoRoot: '/fake/repo',
     });
 
-    const results = await svc.query({ path: 'src/foo.ts' });
+    const results = await svc.query({ path: 'src/foo.ts', namespace: 'team' });
 
     expect(results.length).toBeGreaterThan(0);
     expect(results.length).toBeLessThanOrEqual(3);
@@ -106,7 +106,7 @@ describe('OwnershipService', () => {
       repoRoot: '/fake',
     });
 
-    const results = await svc.query({ path: 'src/foo.ts', limit: 1 });
+    const results = await svc.query({ path: 'src/foo.ts', limit: 1, namespace: 'team' });
     expect(results).toHaveLength(1);
   });
 
@@ -128,7 +128,7 @@ describe('OwnershipService', () => {
       repoRoot: '/fake',
     });
 
-    const results = await svc.query({ path: 'src/index.ts', limit: 10 });
+    const results = await svc.query({ path: 'src/index.ts', limit: 10, namespace: 'team' });
     // Alice has 4 blame lines, bob has 1 → alice blame normalized = 1.0, bob = 0.25
     // Alice has 2 commits, bob has 1 → alice commit normalized = 1.0, bob = 0.5
     const alice = results.find((r) => r.actor === 'alice@x.com');
@@ -164,10 +164,10 @@ describe('OwnershipService', () => {
       cacheTtlMs: 60_000,
     });
 
-    const first = await svc.query({ path: 'src/cached.ts' });
+    const first = await svc.query({ path: 'src/cached.ts', namespace: 'team' });
     const callsAfterFirst = callCount;
 
-    const second = await svc.query({ path: 'src/cached.ts' });
+    const second = await svc.query({ path: 'src/cached.ts', namespace: 'team' });
     expect(callCount).toBe(callsAfterFirst); // No additional git calls
     expect(second).toEqual(first);
   });
@@ -183,7 +183,7 @@ describe('OwnershipService', () => {
       repoRoot: '/fake',
     });
 
-    const results = await svc.query({ path: 'brand-new-file.ts' });
+    const results = await svc.query({ path: 'brand-new-file.ts', namespace: 'team' });
     expect(results).toEqual([]);
   });
 
@@ -202,7 +202,7 @@ describe('OwnershipService', () => {
     });
 
     // With no CODEOWNERS file at /fake, we get empty
-    const results = await svc.query({ path: 'src/foo.ts' });
+    const results = await svc.query({ path: 'src/foo.ts', namespace: 'team' });
     expect(results).toEqual([]);
   });
 
@@ -224,7 +224,7 @@ describe('OwnershipService', () => {
       repoRoot: '/fake',
     });
 
-    const results = await svc.query({ path: 'src/recency.ts', limit: 10 });
+    const results = await svc.query({ path: 'src/recency.ts', limit: 10, namespace: 'team' });
     const recent = results.find((r) => r.actor === 'recent@x.com');
     const old = results.find((r) => r.actor === 'old@x.com');
 

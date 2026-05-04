@@ -32,7 +32,7 @@ describe('Query routes', () => {
     it('returns 200 with an array', async () => {
       const res = await request(app)
         .get('/api/query/ownership')
-        .query({ path: 'foo.ts' })
+        .query({ path: 'foo.ts', namespace: 'team-a' })
         .expect(200);
 
       expect(Array.isArray(res.body)).toBe(true);
@@ -41,7 +41,7 @@ describe('Query routes', () => {
     it('returns results with correct OwnershipScore shape', async () => {
       const res = await request(app)
         .get('/api/query/ownership')
-        .query({ path: 'foo.ts' })
+        .query({ path: 'foo.ts', namespace: 'team-a' })
         .expect(200);
 
       for (const entry of res.body) {
@@ -61,6 +61,14 @@ describe('Query routes', () => {
     it('returns 400 when path param is missing', async () => {
       await request(app)
         .get('/api/query/ownership')
+        .query({ namespace: 'team-a' })
+        .expect(400);
+    });
+
+    it('returns 400 when namespace is missing (open mode)', async () => {
+      await request(app)
+        .get('/api/query/ownership')
+        .query({ path: 'foo.ts' })
         .expect(400);
     });
 
@@ -83,12 +91,12 @@ describe('Query routes', () => {
 
       await request(app2)
         .get('/api/query/ownership')
-        .query({ path: 'foo.ts' })
+        .query({ path: 'foo.ts', namespace: 'team-a' })
         .expect(401);
 
       await request(app2)
         .get('/api/query/ownership')
-        .query({ path: 'foo.ts' })
+        .query({ path: 'foo.ts', namespace: 'team-a' })
         .set('Authorization', 'Bearer secret')
         .expect(200);
 

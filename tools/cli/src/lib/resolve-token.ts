@@ -27,11 +27,20 @@ export interface ResolveTokenOptions {
   noCache?: boolean;
 }
 
+/** Which credentials slot resolved a keychain-sourced token. */
+export type CredentialsSlot = 'hook' | 'default' | 'cli';
+
 export interface ResolvedToken {
   token: string;
   source: 'env' | 'keychain';
   /** Token-id used to look up the keychain entry, when `source === 'keychain'`. */
   tokenId?: string;
+  /**
+   * Which credentials slot's pointer was selected (per the hook > default >
+   * cli priority order). Only set when `source === 'keychain'`; env-token
+   * resolutions have no slot.
+   */
+  slot?: CredentialsSlot;
 }
 
 const CredentialsSchema = z
@@ -120,9 +129,21 @@ export async function resolveToken(opts: ResolveTokenOptions = {}): Promise<Reso
   }
 
   // Prefer hookTokenId for hook calls, then defaultTokenId, then cliTokenId.
-  const tokenId =
-    creds.hookTokenId ?? creds.defaultTokenId ?? creds.cliTokenId ?? null;
-  if (!tokenId) {
+  // Track which slot won so callers (e.g., `brain auth rotate`) can report
+  // and update only that slot's pointer.
+  let tokenId: string | null = null;
+  let slot: CredentialsSlot | null = null;
+  if (creds.hookTokenId) {
+    tokenId = creds.hookTokenId;
+    slot = 'hook';
+  } else if (creds.defaultTokenId) {
+    tokenId = creds.defaultTokenId;
+    slot = 'default';
+  } else if (creds.cliTokenId) {
+    tokenId = creds.cliTokenId;
+    slot = 'cli';
+  }
+  if (!tokenId || !slot) {
     if (!opts.noCache) memo = { value: null, key };
     return null;
   }
@@ -137,6 +158,7 @@ export async function resolveToken(opts: ResolveTokenOptions = {}): Promise<Reso
     token: result.value,
     source: 'keychain',
     tokenId,
+    slot,
   };
   if (!opts.noCache) memo = { value: out, key };
   return out;

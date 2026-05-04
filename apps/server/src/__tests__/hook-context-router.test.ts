@@ -1,3 +1,5 @@
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Brain } from '@second-brain/core';
 import { HookContextCache, hashRouteInput } from '../services/hook-context-cache.js';
@@ -387,6 +389,415 @@ describe('HookContextRouter', () => {
       expect(k1).toBe(k2);
       const k3 = cache.blockCacheKey('s', 'Read', { file_path: '/y' });
       expect(k3).not.toBe(k1);
+    });
+  });
+
+  describe('relative-path normalization (PR6.2)', () => {
+    describe('Read', () => {
+      it('resolves relative tool-arg path against input.cwd', async () => {
+        // Entity is keyed by absolute path; tool sends a relative one.
+        const absolute = '/repo/src/auth.ts';
+        seedFileEntity(absolute);
+
+        const res = await router.routeContext({
+          toolName: 'Read',
+          toolInput: { file_path: 'src/auth.ts' },
+          cwd: '/repo',
+          sessionId: 's-rel-read',
+          namespace: NAMESPACE,
+          brain: getBrain(),
+        });
+
+        expect(res.contextBlock).not.toBeNull();
+        expect(res.contextBlock).toContain(absolute);
+        expect(res.contextBlock).toContain('contains login form');
+      });
+
+      it('skips injection when path is relative and cwd is empty', async () => {
+        // Even though the absolute path matches an entity, the empty cwd means
+        // we cannot anchor the relative ref — return null rather than guess.
+        seedFileEntity('/repo/src/auth.ts');
+
+        const res = await router.routeContext({
+          toolName: 'Read',
+          toolInput: { file_path: 'src/auth.ts' },
+          cwd: '',
+          sessionId: 's-rel-no-cwd',
+          namespace: NAMESPACE,
+          brain: getBrain(),
+        });
+
+        expect(res.contextBlock).toBeNull();
+      });
+
+      it('absolute path is unchanged (regression)', async () => {
+        const absolute = '/repo/src/auth.ts';
+        seedFileEntity(absolute);
+
+        // Pass a misleading cwd; abs path must NOT be re-resolved against it.
+        const res = await router.routeContext({
+          toolName: 'Read',
+          toolInput: { file_path: absolute },
+          cwd: '/somewhere/else',
+          sessionId: 's-abs-read',
+          namespace: NAMESPACE,
+          brain: getBrain(),
+        });
+
+        expect(res.contextBlock).not.toBeNull();
+        expect(res.contextBlock).toContain(absolute);
+      });
+    });
+
+    describe('Bash', () => {
+      it('normalizes relative path in cat command against cwd', async () => {
+        const absolute = '/repo/src/auth.ts';
+        seedFileEntity(absolute);
+
+        const res = await router.routeContext({
+          toolName: 'Bash',
+          toolInput: { command: 'cat src/auth.ts' },
+          cwd: '/repo',
+          sessionId: 's-bash-rel',
+          namespace: NAMESPACE,
+          brain: getBrain(),
+        });
+
+        expect(res.contextBlock).not.toBeNull();
+        expect(res.contextBlock).toContain(absolute);
+        expect(res.contextBlock).toContain('contains login form');
+      });
+
+      it('absolute path in cat command is unchanged', async () => {
+        const absolute = '/repo/src/auth.ts';
+        seedFileEntity(absolute);
+
+        const res = await router.routeContext({
+          toolName: 'Bash',
+          toolInput: { command: `cat ${absolute}` },
+          cwd: '/wrong/cwd',
+          sessionId: 's-bash-abs',
+          namespace: NAMESPACE,
+          brain: getBrain(),
+        });
+
+        expect(res.contextBlock).not.toBeNull();
+        expect(res.contextBlock).toContain(absolute);
+      });
+
+      it('handles grep PATTERN <path> shape (skips pattern, normalizes path)', async () => {
+        const absolute = '/repo/src/login.ts';
+        seedFileEntity(absolute);
+
+        const res = await router.routeContext({
+          toolName: 'Bash',
+          toolInput: { command: 'grep -i loginForm src/login.ts' },
+          cwd: '/repo',
+          sessionId: 's-bash-grep-rel',
+          namespace: NAMESPACE,
+          brain: getBrain(),
+        });
+
+        expect(res.contextBlock).not.toBeNull();
+        expect(res.contextBlock).toContain(absolute);
+      });
+
+      it('relative path with empty cwd → falls through to BASH_TAG_TOOLS path', async () => {
+        // `cat foo.ts` with empty cwd: normalization yields null, so we fall
+        // through. `cat` is not in BASH_TAG_TOOLS, so the final result is null.
+        seedFileEntity('/repo/src/foo.ts');
+
+        const res = await router.routeContext({
+          toolName: 'Bash',
+          toolInput: { command: 'cat src/foo.ts' },
+          cwd: '',
+          sessionId: 's-bash-rel-no-cwd',
+          namespace: NAMESPACE,
+          brain: getBrain(),
+        });
+
+        expect(res.contextBlock).toBeNull();
+      });
+    });
+
+    describe('Grep/Glob', () => {
+      it('normalizes a relative search-root path against cwd', async () => {
+        seedDecision('AuthMiddleware redesign');
+
+        const res = await router.routeContext({
+          toolName: 'Grep',
+          toolInput: { pattern: 'AuthMiddleware', path: 'src' },
+          cwd: '/repo',
+          sessionId: 's-grep-rel-root',
+          namespace: NAMESPACE,
+          brain: getBrain(),
+        });
+
+        // Pattern matches the seeded entity; root just colors the heading.
+        expect(res.contextBlock).not.toBeNull();
+        expect(res.contextBlock).toContain('/repo/src');
+        expect(res.contextBlock).toContain('AuthMiddleware');
+      });
+
+      it('relative root with empty cwd → returns null (no guess)', async () => {
+        seedDecision('AuthMiddleware redesign');
+
+        const res = await router.routeContext({
+          toolName: 'Grep',
+          toolInput: { pattern: 'AuthMiddleware', path: 'src' },
+          cwd: '',
+          sessionId: 's-grep-rel-no-cwd',
+          namespace: NAMESPACE,
+          brain: getBrain(),
+        });
+
+        expect(res.contextBlock).toBeNull();
+      });
+
+      it('absolute root is unchanged', async () => {
+        seedDecision('AuthMiddleware redesign');
+
+        const res = await router.routeContext({
+          toolName: 'Grep',
+          toolInput: { pattern: 'AuthMiddleware', path: '/repo/src' },
+          cwd: '/wrong/cwd',
+          sessionId: 's-grep-abs-root',
+          namespace: NAMESPACE,
+          brain: getBrain(),
+        });
+
+        expect(res.contextBlock).not.toBeNull();
+        expect(res.contextBlock).toContain('/repo/src');
+      });
+
+      it('no path arg → behaves like before (no normalization needed)', async () => {
+        seedDecision('AuthMiddleware redesign');
+
+        const res = await router.routeContext({
+          toolName: 'Grep',
+          toolInput: { pattern: 'AuthMiddleware' },
+          cwd: '',
+          sessionId: 's-grep-no-path',
+          namespace: NAMESPACE,
+          brain: getBrain(),
+        });
+
+        expect(res.contextBlock).not.toBeNull();
+        expect(res.contextBlock).toContain('AuthMiddleware');
+      });
+    });
+
+    describe('Bash flag-with-arg shapes (P2)', () => {
+      it('handles `head -n 5 <relative-path>` — flag value is not the path', async () => {
+        const absolute = '/repo/relative/file.txt';
+        seedFileEntity(absolute);
+
+        const res = await router.routeContext({
+          toolName: 'Bash',
+          toolInput: { command: 'head -n 5 ./relative/file.txt' },
+          cwd: '/repo',
+          sessionId: 's-head-n5',
+          namespace: NAMESPACE,
+          brain: getBrain(),
+        });
+
+        expect(res.contextBlock).not.toBeNull();
+        expect(res.contextBlock).toContain(absolute);
+      });
+
+      it('handles `tail -c 1000 <relative-path>`', async () => {
+        const absolute = '/repo/other.log';
+        seedFileEntity(absolute);
+
+        const res = await router.routeContext({
+          toolName: 'Bash',
+          toolInput: { command: 'tail -c 1000 ./other.log' },
+          cwd: '/repo',
+          sessionId: 's-tail-c',
+          namespace: NAMESPACE,
+          brain: getBrain(),
+        });
+
+        expect(res.contextBlock).not.toBeNull();
+        expect(res.contextBlock).toContain(absolute);
+      });
+
+      it('handles `grep -m 5 PATTERN <relative-path>` — flag value AND pattern positional skipped', async () => {
+        const absolute = '/repo/src/foo.ts';
+        seedFileEntity(absolute);
+
+        const res = await router.routeContext({
+          toolName: 'Bash',
+          toolInput: { command: 'grep -m 5 PATTERN ./src/foo.ts' },
+          cwd: '/repo',
+          sessionId: 's-grep-m5',
+          namespace: NAMESPACE,
+          brain: getBrain(),
+        });
+
+        expect(res.contextBlock).not.toBeNull();
+        expect(res.contextBlock).toContain(absolute);
+      });
+
+      it('handles long-form `--lines=5` inline (no skip)', async () => {
+        const absolute = '/repo/src/foo.ts';
+        seedFileEntity(absolute);
+
+        const res = await router.routeContext({
+          toolName: 'Bash',
+          toolInput: { command: 'head --lines=5 ./src/foo.ts' },
+          cwd: '/repo',
+          sessionId: 's-head-long',
+          namespace: NAMESPACE,
+          brain: getBrain(),
+        });
+
+        expect(res.contextBlock).not.toBeNull();
+        expect(res.contextBlock).toContain(absolute);
+      });
+    });
+
+    describe('Bash quoted-path shapes (P2)', () => {
+      it('handles `cat "my file.txt"` — quoted path with embedded space', async () => {
+        const absolute = '/repo/my file.txt';
+        seedFileEntity(absolute);
+
+        const res = await router.routeContext({
+          toolName: 'Bash',
+          toolInput: { command: 'cat "my file.txt"' },
+          cwd: '/repo',
+          sessionId: 's-cat-quoted',
+          namespace: NAMESPACE,
+          brain: getBrain(),
+        });
+
+        expect(res.contextBlock).not.toBeNull();
+        expect(res.contextBlock).toContain(absolute);
+      });
+
+      it('handles single-quoted absolute path', async () => {
+        const absolute = '/repo/my file.txt';
+        seedFileEntity(absolute);
+
+        const res = await router.routeContext({
+          toolName: 'Bash',
+          toolInput: { command: "cat '/repo/my file.txt'" },
+          cwd: '/wrong/cwd',
+          sessionId: 's-cat-single-quoted',
+          namespace: NAMESPACE,
+          brain: getBrain(),
+        });
+
+        expect(res.contextBlock).not.toBeNull();
+        expect(res.contextBlock).toContain(absolute);
+      });
+
+      it('handles backslash-escaped space (`cat my\\ file.txt`)', async () => {
+        const absolute = '/repo/my file.txt';
+        seedFileEntity(absolute);
+
+        const res = await router.routeContext({
+          toolName: 'Bash',
+          toolInput: { command: 'cat my\\ file.txt' },
+          cwd: '/repo',
+          sessionId: 's-cat-escaped',
+          namespace: NAMESPACE,
+          brain: getBrain(),
+        });
+
+        expect(res.contextBlock).not.toBeNull();
+        expect(res.contextBlock).toContain(absolute);
+      });
+    });
+
+    describe('home-dir expansion (NIT)', () => {
+      it('expands `~/` against os.homedir() (NOT under cwd)', async () => {
+        const absolute = path.join(os.homedir(), 'foo.txt');
+        seedFileEntity(absolute);
+
+        const res = await router.routeContext({
+          toolName: 'Read',
+          toolInput: { file_path: '~/foo.txt' },
+          cwd: '/some/other/cwd',
+          sessionId: 's-tilde',
+          namespace: NAMESPACE,
+          brain: getBrain(),
+        });
+
+        expect(res.contextBlock).not.toBeNull();
+        expect(res.contextBlock).toContain(absolute);
+        // Defensive: must NOT have resolved against cwd.
+        expect(res.contextBlock).not.toContain('/some/other/cwd/~/foo.txt');
+      });
+
+      it('expands `$HOME/` against os.homedir()', async () => {
+        const absolute = path.join(os.homedir(), 'bar.txt');
+        seedFileEntity(absolute);
+
+        const res = await router.routeContext({
+          toolName: 'Read',
+          toolInput: { file_path: '$HOME/bar.txt' },
+          cwd: '/some/other/cwd',
+          sessionId: 's-home-env',
+          namespace: NAMESPACE,
+          brain: getBrain(),
+        });
+
+        expect(res.contextBlock).not.toBeNull();
+        expect(res.contextBlock).toContain(absolute);
+      });
+
+      it('expands bare `~` to the home directory', async () => {
+        const absolute = os.homedir();
+        seedFileEntity(absolute);
+
+        const res = await router.routeContext({
+          toolName: 'Read',
+          toolInput: { file_path: '~' },
+          cwd: '/wrong/cwd',
+          sessionId: 's-bare-tilde',
+          namespace: NAMESPACE,
+          brain: getBrain(),
+        });
+
+        expect(res.contextBlock).not.toBeNull();
+        expect(res.contextBlock).toContain(absolute);
+      });
+
+      it('expands `~/` in Bash commands too', async () => {
+        const absolute = path.join(os.homedir(), 'notes.md');
+        seedFileEntity(absolute);
+
+        const res = await router.routeContext({
+          toolName: 'Bash',
+          toolInput: { command: 'cat ~/notes.md' },
+          cwd: '/repo',
+          sessionId: 's-bash-tilde',
+          namespace: NAMESPACE,
+          brain: getBrain(),
+        });
+
+        expect(res.contextBlock).not.toBeNull();
+        expect(res.contextBlock).toContain(absolute);
+      });
+    });
+
+    describe('defensive cwd handling (NIT)', () => {
+      it('returns null when relative path is given but cwd is itself not absolute', async () => {
+        seedFileEntity('/repo/src/foo.ts');
+
+        const res = await router.routeContext({
+          toolName: 'Read',
+          toolInput: { file_path: 'src/foo.ts' },
+          // Misconfigured upstream: relative cwd cannot anchor a relative path.
+          cwd: 'relative/cwd',
+          sessionId: 's-non-abs-cwd',
+          namespace: NAMESPACE,
+          brain: getBrain(),
+        });
+
+        expect(res.contextBlock).toBeNull();
+      });
     });
   });
 });

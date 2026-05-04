@@ -1,11 +1,40 @@
 import fs from 'node:fs';
 import nodePath from 'node:path';
 import { Router } from 'express';
+import type { Request, Response } from 'express';
 import { z } from 'zod';
 import type { Brain } from '@second-brain/core';
 import type { OwnershipService, OwnershipScore } from '../services/ownership-service.js';
 import { resolveScopedNamespace } from '../middleware/auth.js';
 import type { UsersService } from '../services/users.js';
+
+/**
+ * Resolve the namespace for an ownership lookup. Wraps `resolveScopedNamespace`
+ * with the extra rule that even open / legacy mode (no auth wired) MUST receive
+ * an explicit `?namespace=` — the underlying SQL filter has no sensible
+ * fallback. Returns:
+ *   - `string` → the namespace to use
+ *   - `null`   → response already sent (400 / 403); caller must `return`
+ */
+function resolveOwnershipNamespace(
+  req: Request,
+  res: Response,
+  requested: string | undefined,
+  users: UsersService | null | undefined,
+): string | null {
+  const ns = resolveScopedNamespace(req, res, requested, users ?? null);
+  if (ns === null) return null;
+  if (ns === undefined) {
+    // Open / legacy mode — no auth gate to require namespace, but the service
+    // still needs one. Reject explicitly rather than silently scanning all.
+    if (!requested) {
+      res.status(400).json({ error: 'namespace-required' });
+      return null;
+    }
+    return requested;
+  }
+  return ns;
+}
 
 export interface QueryRouteOptions {
   bearerToken?: string;
@@ -27,6 +56,7 @@ async function buildOwnershipTree(
   relPath: string,
   depth: number,
   limit: number,
+  namespace: string,
 ): Promise<OwnershipNode> {
   const stat = fs.statSync(absPath, { throwIfNoEntry: false });
   if (!stat) {
@@ -38,7 +68,11 @@ async function buildOwnershipTree(
   if (!stat.isDirectory()) {
     let owners: Array<{ actor: string; score: number }> = [];
     try {
-      const scores: OwnershipScore[] = await ownership.query({ path: relPath, limit });
+      const scores: OwnershipScore[] = await ownership.query({
+        path: relPath,
+        limit,
+        namespace,
+      });
       owners = scores.map((s) => ({ actor: s.actor, score: s.score }));
     } catch {
       // file not tracked by git or other query failure — return empty owners
@@ -62,11 +96,17 @@ async function buildOwnershipTree(
     const childAbs = nodePath.join(absPath, entry.name);
 
     if (entry.isDirectory()) {
-      children.push(await buildOwnershipTree(ownership, childAbs, childRel, depth - 1, limit));
+      children.push(
+        await buildOwnershipTree(ownership, childAbs, childRel, depth - 1, limit, namespace),
+      );
     } else if (entry.isFile()) {
       let owners: Array<{ actor: string; score: number }> = [];
       try {
-        const scores: OwnershipScore[] = await ownership.query({ path: childRel, limit });
+        const scores: OwnershipScore[] = await ownership.query({
+          path: childRel,
+          limit,
+          namespace,
+        });
         owners = scores.map((s) => ({ actor: s.actor, score: s.score }));
       } catch {
         // not tracked — empty owners
@@ -95,15 +135,19 @@ export function queryRoutes(ownership: OwnershipService, options: QueryRouteOpti
 
   const OwnershipQuerySchema = z.object({
     path: z.string().min(1),
+    namespace: z.string().min(1).optional(),
     limit: z.coerce.number().int().min(1).max(50).optional(),
   });
 
   router.get('/api/query/ownership', async (req, res, next) => {
     try {
       const query = OwnershipQuerySchema.parse(req.query);
+      const namespace = resolveOwnershipNamespace(req, res, query.namespace, options.users);
+      if (namespace === null) return; // response already sent
       const results = await ownership.query({
         path: query.path,
         limit: query.limit,
+        namespace,
       });
       res.json(results);
     } catch (err) {
@@ -115,6 +159,7 @@ export function queryRoutes(ownership: OwnershipService, options: QueryRouteOpti
 
   const OwnershipTreeQuerySchema = z.object({
     path: z.string().min(1).default('.'),
+    namespace: z.string().min(1).optional(),
     depth: z.coerce.number().int().min(1).max(5).default(2),
     limit: z.coerce.number().int().min(1).max(50).default(3),
   });
@@ -122,6 +167,8 @@ export function queryRoutes(ownership: OwnershipService, options: QueryRouteOpti
   router.get('/api/query/ownership-tree', async (req, res, next) => {
     try {
       const query = OwnershipTreeQuerySchema.parse(req.query);
+      const namespace = resolveOwnershipNamespace(req, res, query.namespace, options.users);
+      if (namespace === null) return; // response already sent
       const absPath = nodePath.join(ownership.root, query.path);
 
       if (!fs.existsSync(absPath)) {
@@ -135,6 +182,7 @@ export function queryRoutes(ownership: OwnershipService, options: QueryRouteOpti
         query.path,
         query.depth,
         query.limit,
+        namespace,
       );
       res.json(tree);
     } catch (err) {

@@ -526,9 +526,13 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
   // --- get_ownership ---
   mcp.registerTool('get_ownership', {
     description:
-      'Compute file ownership scores. Returns ranked owners with signals (blame, commits, reviews, tests, CODEOWNERS). Useful for "who should review this?" or "who knows this code best?".',
+      'Compute file ownership scores. Returns ranked owners with signals (blame, commits, reviews, tests, CODEOWNERS). Useful for "who should review this?" or "who knows this code best?". Requires `namespace` — the server review-signal lookup is namespace-scoped, and unbound tokens cannot infer it.',
     inputSchema: {
       path: z.string().describe('Repository-relative file path'),
+      namespace: z
+        .string()
+        .min(1)
+        .describe('Namespace to scope review signals to (required)'),
       limit: z.number().int().min(1).max(50).optional().describe('Max owners to return (default 3)'),
     },
     annotations: {
@@ -539,6 +543,7 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
     const port = process.env.BRAIN_API_PORT ?? '7430';
     const url = new URL(`http://localhost:${port}/api/query/ownership`);
     url.searchParams.set('path', args.path);
+    url.searchParams.set('namespace', args.namespace);
     if (args.limit !== undefined) url.searchParams.set('limit', String(args.limit));
 
     const headers: Record<string, string> = {};

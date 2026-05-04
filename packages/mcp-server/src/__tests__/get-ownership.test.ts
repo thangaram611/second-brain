@@ -68,7 +68,7 @@ describe('get_ownership', () => {
 
     const result = await client.callTool({
       name: 'get_ownership',
-      arguments: { path: 'src/core/engine.ts' },
+      arguments: { path: 'src/core/engine.ts', namespace: 'team-x' },
     });
 
     const output = text(result);
@@ -90,7 +90,7 @@ describe('get_ownership', () => {
 
     const result = await client.callTool({
       name: 'get_ownership',
-      arguments: { path: 'unknown/file.ts' },
+      arguments: { path: 'unknown/file.ts', namespace: 'team-x' },
     });
 
     expect(text(result)).toBe('No ownership data found for unknown/file.ts');
@@ -108,13 +108,13 @@ describe('get_ownership', () => {
 
     const result = await client.callTool({
       name: 'get_ownership',
-      arguments: { path: 'src/main.ts' },
+      arguments: { path: 'src/main.ts', namespace: 'team-x' },
     });
 
     expect(text(result)).toBe('Ownership query failed (500): Internal Server Error');
   });
 
-  it('passes path and limit params correctly in URL', async () => {
+  it('passes path, namespace, and limit params correctly in URL', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve([]),
@@ -123,13 +123,32 @@ describe('get_ownership', () => {
 
     await client.callTool({
       name: 'get_ownership',
-      arguments: { path: 'packages/core/index.ts', limit: 5 },
+      arguments: { path: 'packages/core/index.ts', namespace: 'team-x', limit: 5 },
     });
 
     expect(fetchMock).toHaveBeenCalledOnce();
     const calledUrl = new URL(fetchMock.mock.calls[0][0] as string);
     expect(calledUrl.pathname).toBe('/api/query/ownership');
     expect(calledUrl.searchParams.get('path')).toBe('packages/core/index.ts');
+    expect(calledUrl.searchParams.get('namespace')).toBe('team-x');
     expect(calledUrl.searchParams.get('limit')).toBe('5');
+  });
+
+  it('rejects calls missing the required namespace param via schema validation', async () => {
+    // No fetch stub — the call must fail before any HTTP work runs.
+    // The MCP SDK surfaces zod validation errors as `isError: true` tool
+    // results (rather than thrown exceptions), so check the response shape.
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await client.callTool({
+      name: 'get_ownership',
+      // Intentionally omit `namespace`.
+      arguments: { path: 'src/main.ts' },
+    });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toMatch(/namespace/i);
+    // No HTTP call should have been made — the schema rejected the input first.
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

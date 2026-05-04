@@ -61,7 +61,7 @@ describe('runInitServer (Linux/systemd)', () => {
     expect(unit).toContain(`EnvironmentFile=${result.secretsPath}`);
 
     // Bootstrap PAT minted with expected shape.
-    expect(result.adminPat).toMatch(/^sbp_[a-z0-9]{8}_[A-Z2-7]+$/);
+    expect(result.adminPat).toMatch(/^sbp_[a-z0-9]{8}_[A-Za-z0-9]{32}_[A-Za-z0-9]{6}$/);
     expect(result.adminTokenId).toMatch(/^[a-z0-9]{8}$/);
     expect(result.adminEmail).toBe('admin@example.com');
     // Default 90-day expiry.

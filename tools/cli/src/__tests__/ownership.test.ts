@@ -54,12 +54,13 @@ describe('runOwnership', () => {
     });
 
     const { runOwnership } = await import('../ownership.js');
-    await runOwnership({ path: 'src/main.ts', serverUrl: 'http://localhost:9999' });
+    await runOwnership({ path: 'src/main.ts', namespace: 'team-x', serverUrl: 'http://localhost:9999' });
 
     expect(fetchMock).toHaveBeenCalledOnce();
     const [url, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toContain('/api/query/ownership');
     expect(url).toContain('path=src%2Fmain.ts');
+    expect(url).toContain('namespace=team-x');
     expect(opts.headers).toEqual({});
   });
 
@@ -70,7 +71,7 @@ describe('runOwnership', () => {
     });
 
     const { runOwnership } = await import('../ownership.js');
-    await runOwnership({ path: 'src/main.ts', limit: 5, serverUrl: 'http://localhost:9999' });
+    await runOwnership({ path: 'src/main.ts', namespace: 'team-x', limit: 5, serverUrl: 'http://localhost:9999' });
 
     const [url] = fetchMock.mock.calls[0] as [string];
     expect(url).toContain('limit=5');
@@ -83,7 +84,7 @@ describe('runOwnership', () => {
     });
 
     const { runOwnership } = await import('../ownership.js');
-    await runOwnership({ path: 'src/main.ts', token: 'secret-tok', serverUrl: 'http://localhost:9999' });
+    await runOwnership({ path: 'src/main.ts', namespace: 'team-x', token: 'secret-tok', serverUrl: 'http://localhost:9999' });
 
     const [, opts] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect((opts.headers as Record<string, string>)['Authorization']).toBe('Bearer secret-tok');
@@ -96,7 +97,7 @@ describe('runOwnership', () => {
     });
 
     const { runOwnership } = await import('../ownership.js');
-    await runOwnership({ path: 'src/main.ts', json: true, serverUrl: 'http://localhost:9999' });
+    await runOwnership({ path: 'src/main.ts', namespace: 'team-x', json: true, serverUrl: 'http://localhost:9999' });
 
     expect(logSpy).toHaveBeenCalledOnce();
     const output = logSpy.mock.calls[0]![0] as string;
@@ -114,7 +115,7 @@ describe('runOwnership', () => {
 
     const { runOwnership } = await import('../ownership.js');
     await expect(
-      runOwnership({ path: 'nope.ts', serverUrl: 'http://localhost:9999' }),
+      runOwnership({ path: 'nope.ts', namespace: 'team-x', serverUrl: 'http://localhost:9999' }),
     ).rejects.toThrow('process.exit');
 
     expect(errorSpy).toHaveBeenCalledWith('Error: 404 — Not found');
@@ -128,7 +129,7 @@ describe('runOwnership', () => {
     });
 
     const { runOwnership } = await import('../ownership.js');
-    await runOwnership({ path: 'empty.ts', serverUrl: 'http://localhost:9999' });
+    await runOwnership({ path: 'empty.ts', namespace: 'team-x', serverUrl: 'http://localhost:9999' });
 
     expect(logSpy).toHaveBeenCalledWith('No ownership data found for empty.ts');
   });
@@ -140,7 +141,7 @@ describe('runOwnership', () => {
     });
 
     const { runOwnership } = await import('../ownership.js');
-    await runOwnership({ path: 'src/main.ts', serverUrl: 'http://localhost:9999' });
+    await runOwnership({ path: 'src/main.ts', namespace: 'team-x', serverUrl: 'http://localhost:9999' });
 
     const allOutput = logSpy.mock.calls.map((c: unknown[]) => c[0]).join('\n');
     expect(allOutput).toContain('alice  (65.0%)');

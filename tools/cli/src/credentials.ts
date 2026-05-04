@@ -116,6 +116,75 @@ export function writeCredentials(
   return { path: target };
 }
 
+/**
+ * Apply a partial patch to an existing credentials record. Used by
+ * `brain auth rotate` to update only one slot's `tokenId` (and optionally the
+ * `patExpiresAt`) without bulk-overwriting the other two slot pointers.
+ *
+ * Forward-compat note: we read the on-disk JSON RAW (not via
+ * `readCredentials()` which `safeParse`s through the strict schema and
+ * therefore strips unknown keys). This way a future CLI version that adds a
+ * field — say `featureFlagX` — can have its values survive a rotate from an
+ * older CLI. The MERGED object is still validated against the schema before
+ * write so we never persist garbage.
+ *
+ * Throws if no record exists for the host (rotate has no fallback), or if the
+ * merged record fails schema validation (which means the existing on-disk
+ * file was malformed AND the patch didn't fix it — operator-visible problem).
+ */
+export function patchCredentials(
+  host: string,
+  patch: Partial<CredentialsRecord>,
+  homeOverride?: string,
+): { path: string; record: CredentialsRecord } {
+  const target = credentialsPath(host, homeOverride);
+  if (!fs.existsSync(target)) {
+    throw new Error(
+      `no credentials for host ${host} — cannot patch a missing record. Run \`brain init client\` first.`,
+    );
+  }
+  let raw: string;
+  try {
+    raw = fs.readFileSync(target, 'utf8');
+  } catch (err) {
+    throw new Error(
+      `failed to read credentials for host ${host}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  if (!raw.trim()) {
+    throw new Error(`credentials file for host ${host} is empty — cannot patch.`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `credentials file for host ${host} is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`credentials file for host ${host} is not a JSON object.`);
+  }
+  // Object-merge into the raw record so unknown keys survive verbatim. The
+  // patch overrides any colliding schema-known keys.
+  const merged: Record<string, unknown> = { ...(parsed as Record<string, unknown>), ...patch };
+  // Validate the merged result. We don't use `.parse()` directly because it
+  // throws a generic ZodError; safeParse + a tailored error gives operators a
+  // clearer failure message (and is consistent with the rest of credentials.ts).
+  const validation = CredentialsRecordSchema.safeParse(merged);
+  if (!validation.success) {
+    throw new Error(
+      `patched credentials for host ${host} fail schema validation; the on-disk file may be corrupt. ` +
+        `Re-run \`brain init client --refresh --invite <new-invite>\`. Details: ${validation.error.message}`,
+    );
+  }
+  // Persist the MERGED raw object (preserving unknown keys), but only after
+  // schema validation has confirmed the schema-known fields are well-formed.
+  const json = `${JSON.stringify(merged, null, 2)}\n`;
+  writeFileAtomicSecure(target, json);
+  return { path: target, record: validation.data };
+}
+
 /** Read + parse a credentials record. Returns null on missing/invalid. */
 export function readCredentials(
   host: string,

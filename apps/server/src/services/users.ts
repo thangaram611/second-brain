@@ -1,9 +1,15 @@
 /**
  * users.db sidecar — server-side identity, PATs, invites, and sessions.
  *
- * PAT format: `sbp_<8-char-id>_<32-byte-base32-secret>`
+ * PAT format: `sbp_<8-char-id>_<32-char-base62-secret>_<6-char-base62-CRC32>`
  *   - The id is the primary key in `tokens`. The secret is hashed with
  *     argon2id and stored as `tokens.hash`.
+ *   - The 6-char suffix is a base62-encoded CRC32 of the secret bytes — it
+ *     mirrors GitHub's `github_pat_*` shape and exists purely as
+ *     defense-in-depth (cheap forgery / typo detection so a malformed PAT is
+ *     rejected before the deliberately-slow argon2id verify runs).
+ *     **The CRC32 is NOT the auth gate.** Authentication remains the
+ *     argon2id verify against `tokens.hash`.
  *   - Tokens optionally lock to a single namespace (`tokens.namespace`);
  *     a NULL namespace means "any namespace the user has membership for".
  *
@@ -17,6 +23,7 @@
  */
 import Database from 'better-sqlite3';
 import { randomBytes } from 'node:crypto';
+import { crc32 } from 'node:zlib';
 import * as argon2 from 'argon2';
 import { z } from 'zod';
 
@@ -74,19 +81,111 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 `;
 
-// --- Argon2id stretching params (per plan) ---------------------------------
-
-export const ARGON2_OPTIONS = {
-  type: argon2.argon2id,
-  memoryCost: 65_536,
-  timeCost: 3,
-  parallelism: 4,
-} as const;
+// --- Argon2id stretching params (env-configurable, see docs/tunings/argon2.md) ---
 
 /**
- * Parse an argon2 encoded hash and assert it meets the mint policy:
- * argon2id, m ≥ 65536, t ≥ 3, p ≥ 4. The prefix shape is
- * `$argon2id$v=19$m=65536,t=3,p=4$salt$hash`.
+ * OWASP-equivalent baselines (argon2id). Either profile is acceptable; reject
+ * only when the operator-supplied params are below BOTH.
+ *
+ * Source: OWASP Password Storage Cheat Sheet (2025) + RFC 9106.
+ */
+const OWASP_BASELINE_HIGH_MEM = { memoryCost: 47_104, timeCost: 1, parallelism: 1 } as const; // ~46 MiB
+const OWASP_BASELINE_LOW_MEM = { memoryCost: 19_456, timeCost: 2, parallelism: 1 } as const; //  ~19 MiB
+
+/**
+ * Default mint params — m=64 MiB / t=3 / p=1.
+ * - Matches OWASP recommendation, RFC 9106, node-argon2's own default, Bitwarden.
+ * - p=1 (NOT p=4) avoids exhausting the libuv thread pool under concurrent logins.
+ */
+const DEFAULT_ARGON2_PARAMS = { memoryCost: 65_536, timeCost: 3, parallelism: 1 } as const;
+
+interface Argon2Params {
+  memoryCost: number;
+  timeCost: number;
+  parallelism: number;
+}
+
+const PositiveIntSchema = z.coerce.number().int().positive();
+
+function parseEnvParam(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const parsed = PositiveIntSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new Error(
+      `Invalid ${name}=${raw}: must be a positive integer. See docs/tunings/argon2.md.`,
+    );
+  }
+  return parsed.data;
+}
+
+function readArgon2Params(): Argon2Params {
+  return {
+    memoryCost: parseEnvParam('BRAIN_ARGON2_M', DEFAULT_ARGON2_PARAMS.memoryCost),
+    timeCost: parseEnvParam('BRAIN_ARGON2_T', DEFAULT_ARGON2_PARAMS.timeCost),
+    parallelism: parseEnvParam('BRAIN_ARGON2_P', DEFAULT_ARGON2_PARAMS.parallelism),
+  };
+}
+
+function meetsBaseline(p: Argon2Params, baseline: Argon2Params): boolean {
+  return (
+    p.memoryCost >= baseline.memoryCost &&
+    p.timeCost >= baseline.timeCost &&
+    p.parallelism >= baseline.parallelism
+  );
+}
+
+function assertParamsMeetOwasp(p: Argon2Params): void {
+  if (meetsBaseline(p, OWASP_BASELINE_HIGH_MEM) || meetsBaseline(p, OWASP_BASELINE_LOW_MEM)) {
+    return;
+  }
+  throw new Error(
+    `Argon2id params below both OWASP baselines (BRAIN_ARGON2_M=${p.memoryCost}, ` +
+      `BRAIN_ARGON2_T=${p.timeCost}, BRAIN_ARGON2_P=${p.parallelism}). ` +
+      `Required: (m≥${OWASP_BASELINE_HIGH_MEM.memoryCost} AND t≥${OWASP_BASELINE_HIGH_MEM.timeCost} AND p≥${OWASP_BASELINE_HIGH_MEM.parallelism}) ` +
+      `OR (m≥${OWASP_BASELINE_LOW_MEM.memoryCost} AND t≥${OWASP_BASELINE_LOW_MEM.timeCost} AND p≥${OWASP_BASELINE_LOW_MEM.parallelism}). ` +
+      `See docs/tunings/argon2.md.`,
+  );
+}
+
+/**
+ * Refuse-boot guard. Reads `BRAIN_ARGON2_*` and throws if the operator-supplied
+ * params fall below BOTH OWASP baselines (or are malformed).
+ *
+ * Called from the `UsersService` constructor so any boot path that touches the
+ * auth surface trips this **before** `server.listen()` binds. Exported so a
+ * caller (e.g. `apps/server/src/index.ts`) can also call it explicitly even
+ * earlier in startup if desired.
+ */
+export function assertArgon2ParamsMeetOwasp(): void {
+  assertParamsMeetOwasp(readArgon2Params());
+}
+
+/**
+ * Returns the current mint params, sourced from env with safe defaults.
+ * Throws if the operator chose params below BOTH OWASP baselines.
+ *
+ * Note: this is also called by `UsersService` at construction time, so the
+ * boot guard fires before any HTTP listener binds — it is not deferred to
+ * the first mint.
+ */
+export function getArgon2Options(): {
+  type: typeof argon2.argon2id;
+  memoryCost: number;
+  timeCost: number;
+  parallelism: number;
+} {
+  const params = readArgon2Params();
+  assertParamsMeetOwasp(params);
+  return { type: argon2.argon2id, ...params };
+}
+
+/**
+ * Parse an argon2 encoded hash and assert it meets the configured mint
+ * policy (which itself must satisfy at least one OWASP baseline). The hash
+ * prefix shape is `$argon2id$v=19$m=<m>,t=<t>,p=<p>$salt$hash`.
+ *
+ * Reads the same env vars as `getArgon2Options` so mint and verify agree.
  */
 export function hashMatchesPolicy(hash: string): boolean {
   const m = /^\$argon2id\$v=\d+\$m=(\d+),t=(\d+),p=(\d+)\$/.exec(hash);
@@ -95,10 +194,11 @@ export function hashMatchesPolicy(hash: string): boolean {
   const timeCost = Number(m[2]);
   const parallelism = Number(m[3]);
   if (!Number.isFinite(memoryCost) || !Number.isFinite(timeCost) || !Number.isFinite(parallelism)) return false;
+  const policy = readArgon2Params();
   return (
-    memoryCost >= ARGON2_OPTIONS.memoryCost &&
-    timeCost >= ARGON2_OPTIONS.timeCost &&
-    parallelism >= ARGON2_OPTIONS.parallelism
+    memoryCost >= policy.memoryCost &&
+    timeCost >= policy.timeCost &&
+    parallelism >= policy.parallelism
   );
 }
 
@@ -229,24 +329,62 @@ function serializeScopes(scopes: readonly Scope[]): string {
   return scopes.join(',');
 }
 
-/** Crockford-ish base32 (RFC 4648 alphabet without padding). */
-const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-function base32encode(buf: Buffer): string {
-  let bits = 0;
-  let value = 0;
+/**
+ * Base62 alphabet (`0-9A-Za-z`). Used for both the 32-char PAT secret and
+ * the 6-char CRC32 suffix so the whole token is URL-safe and visually
+ * distinct from base32 PATs of the previous format.
+ */
+const BASE62_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+const BASE62 = BigInt(BASE62_ALPHABET.length);
+
+/** Encode an unsigned BigInt to base62, left-padded (or truncated) to `len`. */
+function bigIntToBase62(value: bigint, len: number): string {
+  if (value < 0n) throw new Error('bigIntToBase62: negative input');
+  let n = value;
   let out = '';
-  for (const byte of buf) {
-    value = (value << 8) | byte;
-    bits += 8;
-    while (bits >= 5) {
-      out += BASE32_ALPHABET[(value >>> (bits - 5)) & 31];
-      bits -= 5;
+  if (n === 0n) {
+    out = '0';
+  } else {
+    while (n > 0n) {
+      const idx = Number(n % BASE62);
+      out = BASE62_ALPHABET[idx] + out;
+      n = n / BASE62;
     }
   }
-  if (bits > 0) {
-    out += BASE32_ALPHABET[(value << (5 - bits)) & 31];
+  if (out.length > len) return out.slice(out.length - len); // keep low-order chars
+  return out.padStart(len, '0');
+}
+
+/**
+ * Generate a 32-character base62 secret. We sample 32 base62 indices via
+ * rejection sampling on `randomBytes` so each character is uniform across
+ * the 62-symbol alphabet (no modulo bias).
+ */
+function generateBase62Secret(len: number): string {
+  // 256 / 62 = 4.13, so values >= 248 are rejected to avoid bias
+  // (248 = floor(256 / 62) * 62).
+  const REJECTION_THRESHOLD = 248;
+  let out = '';
+  while (out.length < len) {
+    const buf = randomBytes(len * 2); // overprovision; rejection rate is ~3%
+    for (let i = 0; i < buf.length && out.length < len; i++) {
+      const b = buf[i];
+      if (b >= REJECTION_THRESHOLD) continue;
+      out += BASE62_ALPHABET[b % 62];
+    }
   }
   return out;
+}
+
+/**
+ * Compute the 6-character base62 CRC32 suffix for a PAT secret string.
+ * `node:zlib`'s `crc32` returns a 32-bit unsigned integer; we encode it as
+ * base62 padded/truncated to exactly 6 chars (62^6 ≈ 5.7e10, plenty of
+ * room for a 32-bit value).
+ */
+function computePatChecksum(secret: string): string {
+  const code = crc32(Buffer.from(secret, 'utf8'));
+  return bigIntToBase62(BigInt(code >>> 0), 6);
 }
 
 const TOKEN_ID_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -259,20 +397,35 @@ function generateTokenId(): string {
   return out;
 }
 
-const PAT_REGEX = /^sbp_([a-z0-9]{8})_([A-Z2-7]+)$/;
+/**
+ * PAT regex — see the file header comment for the format and the security
+ * framing of the CRC32 suffix (defense-in-depth, not the auth gate).
+ *
+ * Single format only — no legacy/dual-format grace window. The project has
+ * never run in production; old fixtures are regenerated.
+ */
+const PAT_REGEX = /^sbp_([a-z0-9]{8})_([A-Za-z0-9]{32})_([A-Za-z0-9]{6})$/;
 
 export interface ParsedPat {
   tokenId: string;
   secret: string;
+  checksum: string;
 }
 
+/**
+ * Parse a PAT and validate the CRC32 suffix matches the secret. A mismatch
+ * (or any structural failure) returns `null` so callers see a single
+ * "invalid-token-format" outcome before the slow argon2id verify runs.
+ */
 export function parsePat(token: string): ParsedPat | null {
   const m = PAT_REGEX.exec(token);
   if (!m) return null;
   const tokenId = m[1];
   const secret = m[2];
-  if (!tokenId || !secret) return null;
-  return { tokenId, secret };
+  const checksum = m[3];
+  if (!tokenId || !secret || !checksum) return null;
+  if (computePatChecksum(secret) !== checksum) return null;
+  return { tokenId, secret, checksum };
 }
 
 // --- Service ---------------------------------------------------------------
@@ -289,6 +442,11 @@ export class UsersService {
   private readonly nowFn: () => number;
 
   constructor(opts: UsersServiceOptions) {
+    // Refuse-boot guard: validate `BRAIN_ARGON2_*` env BEFORE we open the DB
+    // or accept connections. Server boot constructs `UsersService` (see
+    // `apps/server/src/index.ts`) before `server.listen()` binds, so a bad
+    // env config fails fast at startup rather than on the first PAT mint.
+    assertArgon2ParamsMeetOwasp();
     this.db = new Database(opts.path);
     this.db.pragma('foreign_keys = ON');
     this.db.pragma('journal_mode = WAL');
@@ -392,8 +550,9 @@ export class UsersService {
     expiresAt?: number | null;
   }): Promise<{ pat: string; tokenId: string; record: TokenRecord }> {
     const tokenId = generateTokenId();
-    const secret = base32encode(randomBytes(32));
-    const hash = await argon2.hash(secret, ARGON2_OPTIONS);
+    const secret = generateBase62Secret(32);
+    const checksum = computePatChecksum(secret);
+    const hash = await argon2.hash(secret, getArgon2Options());
     const now = this.nowFn();
     this.db
       .prepare(
@@ -421,7 +580,7 @@ export class UsersService {
       expiresAt: input.expiresAt ?? null,
       revokedAt: null,
     };
-    return { pat: `sbp_${tokenId}_${secret}`, tokenId, record };
+    return { pat: `sbp_${tokenId}_${secret}_${checksum}`, tokenId, record };
   }
 
   getTokenById(tokenId: string): { record: TokenRecord; hash: string } | null {

@@ -19,6 +19,14 @@ export interface OwnershipScore {
 
 export interface OwnershipQuery {
   path: string;
+  /**
+   * Namespace scope for the review-signal lookup. Required — every caller
+   * must resolve a namespace via `resolveScopedNamespace()` before invoking
+   * the service so cross-namespace bleed is impossible. Routes that receive
+   * an unbound token without `?namespace=` short-circuit at the route layer
+   * (400 namespace-required) and never reach this method.
+   */
+  namespace: string;
   limit?: number;
   repoRoot?: string;
 }
@@ -77,7 +85,10 @@ export class OwnershipService {
   async query(q: OwnershipQuery): Promise<OwnershipScore[]> {
     const root = q.repoRoot ?? this.repoRoot;
     const limit = q.limit ?? 3;
-    const cacheKey = `${root}:${q.path}`;
+    // Namespace is part of the cache key — the review-signal lookup is the
+    // only namespace-sensitive component, but two callers querying the same
+    // file in different namespaces must not share a cache slot.
+    const cacheKey = `${root}:${q.namespace}:${q.path}`;
 
     const cached = this.cache.get(cacheKey);
     if (cached && Date.now() - cached.cachedAt < this.cacheTtlMs) {
@@ -93,7 +104,7 @@ export class OwnershipService {
       this.getTestAuthorship(git, q.path),
     ]);
 
-    const reviewMap = this.getReviewSignals(q.path);
+    const reviewMap = this.getReviewSignals(q.path, q.namespace);
     const codeowners = loadCodeowners(root);
     const codeownerOwners = new Set(codeowners?.match(q.path) ?? []);
 
@@ -221,9 +232,11 @@ export class OwnershipService {
 
   /**
    * Query brain for review relations: type='reviewed_by' where the source
-   * entity is a merge_request/pull_request that touches this file path.
+   * entity is a merge_request/pull_request (in `namespace`) that touches this
+   * file path. Namespace-scoped to prevent leaking review signals across
+   * namespaces (e.g. two unrelated teams indexing the same path fragment).
    */
-  private getReviewSignals(path: string): Map<string, number> {
+  private getReviewSignals(path: string, namespace: string): Map<string, number> {
     const result = new Map<string, number>();
     try {
       const db = this.brain.storage.sqlite;
@@ -234,9 +247,10 @@ export class OwnershipService {
            JOIN entities e ON e.id = r.source_id
            WHERE r.type = 'reviewed_by'
              AND (e.type = 'merge_request' OR e.type = 'pull_request')
+             AND e.namespace = ?
              AND json_extract(e.properties, '$.touches_file') LIKE ?`,
         )
-        .all(`%${path}%`) as Array<{ target_id: string; properties: string }>;
+        .all(namespace, `%${path}%`) as Array<{ target_id: string; properties: string }>;
 
       for (const row of rows) {
         // target_id is the reviewer entity — look up its email/name

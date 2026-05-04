@@ -74,7 +74,7 @@ describe('runInitClient — fresh client (no manifest in cwd)', () => {
       expect(url).toBe('http://localhost:7430/api/auth/redeem-invite');
       return new Response(
         JSON.stringify({
-          pat: 'sbp_aaaaaaaa_BCDEFGHIJKLMNOPQRSTUV234567ABCD',
+          pat: 'sbp_aaaaaaaa_BCDEFGHIJKLMNOPQRSTUV234567ABCDEF_3et9xo',
           tokenId: 'aaaaaaaa',
           userId: 'usr_123',
           expiresAt: new Date(Date.now() + 90 * 86_400_000).toISOString(),
@@ -143,7 +143,7 @@ describe('runInitClient — fresh client (no manifest in cwd)', () => {
     const fetchImpl = makeFakeFetch(async () =>
       new Response(
         JSON.stringify({
-          pat: 'sbp_aaaaaaaa_AAAA',
+          pat: 'sbp_aaaaaaaa_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_3i8aJj',
           tokenId: 'aaaaaaaa',
           userId: 'usr_1',
           expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
@@ -163,7 +163,7 @@ describe('runInitClient — fresh client (no manifest in cwd)', () => {
     const fetchImpl = makeFakeFetch(async () =>
       new Response(
         JSON.stringify({
-          pat: 'sbp_bbbbbbbb_BBBB',
+          pat: 'sbp_bbbbbbbb_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb_1JjjEK',
           tokenId: 'bbbbbbbb',
           userId: 'usr_1',
           expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
@@ -213,7 +213,7 @@ describe('runInitClient — with team.json in cwd', () => {
     const fetchImpl = makeFakeFetch(async () =>
       new Response(
         JSON.stringify({
-          pat: 'sbp_aaaaaaaa_AAAA',
+          pat: 'sbp_aaaaaaaa_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_3i8aJj',
           tokenId: 'aaaaaaaa',
           userId: 'usr_1',
           expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
@@ -239,7 +239,7 @@ describe('runInitClient — with team.json in cwd', () => {
     const fetchImpl = makeFakeFetch(async () =>
       new Response(
         JSON.stringify({
-          pat: 'sbp_aaaaaaaa_AAAA',
+          pat: 'sbp_aaaaaaaa_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_3i8aJj',
           tokenId: 'aaaaaaaa',
           userId: 'usr_1',
           expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
@@ -265,7 +265,7 @@ describe('runInitClient — with team.json in cwd', () => {
     const fetchImpl = makeFakeFetch(async () =>
       new Response(
         JSON.stringify({
-          pat: 'sbp_aaaaaaaa_AAAA',
+          pat: 'sbp_aaaaaaaa_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_3i8aJj',
           tokenId: 'aaaaaaaa',
           userId: 'usr_1',
           expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
@@ -301,7 +301,7 @@ describe('runInitClient — keychain failure handling', () => {
     const fetchImpl = makeFakeFetch(async () =>
       new Response(
         JSON.stringify({
-          pat: 'sbp_aaaaaaaa_AAAA',
+          pat: 'sbp_aaaaaaaa_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_3i8aJj',
           tokenId: 'aaaaaaaa',
           userId: 'usr_1',
           expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
@@ -325,7 +325,7 @@ describe('runInitClient — keychain failure handling', () => {
     const fetchImpl = makeFakeFetch(async () =>
       new Response(
         JSON.stringify({
-          pat: 'sbp_aaaaaaaa_AAAA',
+          pat: 'sbp_aaaaaaaa_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_3i8aJj',
           tokenId: 'aaaaaaaa',
           userId: 'usr_1',
           expiresAt: new Date(Date.now() + 86_400_000).toISOString(),

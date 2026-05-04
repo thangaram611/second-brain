@@ -1,3 +1,5 @@
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { z } from 'zod';
 import type { Brain } from '@second-brain/core';
 import { rawRowToEntity } from '@second-brain/core';
@@ -94,6 +96,7 @@ const BashInputSchema = z.object({
 const GrepGlobInputSchema = z.object({
   pattern: z.string().optional(),
   query: z.string().optional(),
+  path: z.string().optional(),
 });
 
 const PromptInputSchema = z.object({
@@ -208,9 +211,14 @@ export class HookContextRouter {
         ? MultiEditInputSchema.safeParse(input.toolInput)
         : ReadEditWriteInputSchema.safeParse(input.toolInput);
     if (!parsed.success) return null;
-    const filePath = pickFilePath(parsed.data);
-    if (!filePath) return null;
-    if (isQuietPath(filePath)) return null;
+    const rawFilePath = pickFilePath(parsed.data);
+    if (!rawFilePath) return null;
+    if (isQuietPath(rawFilePath)) return null;
+
+    // Normalize relative paths against the session cwd. Skip injection entirely
+    // when the path is relative and we have no cwd to anchor it (don't guess).
+    const filePath = normalizePathToCwd(rawFilePath, input.cwd);
+    if (filePath === null) return null;
 
     const matches = findEntitiesBySourceRef(input.brain, input.namespace, filePath);
 
@@ -251,6 +259,26 @@ export class HookContextRouter {
     if (!command) return null;
 
     const firstToken = command.split(/\s+/)[0] ?? '';
+
+    // Try path-shaped commands first (cat, less, head, tail, grep against a file).
+    // If we extract a path arg, normalize it against cwd and look up entities by
+    // source_ref (mirrors routeReadLike).
+    const pathArg = extractBashPathArg(command);
+    if (pathArg !== null && !isQuietPath(pathArg)) {
+      const normalized = normalizePathToCwd(pathArg, input.cwd);
+      if (normalized !== null) {
+        const matches = findEntitiesBySourceRef(input.brain, input.namespace, normalized);
+        if (matches.length > 0) {
+          return renderBlock({
+            heading: `## Context for Bash ${firstToken} ${shortPath(normalized)}`,
+            entities: matches,
+            related: [],
+            collisions: [],
+          });
+        }
+      }
+    }
+
     if (!BASH_TAG_TOOLS.has(firstToken)) return null;
 
     const results = await input.brain.search.searchMulti({
@@ -275,6 +303,15 @@ export class HookContextRouter {
     if (!pattern) return null;
     if (pattern.length < 3) return null; // single-char regex would match anything
 
+    // Optional search root — normalize relative roots against cwd. If a relative
+    // root is given but no cwd is set, skip injection rather than guess.
+    const rawRoot = parsed.data.path;
+    let normalizedRoot: string | null = null;
+    if (typeof rawRoot === 'string' && rawRoot.length > 0) {
+      normalizedRoot = normalizePathToCwd(rawRoot, input.cwd);
+      if (normalizedRoot === null) return null;
+    }
+
     // Inject only if the pattern matches a known entity name. We probe with a
     // FTS search; on hit we surface the result, on miss we stay quiet.
     const results = input.brain.search.search({
@@ -284,8 +321,11 @@ export class HookContextRouter {
     });
     if (results.length === 0) return null;
 
+    const heading = normalizedRoot
+      ? `## Entities matching "${pattern}" under ${shortPath(normalizedRoot)}`
+      : `## Entities matching "${pattern}"`;
     return renderBlock({
-      heading: `## Entities matching "${pattern}"`,
+      heading,
       entities: [],
       related: results,
       collisions: [],
@@ -327,14 +367,209 @@ function symbolFromText(text: string): string | null {
   return match ? match[0] : null;
 }
 
-function isQuietPath(path: string): boolean {
-  return QUIET_PATH_PATTERNS.some((re) => re.test(path));
+function isQuietPath(p: string): boolean {
+  return QUIET_PATH_PATTERNS.some((re) => re.test(p));
 }
 
-function shortPath(path: string): string {
+function shortPath(p: string): string {
   // Keep the trailing 60 chars max so the heading stays readable.
-  if (path.length <= 60) return path;
-  return `…${path.slice(path.length - 59)}`;
+  if (p.length <= 60) return p;
+  return `…${p.slice(p.length - 59)}`;
+}
+
+/**
+ * Normalize a tool-arg path against the session cwd.
+ *
+ * Resolution order:
+ *  - `~/…` or `$HOME/…` → expanded against `os.homedir()` (treated as absolute)
+ *  - Absolute path → returned unchanged
+ *  - Relative path with absolute, non-empty cwd → resolved against cwd
+ *  - Relative path with empty/undefined cwd, OR cwd that is itself not absolute
+ *    (defensive against a misconfigured upstream) → returns `null` (caller
+ *    should skip injection rather than guess at a wrong path)
+ *
+ * Adapter-emitted paths today are absolute, so this is forward-compat plumbing
+ * for future adapters that send relative paths (e.g., a hypothetical Zed
+ * adapter). Plan §6.2.
+ */
+function normalizePathToCwd(filePath: string, cwd: string | undefined): string | null {
+  // Expand `~/` and `$HOME/` against the home dir; the result is absolute.
+  // Bare `~` (no trailing slash) maps to the home dir itself.
+  if (filePath === '~' || filePath.startsWith('~/')) {
+    const home = os.homedir();
+    return filePath === '~' ? home : path.join(home, filePath.slice(2));
+  }
+  if (filePath === '$HOME' || filePath.startsWith('$HOME/')) {
+    const home = os.homedir();
+    return filePath === '$HOME' ? home : path.join(home, filePath.slice('$HOME/'.length));
+  }
+  if (path.isAbsolute(filePath)) return filePath;
+  if (!cwd || cwd.length === 0) return null;
+  // Defensive: a non-absolute cwd cannot anchor anything safely.
+  if (!path.isAbsolute(cwd)) return null;
+  return path.resolve(cwd, filePath);
+}
+
+/**
+ * Extract a path-shaped arg from common shell command shapes — `cat <path>`,
+ * `head -n 5 <path>`, `tail -F <path>`, `less <path>`, `grep PATTERN <path>`.
+ * Returns `null` if no path-shaped arg is found. Best-effort, not a shell parser.
+ *
+ * Heuristic:
+ *  - first token must be a known path-bearing command
+ *  - skip flag tokens (start with `-`); when a flag is in the per-command
+ *    `flagsTakingArg` set, also skip the next token (the flag's value)
+ *  - skip a fixed number of leading positional args (`positionalSkips`) —
+ *    e.g., `grep PATTERN <path>` skips the pattern positional
+ *  - return the next non-flag positional that looks path-like (contains `/`,
+ *    leading `.`, leading `~`, leading `$`, or a `.<ext>` suffix)
+ *  - tokenization is quote-aware so `cat "my file.txt"` produces a single
+ *    `my file.txt` token (and similarly for single quotes / escaped spaces)
+ */
+function extractBashPathArg(command: string): string | null {
+  const tokens = tokenizeShellCommand(command);
+  if (tokens.length < 2) return null;
+  const head = tokens[0];
+  if (!PATH_BEARING_BASH_TOOLS.has(head)) return null;
+
+  const flagsTakingArg = FLAGS_TAKING_ARG[head] ?? EMPTY_FLAG_SET;
+  let positionalSkips = POSITIONAL_SKIPS[head] ?? 0;
+
+  for (let i = 1; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t.startsWith('-')) {
+      // Long-form `--flag=value` carries its value inline — never consumes the
+      // next token. Short or long flags listed in `flagsTakingArg` consume the
+      // immediately following token as their value.
+      if (!t.includes('=') && flagsTakingArg.has(t)) {
+        i++; // skip the flag's value
+      }
+      continue;
+    }
+    if (positionalSkips > 0) {
+      positionalSkips--;
+      continue;
+    }
+    if (looksLikePath(t)) return t;
+    return null;
+  }
+  return null;
+}
+
+const PATH_BEARING_BASH_TOOLS = new Set([
+  'cat',
+  'less',
+  'more',
+  'head',
+  'tail',
+  'grep',
+  'wc',
+  'file',
+]);
+
+const EMPTY_FLAG_SET: ReadonlySet<string> = new Set();
+
+/**
+ * Per-command flags that take a value as the NEXT token (so the tokenizer
+ * needs to skip both). Only includes the common forms that show up in
+ * day-to-day shell use. Long-form `--flag=value` is handled inline (no skip).
+ */
+const FLAGS_TAKING_ARG: Record<string, ReadonlySet<string>> = {
+  head: new Set(['-n', '-c', '--lines', '--bytes']),
+  tail: new Set(['-n', '-c', '--lines', '--bytes']),
+  grep: new Set(['-m', '-A', '-B', '-C', '-e', '-f', '--max-count', '--after-context', '--before-context', '--context', '--regexp', '--file']),
+  less: new Set(['-x', '-y', '-P', '-#']),
+  wc: new Set([]),
+  cat: new Set([]),
+  more: new Set([]),
+  file: new Set(['-f', '-m', '-F', '--separator']),
+};
+
+/** Positional args to skip BEFORE the path positional. `grep PATTERN <path>` → skip 1. */
+const POSITIONAL_SKIPS: Record<string, number> = {
+  grep: 1,
+};
+
+/**
+ * Quote-aware shell tokenizer. Recognizes single-quoted and double-quoted
+ * substrings (no nested escapes inside single quotes; backslash escapes the
+ * next char outside single quotes). Concatenates adjacent quoted/unquoted
+ * fragments into one token (`a"b c"` → `ab c`). Whitespace outside quotes
+ * separates tokens.
+ *
+ * Not a full shell parser — no command substitution, no parameter expansion,
+ * no globbing. Sufficient for the path-extraction heuristic above.
+ */
+function tokenizeShellCommand(command: string): string[] {
+  const tokens: string[] = [];
+  let current = '';
+  let inSingle = false;
+  let inDouble = false;
+  let hasContent = false;
+
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    if (inSingle) {
+      if (ch === "'") {
+        inSingle = false;
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+    if (inDouble) {
+      if (ch === '"') {
+        inDouble = false;
+      } else if (ch === '\\' && i + 1 < command.length) {
+        // Inside double quotes, backslash escapes only $`"\ and newline; for
+        // our purposes pass the next char through.
+        current += command[i + 1];
+        i++;
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+    if (ch === "'") {
+      inSingle = true;
+      hasContent = true;
+      continue;
+    }
+    if (ch === '"') {
+      inDouble = true;
+      hasContent = true;
+      continue;
+    }
+    if (ch === '\\' && i + 1 < command.length) {
+      current += command[i + 1];
+      i++;
+      hasContent = true;
+      continue;
+    }
+    if (ch === ' ' || ch === '\t' || ch === '\n') {
+      if (hasContent) {
+        tokens.push(current);
+        current = '';
+        hasContent = false;
+      }
+      continue;
+    }
+    current += ch;
+    hasContent = true;
+  }
+  if (hasContent) tokens.push(current);
+  return tokens;
+}
+
+function looksLikePath(t: string): boolean {
+  if (t.length === 0) return false;
+  // Anything with a slash, a leading `.`, leading `~`, leading `$`, or a
+  // `.<ext>` suffix is path-shaped.
+  if (t.includes('/')) return true;
+  if (t.startsWith('.')) return true;
+  if (t.startsWith('~')) return true;
+  if (t.startsWith('$')) return true;
+  return /\.[A-Za-z0-9]+$/.test(t);
 }
 
 function findEntitiesBySourceRef(brain: Brain, namespace: string, sourceRef: string): Entity[] {

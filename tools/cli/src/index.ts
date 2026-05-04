@@ -5,6 +5,7 @@ import {
   registerInitResetCommands,
   registerAdminCommand,
   registerDoctorCommand,
+  registerAuthCommand,
 } from './commands/init-reset.js';
 import { registerAddCommand } from './commands/add.js';
 import { registerSearchCommand } from './commands/search.js';
@@ -35,6 +36,7 @@ program
 registerInitResetCommands(program);
 registerAdminCommand(program);
 registerDoctorCommand(program);
+registerAuthCommand(program);
 registerAddCommand(program);
 registerSearchCommand(program);
 registerStatusCommand(program);

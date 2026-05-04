@@ -7,6 +7,7 @@ import {
   readCredentials,
   listCredentials,
   deleteCredentials,
+  patchCredentials,
   credentialsPath,
   credentialsDir,
   type CredentialsRecord,
@@ -113,6 +114,71 @@ describe('listCredentials', () => {
       JSON.stringify(SAMPLE),
     );
     expect(listCredentials(tmp)).toEqual([]);
+  });
+});
+
+describe('patchCredentials', () => {
+  it('preserves unknown forward-compat keys present on disk', () => {
+    // Write a credentials JSON RAW with an extra `_futureField` key alongside
+    // the schema-known keys — simulating an on-disk file written by a future
+    // CLI version that the current CLI's strict schema doesn't know about.
+    const dir = credentialsDir(tmp);
+    fs.mkdirSync(dir, { recursive: true });
+    const onDisk = {
+      ...SAMPLE,
+      _futureField: 'preserve-me',
+      anotherUnknown: { nested: true, count: 42 },
+    };
+    fs.writeFileSync(
+      path.join(dir, 'api.example.com.json'),
+      JSON.stringify(onDisk, null, 2) + '\n',
+    );
+
+    const result = patchCredentials(
+      'api.example.com',
+      { hookTokenId: 'newhookid' },
+      tmp,
+    );
+
+    // The Zod-validated record reflects the slot update.
+    expect(result.record.hookTokenId).toBe('newhookid');
+    expect(result.record.defaultTokenId).toBe(SAMPLE.defaultTokenId);
+
+    // Re-read the raw on-disk JSON and confirm the unknown keys survived.
+    const rawAfter = JSON.parse(
+      fs.readFileSync(path.join(dir, 'api.example.com.json'), 'utf8'),
+    ) as Record<string, unknown>;
+    expect(rawAfter._futureField).toBe('preserve-me');
+    expect(rawAfter.anotherUnknown).toEqual({ nested: true, count: 42 });
+    expect(rawAfter.hookTokenId).toBe('newhookid');
+    expect(rawAfter.cliTokenId).toBe(SAMPLE.cliTokenId);
+  });
+
+  it('throws when no record exists for the host', () => {
+    expect(() =>
+      patchCredentials('absent.example.com', { hookTokenId: 'x' }, tmp),
+    ).toThrow(/no credentials/);
+  });
+
+  it('throws when the merged result fails schema validation', () => {
+    writeCredentials('api.example.com', SAMPLE, tmp);
+    // A patch that violates the schema (empty userId) — the validation guard
+    // catches this before any disk write so the on-disk file is untouched.
+    expect(() =>
+      patchCredentials('api.example.com', { userId: '' }, tmp),
+    ).toThrow(/schema validation/);
+    // On-disk file unchanged.
+    const after = readCredentials('api.example.com', tmp);
+    expect(after).toEqual(SAMPLE);
+  });
+
+  it('throws when the on-disk JSON is malformed (operator-visible failure)', () => {
+    const dir = credentialsDir(tmp);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'api.example.com.json'), '{ broken');
+    expect(() =>
+      patchCredentials('api.example.com', { hookTokenId: 'x' }, tmp),
+    ).toThrow(/not valid JSON/);
   });
 });
 

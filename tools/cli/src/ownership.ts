@@ -12,22 +12,32 @@ export interface OwnershipScore {
 
 export async function runOwnership(options: {
   path: string;
+  /**
+   * Namespace to scope the ownership query to. Required by the server when
+   * the caller's PAT is unbound; ownership-cmd resolves it from the team
+   * manifest / credentials before calling here.
+   */
+  namespace: string;
   limit?: number;
   json?: boolean;
   serverUrl?: string;
   token?: string;
+  /** Test seam — defaults to global `fetch`. */
+  fetchImpl?: typeof fetch;
 }): Promise<void> {
   const { getServerUrl, buildAuthHeaders } = await import('./lib/config.js');
   const serverUrl = getServerUrl(options.serverUrl);
+  const fetchImpl = options.fetchImpl ?? fetch;
 
   const url = new URL(`${serverUrl}/api/query/ownership`);
   url.searchParams.set('path', options.path);
+  url.searchParams.set('namespace', options.namespace);
   if (options.limit !== undefined)
     url.searchParams.set('limit', String(options.limit));
 
   const headers: Record<string, string> = buildAuthHeaders(options.token);
 
-  const res = await fetch(url.toString(), { headers });
+  const res = await fetchImpl(url.toString(), { headers });
   if (!res.ok) {
     const text = await res.text();
     console.error(`Error: ${res.status} — ${text}`);

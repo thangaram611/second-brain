@@ -179,3 +179,43 @@ export function registerDoctorCommand(program: Command): void {
       process.exit(result.exitCode);
     });
 }
+
+export function registerAuthCommand(program: Command): void {
+  const auth = program
+    .command('auth')
+    .description('Authentication helpers (rotate PAT, etc.)');
+
+  auth
+    .command('rotate')
+    .description(
+      'Mint a fresh PAT for the current bearer token, revoke the old one, and update the keychain + credentials slot pointer',
+    )
+    .option(
+      '--slot <slot>',
+      'Force-rotate a specific slot (hook | default | cli). Defaults to whichever slot the resolver chose.',
+    )
+    .option('--server <url>', 'Server URL (overrides BRAIN_API_URL)')
+    .action(async (options: { slot?: string; server?: string }) => {
+      const { runAuthRotate, isCredentialsSlot, AUTH_ROTATE_ENV_FALLBACK_EXIT_CODE } =
+        await import('../auth-rotate.js');
+      try {
+        const slotOpt = options.slot;
+        if (slotOpt !== undefined && !isCredentialsSlot(slotOpt)) {
+          throw new Error(
+            `--slot must be one of hook | default | cli (got ${JSON.stringify(slotOpt)})`,
+          );
+        }
+        // After the guard above, `slotOpt` narrows to CredentialsSlot | undefined.
+        const outcome = await runAuthRotate({
+          slot: slotOpt,
+          serverUrl: options.server,
+        });
+        if (outcome.kind === 'env') {
+          process.exit(AUTH_ROTATE_ENV_FALLBACK_EXIT_CODE);
+        }
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+    });
+}
