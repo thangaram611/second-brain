@@ -10,10 +10,22 @@ import {
   NeighborsQuerySchema,
 } from '../schemas.js';
 import { broadcast } from '../ws/ws-server.js';
-import { requireEntity, deleteEntityWithSync } from './helpers.js';
+import { requireEntity, deleteEntityWithSync, paramString } from './helpers.js';
+import { enforceNamespace, requireScope } from '../middleware/auth.js';
+import type { UsersService } from '../services/users.js';
 
-export function entityRoutes(brain: Brain, syncManager?: SyncManager): Router {
+export interface EntityRoutesOptions {
+  /** Optional users service used by `enforceNamespace` to verify membership. */
+  users?: UsersService | null;
+}
+
+export function entityRoutes(
+  brain: Brain,
+  syncManager?: SyncManager,
+  options: EntityRoutesOptions = {},
+): Router {
   const router = Router();
+  const users = options.users ?? null;
 
   // List entities
   router.get('/api/entities', (req, res) => {
@@ -48,8 +60,9 @@ export function entityRoutes(brain: Brain, syncManager?: SyncManager): Router {
 
   // Get entity by ID (with relations)
   router.get('/api/entities/:id', (req, res) => {
-    const entity = requireEntity(brain, req.params.id, res);
+    const entity = requireEntity(brain, paramString(req.params.id), res);
     if (!entity) return;
+    if (!enforceNamespace(req, res, entity.namespace, users)) return;
 
     brain.entities.touch(entity.id);
     const outbound = brain.relations.getOutbound(entity.id);
@@ -59,8 +72,10 @@ export function entityRoutes(brain: Brain, syncManager?: SyncManager): Router {
   });
 
   // Create entity
-  router.post('/api/entities', (req, res) => {
+  router.post('/api/entities', requireScope('write', 'admin'), (req, res) => {
     const input = CreateEntitySchema.parse(req.body);
+    const targetNs = input.namespace ?? 'default';
+    if (!enforceNamespace(req, res, targetNs, users)) return;
     const entity = brain.entities.create({
       type: input.type as EntityType,
       name: input.name,
@@ -80,9 +95,15 @@ export function entityRoutes(brain: Brain, syncManager?: SyncManager): Router {
   });
 
   // Update entity
-  router.patch('/api/entities/:id', (req, res) => {
+  router.patch('/api/entities/:id', requireScope('write', 'admin'), (req, res) => {
     const patch = UpdateEntitySchema.parse(req.body);
-    const entity = brain.entities.update(req.params.id, patch);
+    const existing = brain.entities.get(paramString(req.params.id));
+    if (!existing) {
+      res.status(404).json({ error: 'Entity not found' });
+      return;
+    }
+    if (!enforceNamespace(req, res, existing.namespace, users)) return;
+    const entity = brain.entities.update(paramString(req.params.id), patch);
     if (!entity) {
       res.status(404).json({ error: 'Entity not found' });
       return;
@@ -96,8 +117,14 @@ export function entityRoutes(brain: Brain, syncManager?: SyncManager): Router {
   });
 
   // Delete entity
-  router.delete('/api/entities/:id', (req, res) => {
-    const deleted = deleteEntityWithSync(req.params.id, brain, syncManager);
+  router.delete('/api/entities/:id', requireScope('write', 'admin'), (req, res) => {
+    const existing = brain.entities.get(paramString(req.params.id));
+    if (!existing) {
+      res.status(404).json({ error: 'Entity not found' });
+      return;
+    }
+    if (!enforceNamespace(req, res, existing.namespace, users)) return;
+    const deleted = deleteEntityWithSync(paramString(req.params.id), brain, syncManager);
     if (!deleted) {
       res.status(404).json({ error: 'Entity not found' });
       return;
@@ -106,9 +133,15 @@ export function entityRoutes(brain: Brain, syncManager?: SyncManager): Router {
   });
 
   // Add observation
-  router.post('/api/entities/:id/observations', (req, res) => {
+  router.post('/api/entities/:id/observations', requireScope('write', 'admin'), (req, res) => {
     const { observation } = ObservationSchema.parse(req.body);
-    const entity = brain.entities.addObservation(req.params.id, observation);
+    const existing = brain.entities.get(paramString(req.params.id));
+    if (!existing) {
+      res.status(404).json({ error: 'Entity not found' });
+      return;
+    }
+    if (!enforceNamespace(req, res, existing.namespace, users)) return;
+    const entity = brain.entities.addObservation(paramString(req.params.id), observation);
     if (!entity) {
       res.status(404).json({ error: 'Entity not found' });
       return;
@@ -122,10 +155,16 @@ export function entityRoutes(brain: Brain, syncManager?: SyncManager): Router {
   });
 
   // Remove observation
-  router.delete('/api/entities/:id/observations', (req, res) => {
+  router.delete('/api/entities/:id/observations', requireScope('write', 'admin'), (req, res) => {
     const { observation } = ObservationSchema.parse(req.body);
+    const existing = brain.entities.get(paramString(req.params.id));
+    if (!existing) {
+      res.status(404).json({ error: 'Entity not found' });
+      return;
+    }
+    if (!enforceNamespace(req, res, existing.namespace, users)) return;
     const entity = brain.entities.removeObservation(
-      req.params.id,
+      paramString(req.params.id),
       observation,
     );
     if (!entity) {
@@ -142,8 +181,9 @@ export function entityRoutes(brain: Brain, syncManager?: SyncManager): Router {
 
   // Get neighbors (graph traversal)
   router.get('/api/entities/:id/neighbors', (req, res) => {
-    const entity = requireEntity(brain, req.params.id, res);
+    const entity = requireEntity(brain, paramString(req.params.id), res);
     if (!entity) return;
+    if (!enforceNamespace(req, res, entity.namespace, users)) return;
 
     const params = NeighborsQuerySchema.parse(req.query);
     const relationTypes = params.relationTypes
@@ -151,7 +191,7 @@ export function entityRoutes(brain: Brain, syncManager?: SyncManager): Router {
       : undefined;
 
     const result = brain.traversal.getNeighbors(
-      req.params.id,
+      paramString(req.params.id),
       params.depth ?? 1,
       relationTypes,
     );

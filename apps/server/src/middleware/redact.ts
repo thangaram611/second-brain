@@ -16,40 +16,52 @@ import { stripPrivateBlocks } from '../services/observation-service.js';
  * Built-in denylist regexes (per plan §B.4).
  * Each entry is `[pattern, replacement]`. The replacement is a fixed
  * `[REDACTED:<kind>]` token — we never preserve the matched secret.
+ *
+ * **MUST stay in sync with `tools/cli/src/lib/redact.ts:DENY_PATTERNS`**.
+ * The patterns match the CLI's case-insensitive `\s*[:=]\s*` form so a
+ * payload that the CLI redacts will be redacted identically here. There is
+ * a sync test in `__tests__/redact.test.ts` that fails if a CLI sample slips
+ * past either layer.
  */
 export const BUILTIN_DENYLIST: Array<readonly [RegExp, string]> = [
   // PEM private keys — block whole bodies (multiline).
   [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[REDACTED:pem]'],
 
-  // Cloud / SaaS specific tokens
-  [/AWS_SECRET_ACCESS_KEY=\S+/g, '[REDACTED:aws]'],
-  [/AWS_ACCESS_KEY_ID=\S+/g, '[REDACTED:aws]'],
+  // ── AWS ────────────────────────────────────────────────────────────────
+  [/AWS_SECRET_ACCESS_KEY\s*[:=]\s*\S+/gi, '[REDACTED:aws]'],
+  [/AWS_ACCESS_KEY_ID\s*[:=]\s*\S+/gi, '[REDACTED:aws]'],
   [/\bAKIA[0-9A-Z]{16}\b/g, '[REDACTED:aws]'],
-  [/GH_TOKEN=\S+/g, '[REDACTED:github]'],
-  [/GITHUB_TOKEN=\S+/g, '[REDACTED:github]'],
+  // ── GitHub ─────────────────────────────────────────────────────────────
+  [/GH_TOKEN\s*[:=]\s*\S+/gi, '[REDACTED:github]'],
+  [/GITHUB_TOKEN\s*[:=]\s*\S+/gi, '[REDACTED:github]'],
   [/\bgh[poursu]_[A-Za-z0-9]{30,}\b/g, '[REDACTED:github]'],
-  [/GITLAB_TOKEN=\S+/g, '[REDACTED:gitlab]'],
+  // ── GitLab ─────────────────────────────────────────────────────────────
+  [/GITLAB_TOKEN\s*[:=]\s*\S+/gi, '[REDACTED:gitlab]'],
   [/\bglpat-[A-Za-z0-9_-]{20,}\b/g, '[REDACTED:gitlab]'],
-  [/OPENAI_API_KEY=\S+/g, '[REDACTED:openai]'],
-  [/ANTHROPIC_API_KEY=\S+/g, '[REDACTED:anthropic]'],
+  // ── Anthropic (must come BEFORE generic OpenAI sk- match) ─────────────
   [/\bsk-ant-[A-Za-z0-9_-]{20,}\b/g, '[REDACTED:anthropic]'],
-  // OpenAI sk-* (excludes sk-ant-)
-  [/\bsk-(?!ant-)[A-Za-z0-9]{20,}\b/g, '[REDACTED:openai]'],
+  [/ANTHROPIC_API_KEY\s*[:=]\s*\S+/gi, '[REDACTED:anthropic]'],
+  // ── OpenAI ─────────────────────────────────────────────────────────────
+  [/\bsk-(?!ant-)[A-Za-z0-9_-]{20,}\b/g, '[REDACTED:openai]'],
+  [/OPENAI_API_KEY\s*[:=]\s*\S+/gi, '[REDACTED:openai]'],
+  // ── Slack ──────────────────────────────────────────────────────────────
   [/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, '[REDACTED:slack]'],
-  [/\bAIza[0-9A-Za-z_-]{35}\b/g, '[REDACTED:google]'],
+  // ── Google ─────────────────────────────────────────────────────────────
+  [/\bAIza[0-9A-Za-z_-]{35,}\b/g, '[REDACTED:google]'],
   [/\bya29\.[A-Za-z0-9_-]{20,}\b/g, '[REDACTED:google]'],
-  [/\bnpm_[A-Za-z0-9]{36}\b/g, '[REDACTED:npm]'],
+  // ── npm ────────────────────────────────────────────────────────────────
+  [/\bnpm_[A-Za-z0-9]{36,}\b/g, '[REDACTED:npm]'],
 
-  // Generic key=value secret shapes (case-insensitive). Order matters: catch
-  // explicit ENV-style assignments first, then the looser key:value form.
-  // The `\S+` is constrained to non-`<>` chars so we don't swallow trailing
-  // markup like `</private>` from already-stripped blocks (defensive — the
-  // private-block stripper runs before us, but tightening keeps callers safe).
-  [/[A-Z_]+_(KEY|SECRET|TOKEN|PASSWORD)=[^\s<>]+/g, '[REDACTED:env-secret]'],
-  // Bearer/api-key/etc. assignment OR space-separated value (covers
-  // `Authorization: Bearer xyz`, `api_key=xyz`, `password: xyz`).
-  [/(?:api[_-]?key|secret|password|token|bearer)\s*[:=]\s*[^\s<>]+/gi, '[REDACTED:generic]'],
+  // Generic credential `key=value` shape (case-insensitive). Order matters:
+  // catch the looser `(api_key|secret|password|token|bearer): value` form
+  // BEFORE the broader `[A-Z_]+_(KEY|SECRET|TOKEN|PASSWORD)=value` shape so
+  // both trigger on the same input.
+  [/(api[_-]?key|secret|password|token|bearer)\s*[:=]\s*\S+/gi, '[REDACTED:generic]'],
+  // HTTP `Authorization: Bearer <token>` (space-separated). Catches the case
+  // where a header is logged verbatim.
   [/\bBearer\s+[A-Za-z0-9._\-+/=]{8,}\b/g, '[REDACTED:bearer]'],
+  // All-caps env-style: `MY_API_KEY=value`, `SOME_SECRET: value`, etc.
+  [/\b[A-Z][A-Z0-9_]*_(KEY|SECRET|TOKEN|PASSWORD)\s*[:=]\s*\S+/g, '[REDACTED:env-secret]'],
 ];
 
 export interface RedactionResult {

@@ -22,6 +22,10 @@ import {
   type WiredReposEntry,
 } from './git-context-daemon.js';
 import { storeSecret } from './keychain.js';
+import {
+  type TeamManifest,
+  loadTeamManifest,
+} from './team-manifest.js';
 
 export interface WireOptions {
   /** Repo root. Defaults to `git rev-parse --show-toplevel` from cwd. */
@@ -486,6 +490,151 @@ async function wireGitHubProvider(
     webhookAlreadyExisted: registration.alreadyExisted,
     relayUrl,
     baseUrl: 'https://api.github.com',
+  };
+}
+
+// ─── PR4 §A — manifest-driven wiring ────────────────────────────────────────
+
+export interface WireFromManifestOptions {
+  /** Repo root containing `.second-brain/team.json`. */
+  repoRoot: string;
+  /** Pre-parsed manifest. If omitted, loaded via `loadTeamManifest(repoRoot)`. */
+  manifest?: TeamManifest;
+  /** Override `brain-hook` binary name. */
+  hookCommand?: string;
+  /** Optional bearer token to embed in git hook scripts (CI use; omit otherwise). */
+  bearerToken?: string;
+  /** When true, skip provider webhook registration regardless of manifest setting. */
+  skipProviderWebhook?: boolean;
+}
+
+export interface WireFromManifestResult {
+  repoRoot: string;
+  namespace: string;
+  installedAssistants: AdapterName[];
+  skippedAssistants: Array<{ name: AdapterName; reason: string }>;
+  installedGitHooks: InstallGitHooksResult | null;
+  providerSkipped: { provider: 'github' | 'gitlab' | null; reason: string } | null;
+  warnings: string[];
+}
+
+/**
+ * Drive `brain wire` from a `.second-brain/team.json` manifest. Idempotent:
+ * re-running on an already-wired repo simply re-installs (each adapter's
+ * install path is a no-op when already present).
+ *
+ * Provider webhook registration is **skipped** when `webhookManagedBy ===
+ * 'admin'` — the team admin owns the webhook lifecycle and members shouldn't
+ * try to re-register. When `webhookManagedBy === 'self'` we honor the existing
+ * `runWire()` provider flow but only when credentials are present in env (we
+ * never prompt from manifest mode).
+ */
+export async function runWireFromManifest(
+  options: WireFromManifestOptions,
+): Promise<WireFromManifestResult> {
+  const repoRoot = path.resolve(options.repoRoot);
+  let manifest: TeamManifest;
+  if (options.manifest) {
+    manifest = options.manifest;
+  } else {
+    const loaded = loadTeamManifest(repoRoot);
+    if (!loaded.ok) {
+      throw new Error(
+        `cannot wire from manifest: ${loaded.reason}${loaded.detail ? ` — ${loaded.detail}` : ''}`,
+      );
+    }
+    manifest = loaded.manifest;
+  }
+
+  const warnings: string[] = [];
+  const namespace = manifest.namespace;
+  const serverUrl = manifest.server.url;
+  const scope = manifest.hooks?.scope ?? 'user';
+  const home = os.homedir();
+
+  // 1. Git hooks — only when listed in manifest.
+  let installedGitHooks: InstallGitHooksResult | null = null;
+  const gitHookList = manifest.hooks?.git ?? [];
+  if (gitHookList.length > 0) {
+    if (!fs.existsSync(path.join(repoRoot, '.git'))) {
+      warnings.push(`skipping git hooks: ${repoRoot} is not a git repo`);
+    } else {
+      installedGitHooks = installGitHooks({
+        repoRoot,
+        serverUrl,
+        bearerToken: options.bearerToken,
+        namespace,
+      });
+    }
+  }
+
+  // 2. Adapter hooks.
+  const installedAssistants: AdapterName[] = [];
+  const skippedAssistants: Array<{ name: AdapterName; reason: string }> = [];
+  for (const name of manifest.hooks?.assistants ?? []) {
+    const adapter = ADAPTERS[name];
+    try {
+      const result = adapter.install({
+        scope,
+        home,
+        cwd: repoRoot,
+        hookCommand: options.hookCommand,
+      });
+      if (result.skipped) {
+        skippedAssistants.push({ name, reason: result.skipped });
+      } else {
+        installedAssistants.push(name);
+      }
+      for (const w of result.warnings) {
+        warnings.push(`${name}: ${w}`);
+      }
+    } catch (err) {
+      // Per-adapter failure → warning, never abort.
+      warnings.push(`${name}: install failed — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // 3. Wired-repos snapshot for `brain doctor` drift detection.
+  const repoHash = computeRepoHash(repoRoot);
+  const wired = loadWiredRepos();
+  wired.wiredRepos[repoHash] = {
+    repoHash,
+    absPath: repoRoot,
+    namespace,
+    installedAt: new Date().toISOString(),
+  };
+  saveWiredRepos(wired);
+
+  // 4. Provider webhook — admin-managed surfaces are NEVER touched here.
+  let providerSkipped: WireFromManifestResult['providerSkipped'] = null;
+  if (!options.skipProviderWebhook) {
+    if (manifest.providers?.github?.webhookManagedBy === 'admin') {
+      providerSkipped = { provider: 'github', reason: 'admin-managed' };
+    } else if (manifest.providers?.gitlab?.webhookManagedBy === 'admin') {
+      providerSkipped = { provider: 'gitlab', reason: 'admin-managed' };
+    }
+    // `self`-managed provider webhooks: members run `brain wire --provider github
+    // --github-token <pat>` explicitly. We deliberately don't auto-register here
+    // because credentials aren't in scope of the manifest, and prompting from a
+    // manifest-driven flow would be surprising.
+  } else {
+    // Honor the explicit skip flag — derive the provider from the manifest so
+    // the result accurately reflects which integration was bypassed (or null
+    // when the manifest doesn't declare a provider at all).
+    let provider: 'github' | 'gitlab' | null = null;
+    if (manifest.providers?.github) provider = 'github';
+    else if (manifest.providers?.gitlab) provider = 'gitlab';
+    providerSkipped = { provider, reason: 'skip-flag' };
+  }
+
+  return {
+    repoRoot,
+    namespace,
+    installedAssistants,
+    skippedAssistants,
+    installedGitHooks,
+    providerSkipped,
+    warnings,
   };
 }
 

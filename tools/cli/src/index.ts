@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import { registerInitResetCommands } from './commands/init-reset.js';
+import {
+  registerInitResetCommands,
+  registerAdminCommand,
+  registerDoctorCommand,
+} from './commands/init-reset.js';
 import { registerAddCommand } from './commands/add.js';
 import { registerSearchCommand } from './commands/search.js';
 import { registerStatusCommand } from './commands/status.js';
@@ -29,6 +33,8 @@ program
   .version('0.1.0');
 
 registerInitResetCommands(program);
+registerAdminCommand(program);
+registerDoctorCommand(program);
 registerAddCommand(program);
 registerSearchCommand(program);
 registerStatusCommand(program);

@@ -23,17 +23,37 @@ export interface AuthedUser {
   id: string;
   email: string;
   role: Role;
+  /** Resolved namespace for THIS request — body/query/params override token default. */
   namespace: string | null;
+  /**
+   * The token's locked namespace, separate from the resolved namespace above.
+   * `null` for unbound tokens (the user's `user_namespaces` rows then govern
+   * which namespaces the request may target).
+   */
+  tokenNamespace: string | null;
   scopes: Scope[];
   authMode: 'pat' | 'session' | 'legacy';
   tokenId: string | null;
   sessionId: string | null;
 }
 
-/** Extended Express Request with attached auth state. */
-export interface RequestWithUser extends Request {
-  user?: AuthedUser;
+/**
+ * Augment the Express Request globally with `user?: AuthedUser`. This keeps
+ * callback parameter typing intact (path params remain `string`) so route
+ * handlers don't need an explicit `RequestWithUser` annotation that would
+ * otherwise widen `req.params` and `req.query`.
+ */
+declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
+  namespace Express {
+    interface Request {
+      user?: AuthedUser;
+    }
+  }
 }
+
+/** Alias kept for back-compat callers that already use `RequestWithUser`. */
+export type RequestWithUser = Request;
 
 export interface AuthMiddlewareOptions {
   /** Auth mode — 'open' is permissive, 'pat' rejects unauth'd /api/* requests. */
@@ -101,6 +121,7 @@ function buildAuthedUserFromToken(
     email: user.email,
     role: user.role,
     namespace: resolvedNamespace,
+    tokenNamespace: record.namespace,
     scopes: record.scopes,
     authMode: 'pat',
     tokenId: record.id,
@@ -108,16 +129,46 @@ function buildAuthedUserFromToken(
   };
 }
 
-function readNamespaceField(value: unknown): string | null {
-  if (value !== null && typeof value === 'object' && 'namespace' in value) {
-    const ns = Reflect.get(value, 'namespace');
-    if (typeof ns === 'string' && ns.length > 0) return ns;
+function readStringField(value: unknown, key: string): string | null {
+  if (value !== null && typeof value === 'object' && key in value) {
+    const v = Reflect.get(value, key);
+    if (typeof v === 'string' && v.length > 0) return v;
   }
   return null;
 }
 
+/**
+ * Collect every namespace surface a request might target. The middleware
+ * must validate the token against ALL of them — otherwise a request like
+ * `{ namespace: 'alpha', project: 'beta' }` would slip past a token bound
+ * to alpha because only the first hit was checked.
+ *
+ * Sources:
+ *   - `body.namespace`   — explicit field on most observe / entity / relation payloads
+ *   - `body.project`     — observe `session-start` uses `project` as the namespace surface
+ *   - `query.namespace`  — read routes carry it as a query parameter
+ *
+ * Order does not matter for security — every value is validated. We return
+ * a deduplicated set so callers don't double-check the common case where
+ * the same value appears in multiple slots.
+ */
+function collectRequestedNamespaces(req: Request): string[] {
+  const out = new Set<string>();
+  const slots: Array<string | null> = [
+    readStringField(req.body, 'namespace'),
+    readStringField(req.body, 'project'),
+    readStringField(req.query, 'namespace'),
+  ];
+  for (const v of slots) {
+    if (v) out.add(v);
+  }
+  return [...out];
+}
+
+/** Returns the first namespace (priority body.namespace → body.project → query) or null. */
 function pickRequestedNamespace(req: Request): string | null {
-  return readNamespaceField(req.body) ?? readNamespaceField(req.query);
+  const all = collectRequestedNamespaces(req);
+  return all.length > 0 ? all[0] : null;
 }
 
 export function createAuthMiddleware(options: AuthMiddlewareOptions) {
@@ -144,12 +195,17 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions) {
           res.status(401).json({ error: 'invalid-token' });
           return;
         }
-        const requested = pickRequestedNamespace(req);
-        if (requested && !tokenScopesAllowNamespace(verified.record, requested, options.users)) {
-          res.status(403).json({ error: 'namespace-mismatch' });
-          return;
+        // Validate the token against EVERY namespace surface in the request,
+        // not just the first one — body can carry both `namespace` and
+        // `project` and we must reject mismatches in either.
+        const allRequested = collectRequestedNamespaces(req);
+        for (const r of allRequested) {
+          if (!tokenScopesAllowNamespace(verified.record, r, options.users)) {
+            res.status(403).json({ error: 'namespace-mismatch' });
+            return;
+          }
         }
-        const ns = verified.record.namespace ?? requested;
+        const ns = verified.record.namespace ?? allRequested[0] ?? null;
         options.users.noteTokenUsed(verified.record.id);
         req.user = buildAuthedUserFromToken(verified.record, verified.user, ns);
         return next();
@@ -165,6 +221,7 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions) {
         email: 'legacy@second-brain.local',
         role: 'admin',
         namespace: pickRequestedNamespace(req),
+        tokenNamespace: null,
         scopes: ['admin'],
         authMode: 'legacy',
         tokenId: null,
@@ -197,11 +254,13 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions) {
             return;
           }
         }
-        const requested = pickRequestedNamespace(req);
-        if (requested && session.namespace !== null && session.namespace !== requested) {
-          if (!options.users.hasNamespaceMembership(session.userId, requested)) {
-            res.status(403).json({ error: 'namespace-mismatch' });
-            return;
+        const allRequested = collectRequestedNamespaces(req);
+        for (const requested of allRequested) {
+          if (session.namespace !== null && session.namespace !== requested) {
+            if (!options.users.hasNamespaceMembership(session.userId, requested)) {
+              res.status(403).json({ error: 'namespace-mismatch' });
+              return;
+            }
           }
         }
         const user = options.users.findUserById(session.userId);
@@ -213,7 +272,8 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions) {
           id: user.id,
           email: user.email,
           role: user.role,
-          namespace: session.namespace ?? requested,
+          namespace: session.namespace ?? allRequested[0] ?? null,
+          tokenNamespace: null,
           scopes: ['read', 'write'],
           authMode: 'session',
           tokenId: null,
@@ -235,11 +295,11 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions) {
 }
 
 export function requireScope(...required: Scope[]) {
-  return function scopeGuard(req: RequestWithUser, res: Response, next: NextFunction): void {
-    if (!req.user) {
-      res.status(401).json({ error: 'unauthorized' });
-      return;
-    }
+  return function scopeGuard(req: Request, res: Response, next: NextFunction): void {
+    // Open mode (no auth middleware mounted, or middleware permitted no-user
+    // request through): treat as permissive — we never enforce scopes when
+    // there's no identity to compare against. This matches `enforceNamespace`.
+    if (!req.user) return next();
     if (req.user.authMode === 'legacy') return next();
     const has = req.user.scopes;
     for (const r of required) {
@@ -249,13 +309,123 @@ export function requireScope(...required: Scope[]) {
   };
 }
 
-export function requireAdmin(req: RequestWithUser, res: Response, next: NextFunction): void {
-  if (!req.user) {
-    res.status(401).json({ error: 'unauthorized' });
-    return;
-  }
+/**
+ * Admin guard — when an identity exists, require it to be admin or legacy.
+ *
+ * Open-mode passthrough (`if (!req.user) return next()`) is safe because:
+ *   - In pat mode the global auth middleware already 401'd on /api/* before
+ *     this guard runs, so a missing `req.user` here means open mode.
+ *   - In open mode the operator has explicitly chosen "no auth" — admin
+ *     endpoints are reachable, matching pre-PR1 behavior. Operators who
+ *     want pat-style guarding should switch to `BRAIN_AUTH_MODE='pat'`
+ *     (or set `BRAIN_AUTH_TOKEN` for legacy bearer protection).
+ */
+export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user) return next();
   if (req.user.role === 'admin' || req.user.authMode === 'legacy') return next();
   res.status(403).json({ error: 'admin-required' });
 }
 
 export const SESSION_COOKIE = SESSION_COOKIE_NAME;
+
+/**
+ * Resolve the namespace that a *query* (search / stats / temporal / parallel
+ * work) should run against. Unlike `enforceNamespace`, this runs BEFORE the
+ * core call rather than after a resource load — for read routes that scan
+ * multiple rows we have no resource to inspect.
+ *
+ * Rules:
+ *   - No `req.user`         → open mode, return `requested` unchanged.
+ *   - `authMode === 'legacy'` → return `requested` unchanged (solo bypass).
+ *   - Token locked (`tokenNamespace !== null`):
+ *       · `requested` matches or omitted → return `tokenNamespace` (forced).
+ *       · `requested` differs            → 403, return null.
+ *   - Unbound token / session (`tokenNamespace === null`):
+ *       · `requested` set → check membership; reject mismatch with 403.
+ *       · `requested` omitted → 400 "namespace-required". Without an
+ *         explicit namespace, returning `undefined` would let the core scan
+ *         every namespace in storage (verified — core APIs treat
+ *         `namespace=undefined` as "no constraint"). Requiring the caller
+ *         to be explicit closes that hole. If you genuinely need to query
+ *         across namespaces, mint multiple namespace-locked tokens or use
+ *         the legacy bearer / open mode.
+ *
+ * The return value is `string | undefined | null`:
+ *   - `string`     → use this namespace
+ *   - `undefined`  → no constraint to apply (open / legacy)
+ *   - `null`       → response already sent (403 or 400); caller must `return`.
+ */
+export function resolveScopedNamespace(
+  req: Request,
+  res: Response,
+  requested: string | undefined,
+  users: UsersService | null | undefined,
+): string | undefined | null {
+  const u = req.user;
+  if (!u) return requested;
+  if (u.authMode === 'legacy') return requested;
+
+  if (u.tokenNamespace !== null) {
+    if (requested && requested !== u.tokenNamespace) {
+      res.status(403).json({ error: 'namespace-mismatch' });
+      return null;
+    }
+    return u.tokenNamespace;
+  }
+
+  // Unbound token / session
+  if (requested) {
+    if (!users) return requested;
+    if (!users.hasNamespaceMembership(u.id, requested)) {
+      res.status(403).json({ error: 'namespace-mismatch' });
+      return null;
+    }
+    return requested;
+  }
+  res.status(400).json({ error: 'namespace-required' });
+  return null;
+}
+
+/**
+ * Per-route namespace authorization. Call this AFTER loading a resource
+ * (entity/relation/sync-room) to assert the request's token/session is
+ * allowed to act on `namespace`. On deny, sends 403 and returns false; on
+ * allow, returns true and the route continues.
+ *
+ * Permissive cases (return true without checking):
+ *   - No `req.user`         — open mode, no auth required
+ *   - `authMode === 'legacy'`— solo / CI master token bypasses scoping
+ *
+ * Strict cases:
+ *   - PAT with locked `tokenNamespace` → must equal `namespace`
+ *   - Otherwise (unbound PAT or session) → must have `user_namespaces` row
+ *     for `namespace` (or `users` is null in tests where membership is
+ *     pre-loaded into req.user; we fall back to `req.user.namespace`).
+ */
+export function enforceNamespace(
+  req: RequestWithUser,
+  res: Response,
+  namespace: string,
+  users: UsersService | null | undefined,
+): boolean {
+  const u = req.user;
+  if (!u) return true;
+  if (u.authMode === 'legacy') return true;
+
+  if (u.tokenNamespace !== null) {
+    if (u.tokenNamespace === namespace) return true;
+    res.status(403).json({ error: 'namespace-mismatch' });
+    return false;
+  }
+
+  if (users) {
+    if (users.hasNamespaceMembership(u.id, namespace)) return true;
+    res.status(403).json({ error: 'namespace-mismatch' });
+    return false;
+  }
+
+  // No users service available — fall back to comparing the resolved namespace.
+  if (u.namespace === null || u.namespace === namespace) return true;
+  res.status(403).json({ error: 'namespace-mismatch' });
+  return false;
+}

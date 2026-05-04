@@ -52,6 +52,8 @@ const DENY_PATTERNS: RegExp[] = [
   /-----BEGIN [A-Z ]+PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+PRIVATE KEY-----/g,
   // ── Generic credential `key=value` shape ────────────────────────────────
   /(api[_-]?key|secret|password|token|bearer)\s*[:=]\s*\S+/gi,
+  // ── HTTP `Authorization: Bearer <token>` (space-separated) ─────────────
+  /\bBearer\s+[A-Za-z0-9._\-+/=]{8,}\b/g,
   // ── All-caps `[A-Z_]+_(KEY|SECRET|TOKEN|PASSWORD)=value` env style ─────
   /\b[A-Z][A-Z0-9_]*_(KEY|SECRET|TOKEN|PASSWORD)\s*[:=]\s*\S+/g,
 ];

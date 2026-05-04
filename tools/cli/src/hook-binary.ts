@@ -30,6 +30,7 @@ import * as os from 'node:os';
 import { appendFileSync } from 'node:fs';
 import { z } from 'zod';
 import { redactRequestBody, isEnvFilePath } from './lib/redact.js';
+import { refreshCursorRules, refreshCopilotInstructions } from './lib/rules-refresh.js';
 
 type HookName =
   | 'session-start'
@@ -375,6 +376,26 @@ export async function runHook(argv: string[], stdin: string, opts: RunOptions = 
         contextBlock,
       });
       if (envelope) process.stdout.write(envelope);
+
+      // Refresh the Cursor/Copilot rules file with the fresh context block on
+      // the events documented as the dependable injection path. Writes are
+      // best-effort: hook never fails the session because of a fs error.
+      // We require an explicit cwd in the payload — falling back to
+      // process.cwd() risks writing into the wrong repo when brain-hook is
+      // launched from a parent terminal session.
+      const cwdValue = typeof rawBody.cwd === 'string' && rawBody.cwd.length > 0
+        ? rawBody.cwd
+        : null;
+      if (cwdValue) {
+        if (adapter === 'cursor' && (hook === 'session-start' || hook === 'session-end')) {
+          const r = refreshCursorRules(cwdValue, contextBlock);
+          if (!r.ok) log(`[${hook}] cursor rules refresh failed: ${r.reason ?? 'unknown'}`);
+        }
+        if (adapter === 'copilot' && (hook === 'session-start' || hook === 'prompt-submit')) {
+          const r = refreshCopilotInstructions(cwdValue, contextBlock);
+          if (!r.ok) log(`[${hook}] copilot instructions refresh failed: ${r.reason ?? 'unknown'}`);
+        }
+      }
     }
 
     return 0;

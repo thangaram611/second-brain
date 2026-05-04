@@ -59,12 +59,12 @@ export function adminRoutes(brain: Brain, authOptions: AdminAuthOptions = {}): R
   const router = Router();
   const now = authOptions.now ?? Date.now;
 
-  router.post('/api/reindex', (_req, res) => {
+  router.post('/api/reindex', requireAdmin, (_req, res) => {
     brain.storage.sqlite.exec("INSERT INTO entities_fts(entities_fts) VALUES('rebuild')");
     res.json({ ok: true });
   });
 
-  router.get('/api/embeddings/status', (_req, res) => {
+  router.get('/api/embeddings/status', requireAdmin, (_req, res) => {
     const rows = brain.storage.sqlite
       .prepare(
         `SELECT
@@ -88,13 +88,13 @@ export function adminRoutes(brain: Brain, authOptions: AdminAuthOptions = {}): R
     });
   });
 
-  router.post('/api/export', (req, res) => {
+  router.post('/api/export', requireAdmin, (req, res) => {
     const opts = ExportGraphSchema.parse(req.body);
     const content = exportFor(brain, opts);
     res.json({ format: opts.format, content });
   });
 
-  router.post('/api/import', (req, res) => {
+  router.post('/api/import', requireAdmin, (req, res) => {
     const opts = ImportGraphSchema.parse(req.body);
     const result = importGraph(brain, opts.content, {
       format: opts.format,
@@ -104,7 +104,7 @@ export function adminRoutes(brain: Brain, authOptions: AdminAuthOptions = {}): R
     res.json(result);
   });
 
-  router.post('/api/rebuild-embeddings', async (req, res) => {
+  router.post('/api/rebuild-embeddings', requireAdmin, async (req, res) => {
     const opts = RebuildEmbeddingsSchema.parse(req.body ?? {});
     let cfg;
     try {
@@ -152,7 +152,7 @@ export function adminRoutes(brain: Brain, authOptions: AdminAuthOptions = {}): R
     }
   });
 
-  router.post('/api/query', async (req, res) => {
+  router.post('/api/query', requireAdmin, async (req, res) => {
     const opts = QueryGraphSchema.parse(req.body);
     let queryText = opts.question;
     let usedLlm = false;
@@ -224,6 +224,39 @@ export function adminRoutes(brain: Brain, authOptions: AdminAuthOptions = {}): R
           createdAt: now(),
         });
         res.status(201).json({ invite: token, jti, expiresAt: expiresAt * 1000 });
+      } catch (err) {
+        next(err);
+      }
+    });
+
+    router.get('/api/admin/tokens', requireAdmin, (req, res, next) => {
+      try {
+        const emailRaw = req.query.email;
+        if (typeof emailRaw !== 'string' || emailRaw.length === 0) {
+          res.status(400).json({ error: 'email-required' });
+          return;
+        }
+        const user = users.findUserByEmail(emailRaw);
+        if (!user) {
+          res.status(404).json({ error: 'user-not-found' });
+          return;
+        }
+        // `users.listTokens` returns `TokenRecord` which by construction omits
+        // the argon2 hash — see services/users.ts. Map to wire shape with
+        // explicit fields so future TokenRecord additions don't accidentally
+        // leak through.
+        const records = users.listTokens(user.id).map((r) => ({
+          id: r.id,
+          userId: r.userId,
+          label: r.label,
+          scopes: r.scopes,
+          namespace: r.namespace,
+          createdAt: r.createdAt,
+          lastUsedAt: r.lastUsedAt,
+          expiresAt: r.expiresAt,
+          revokedAt: r.revokedAt,
+        }));
+        res.json({ tokens: records });
       } catch (err) {
         next(err);
       }

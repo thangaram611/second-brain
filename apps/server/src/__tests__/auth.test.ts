@@ -267,9 +267,59 @@ describe('open mode back-compat', () => {
         legacyBearerToken: null,
       },
     });
-    // /api/auth/whoami still 401s because there's no user; but a no-auth-required
-    // health/route is /health which doesn't use /api/. Use /api/embeddings/status.
     await request(app2).get('/api/embeddings/status').expect(200);
+    brain2.close();
+    users2.close();
+  });
+
+  it('whoami returns 200 with mode=open in open mode (UI back-compat)', async () => {
+    const brain2 = new Brain({ path: ':memory:', wal: false });
+    const users2 = new UsersService({ path: ':memory:' });
+    const app2 = createApp(brain2, {
+      auth: {
+        mode: 'open',
+        users: users2,
+        inviteSigningKey: INVITE_KEY,
+        legacyBearerToken: null,
+      },
+    });
+    const res = await request(app2).get('/api/auth/whoami').expect(200);
+    expect(res.body.mode).toBe('open');
+    expect(res.body.userId).toBeUndefined();
+    brain2.close();
+    users2.close();
+  });
+});
+
+describe('cookie security flags (default secureCookies = true)', () => {
+  it('sets the Secure attribute on session cookie in production-like config', async () => {
+    const brain2 = new Brain({ path: ':memory:', wal: false });
+    const users2 = new UsersService({ path: ':memory:' });
+    // No `secureCookies: false` override — default is `true`.
+    const app2 = createApp(brain2, {
+      auth: {
+        mode: 'pat',
+        users: users2,
+        inviteSigningKey: INVITE_KEY,
+        legacyBearerToken: null,
+      },
+    });
+    const u = users2.createUser({ id: generateUserId(), email: 'secure@u.test', role: 'member' });
+    users2.addNamespaceMembership({ userId: u.id, namespace: 'team', role: 'member' });
+    const minted = await users2.mintPat({
+      userId: u.id,
+      scopes: ['read', 'write'],
+      namespace: 'team',
+    });
+    const res = await request(app2)
+      .post('/api/auth/login')
+      .send({ email: u.email, pat: minted.pat })
+      .expect(200);
+    const setCookie = res.headers['set-cookie'];
+    const cookieStr = Array.isArray(setCookie) ? setCookie.join(';') : String(setCookie);
+    expect(cookieStr).toContain('Secure');
+    expect(cookieStr).toContain('HttpOnly');
+    expect(cookieStr).toContain('SameSite=Lax');
     brain2.close();
     users2.close();
   });

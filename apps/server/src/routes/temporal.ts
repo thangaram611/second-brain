@@ -10,14 +10,30 @@ import {
   TemporalEntityQuerySchema,
 } from '../schemas.js';
 import { broadcast } from '../ws/ws-server.js';
-import { requireRelation } from './helpers.js';
+import { requireRelation, paramString } from './helpers.js';
+import {
+  enforceNamespace,
+  requireScope,
+  resolveScopedNamespace,
+} from '../middleware/auth.js';
+import type { UsersService } from '../services/users.js';
 
-export function temporalRoutes(brain: Brain): Router {
+export interface TemporalRoutesOptions {
+  users?: UsersService | null;
+}
+
+export function temporalRoutes(
+  brain: Brain,
+  options: TemporalRoutesOptions = {},
+): Router {
   const router = Router();
+  const users = options.users ?? null;
 
   // --- Timeline ---
   router.get('/api/timeline', (req, res) => {
     const params = TimelineQuerySchema.parse(req.query);
+    const ns = resolveScopedNamespace(req, res, params.namespace, users);
+    if (ns === null) return;
     const types = params.types
       ? (params.types.split(',').filter(Boolean) as EntityType[])
       : undefined;
@@ -25,7 +41,7 @@ export function temporalRoutes(brain: Brain): Router {
     const entries = brain.temporal.getTimeline({
       from: params.from,
       to: params.to,
-      namespace: params.namespace,
+      namespace: ns,
       types,
       limit: params.limit,
       offset: params.offset,
@@ -37,44 +53,60 @@ export function temporalRoutes(brain: Brain): Router {
   // --- Contradictions ---
   router.get('/api/contradictions', (req, res) => {
     const params = ContradictionsQuerySchema.parse(req.query);
-    const contradictions = brain.contradictions.getUnresolved(params.namespace);
+    const ns = resolveScopedNamespace(req, res, params.namespace, users);
+    if (ns === null) return;
+    const contradictions = brain.contradictions.getUnresolved(ns);
     res.json(contradictions);
   });
 
-  router.post('/api/contradictions/:id/resolve', (req, res) => {
-    const { winnerId } = ResolveContradictionSchema.parse(req.body);
-    const relationId = req.params.id;
+  router.post(
+    '/api/contradictions/:id/resolve',
+    requireScope('write', 'admin'),
+    (req, res) => {
+      const { winnerId } = ResolveContradictionSchema.parse(req.body);
+      const relationId = paramString(req.params.id);
 
-    const relation = requireRelation(brain, relationId, res);
-    if (!relation) return;
+      const relation = requireRelation(brain, relationId, res);
+      if (!relation) return;
+      if (!enforceNamespace(req, res, relation.namespace, users)) return;
 
-    const loserId = relation.sourceId === winnerId ? relation.targetId : relation.sourceId;
+      const loserId = relation.sourceId === winnerId ? relation.targetId : relation.sourceId;
 
-    brain.contradictions.resolve(relationId, winnerId);
+      brain.contradictions.resolve(relationId, winnerId);
 
-    broadcast({ type: 'contradiction:resolved', relationId, winnerId, loserId });
-    res.json({ resolved: true, winnerId, loserId });
-  });
+      broadcast({ type: 'contradiction:resolved', relationId, winnerId, loserId });
+      res.json({ resolved: true, winnerId, loserId });
+    },
+  );
 
-  router.delete('/api/contradictions/:id', (req, res) => {
-    const relationId = req.params.id;
+  router.delete(
+    '/api/contradictions/:id',
+    requireScope('write', 'admin'),
+    (req, res) => {
+      const relationId = paramString(req.params.id);
+      const relation = requireRelation(brain, relationId, res);
+      if (!relation) return;
+      if (!enforceNamespace(req, res, relation.namespace, users)) return;
 
-    brain.contradictions.dismiss(relationId);
+      brain.contradictions.dismiss(relationId);
 
-    broadcast({ type: 'contradiction:dismissed', relationId });
-    res.status(204).end();
-  });
+      broadcast({ type: 'contradiction:dismissed', relationId });
+      res.status(204).end();
+    },
+  );
 
   // --- Stale entities ---
   router.get('/api/stale', (req, res) => {
     const params = StaleQuerySchema.parse(req.query);
+    const ns = resolveScopedNamespace(req, res, params.namespace, users);
+    if (ns === null) return;
     const types = params.types
       ? (params.types.split(',').filter(Boolean) as EntityType[])
       : undefined;
 
     const stale = brain.decay.getStaleEntities({
       threshold: params.threshold,
-      namespace: params.namespace,
+      namespace: ns,
       types,
       limit: params.limit,
       offset: params.offset,
@@ -86,8 +118,10 @@ export function temporalRoutes(brain: Brain): Router {
   // --- Decision log ---
   router.get('/api/decisions', (req, res) => {
     const params = DecisionLogQuerySchema.parse(req.query);
+    const ns = resolveScopedNamespace(req, res, params.namespace, users);
+    if (ns === null) return;
 
-    let decisions = brain.entities.findByType('decision', params.namespace);
+    let decisions = brain.entities.findByType('decision', ns);
 
     // Sort
     const sort = params.sort ?? 'newest';
@@ -110,6 +144,8 @@ export function temporalRoutes(brain: Brain): Router {
   // --- Bitemporal as-of query ---
   router.get('/api/temporal/entities', (req, res) => {
     const params = TemporalEntityQuerySchema.parse(req.query);
+    const ns = resolveScopedNamespace(req, res, params.namespace, users);
+    if (ns === null) return;
     const types = params.types
       ? (params.types.split(',').filter(Boolean) as EntityType[])
       : undefined;
@@ -117,7 +153,7 @@ export function temporalRoutes(brain: Brain): Router {
     const entities = brain.temporal.getEntitiesAsOf({
       asOfEventTime: params.asOfEventTime,
       asOfIngestTime: params.asOfIngestTime,
-      namespace: params.namespace,
+      namespace: ns,
       types,
       limit: params.limit,
       offset: params.offset,

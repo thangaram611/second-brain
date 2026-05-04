@@ -4,6 +4,18 @@ import type { SyncManager } from '@second-brain/sync';
 import type { Entity, Relation } from '@second-brain/types';
 import { broadcast } from '../ws/ws-server.js';
 
+/**
+ * Express 5's type inference widens `req.params[key]` to `string | string[]`
+ * when a middleware sits between `router.METHOD(path, ...)` and the handler.
+ * Path params are always strings at runtime, so we narrow once at the call
+ * site of any route that uses middleware before the handler.
+ */
+export function paramString(value: string | string[] | undefined): string {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value) && value.length > 0 && typeof value[0] === 'string') return value[0];
+  return '';
+}
+
 // --- 8d: require* helpers ------------------------------------------------
 
 /**

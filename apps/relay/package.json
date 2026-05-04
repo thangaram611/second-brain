@@ -10,6 +10,7 @@
   "scripts": {
     "build": "tsdown src/index.ts --format esm --dts",
     "dev": "tsx --watch src/index.ts",
+    "start": "node dist/index.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "check-types": "tsc --noEmit",

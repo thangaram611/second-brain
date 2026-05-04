@@ -243,23 +243,30 @@ describe('auth-store bootstrap()', () => {
     vi.unstubAllGlobals();
   });
 
-  it("in open mode (whoami 200 with no csrfToken) does NOT redirect", async () => {
-    mockFetchOnce(fetchSpy, 200, {
-      userId: 'solo',
-      email: 'solo@local',
-      // no csrfToken — server is in open mode
-    });
+  it('in open mode (whoami 200 with explicit mode:open) does NOT redirect', async () => {
+    mockFetchOnce(fetchSpy, 200, { mode: 'open' });
     window.location.hash = '#/dashboard';
 
     await useAuthStore.getState().bootstrap();
 
     expect(window.location.hash).toBe('#/dashboard'); // no redirect
     expect(useAuthStore.getState().mode).toBe('open');
-    expect(useAuthStore.getState().user?.email).toBe('solo@local');
+    expect(useAuthStore.getState().user).toBeNull(); // no user in open mode stub
     expect(useAuthStore.getState().csrfToken).toBeNull();
   });
 
-  it("in pat mode (whoami 401) redirects to /login", async () => {
+  it('legacy back-compat: whoami 200 with userId+email but no mode falls back to open', async () => {
+    mockFetchOnce(fetchSpy, 200, { userId: 'solo', email: 'solo@local' });
+    window.location.hash = '#/dashboard';
+
+    await useAuthStore.getState().bootstrap();
+
+    expect(window.location.hash).toBe('#/dashboard');
+    expect(useAuthStore.getState().mode).toBe('open');
+    expect(useAuthStore.getState().user?.email).toBe('solo@local');
+  });
+
+  it('in pat mode (whoami 401) redirects to /login', async () => {
     mockFetchOnce(fetchSpy, 401, { error: 'auth required' });
     window.location.hash = '#/dashboard';
 
@@ -268,16 +275,6 @@ describe('auth-store bootstrap()', () => {
     expect(window.location.hash).toBe('#/login');
     expect(useAuthStore.getState().mode).toBe('pat');
     expect(useAuthStore.getState().user).toBeNull();
-  });
-
-  it("recognizes server's 'open' hint in 401 body and does NOT redirect", async () => {
-    mockFetchOnce(fetchSpy, 401, { error: 'open mode — no auth needed' });
-    window.location.hash = '#/dashboard';
-
-    await useAuthStore.getState().bootstrap();
-
-    expect(window.location.hash).toBe('#/dashboard');
-    expect(useAuthStore.getState().mode).toBe('open');
   });
 
   it('whoami calls /api/auth/whoami with credentials: include', async () => {

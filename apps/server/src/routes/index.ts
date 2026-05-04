@@ -68,14 +68,16 @@ export function registerRoutes(
         inviteSigningKey: options.auth.inviteSigningKey,
         now: options.auth.now,
         secureCookies: options.auth.secureCookies,
+        authMode: options.auth.mode,
       }),
     );
   }
 
-  app.use(entityRoutes(brain, syncManager));
-  app.use(relationRoutes(brain, syncManager));
-  app.use(searchRoutes(brain));
-  app.use(temporalRoutes(brain));
+  const usersForAuthz = options.auth?.users ?? null;
+  app.use(entityRoutes(brain, syncManager, { users: usersForAuthz }));
+  app.use(relationRoutes(brain, syncManager, { users: usersForAuthz }));
+  app.use(searchRoutes(brain, { users: usersForAuthz }));
+  app.use(temporalRoutes(brain, { users: usersForAuthz }));
   app.use(
     adminRoutes(brain, {
       users: options.auth?.users,
@@ -84,12 +86,18 @@ export function registerRoutes(
     }),
   );
   if (syncManager) {
-    app.use(syncRoutes(syncManager));
+    app.use(syncRoutes(syncManager, { users: usersForAuthz }));
   }
   if (observations) {
     app.use(observeRoutes(observations, observeOptions));
   }
   if (options.ownership) {
-    app.use(queryRoutes(options.ownership, { ...options.queryOptions, brain }));
+    app.use(
+      queryRoutes(options.ownership, {
+        ...options.queryOptions,
+        brain,
+        users: usersForAuthz,
+      }),
+    );
   }
 }

@@ -4,10 +4,13 @@ import { Router } from 'express';
 import { z } from 'zod';
 import type { Brain } from '@second-brain/core';
 import type { OwnershipService, OwnershipScore } from '../services/ownership-service.js';
+import { resolveScopedNamespace } from '../middleware/auth.js';
+import type { UsersService } from '../services/users.js';
 
 export interface QueryRouteOptions {
   bearerToken?: string;
   brain?: Brain;
+  users?: UsersService | null;
 }
 
 interface OwnershipNode {
@@ -154,9 +157,12 @@ export function queryRoutes(ownership: OwnershipService, options: QueryRouteOpti
         return;
       }
       const query = ParallelWorkQuerySchema.parse(req.query);
+      const users = options.users ?? null;
+      const ns = resolveScopedNamespace(req, res, query.namespace, users);
+      if (ns === null) return;
       const rows = options.brain.findParallelWork({
         branch: query.branch ?? undefined,
-        namespace: query.namespace ?? undefined,
+        namespace: ns ?? undefined,
         limit: query.limit,
       });
       const conflicts = rows.map((row) => ({

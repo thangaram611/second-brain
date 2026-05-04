@@ -107,8 +107,13 @@ const GitEventSchema = z.object({
   timestamp: z.string().optional(),
 });
 
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
 function extractSessionKey(req: Request): string | null {
-  const body = (req.body ?? {}) as Record<string, unknown>;
+  if (!isPlainObject(req.body)) return null;
+  const body = req.body;
   const id = body.sessionId;
   if (typeof id === 'string' && id.length > 0) return id;
   // For non-session routes (file-change, branch-change, git-event) fall back

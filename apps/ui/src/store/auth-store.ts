@@ -22,10 +22,12 @@ export interface AuthUser {
 }
 
 const WhoamiSchema = z.object({
-  userId: z.string(),
-  email: z.string(),
-  // role/namespace may be omitted in 'open' mode — keep them optional and
-  // fall back to sensible defaults rather than failing parse.
+  // Server returns this on every shape — `'open'` for the no-auth solo path,
+  // `'pat'` for the team flow. `userId/email/...` are present only when the
+  // request was authenticated.
+  mode: z.enum(['open', 'pat']).optional(),
+  userId: z.string().optional(),
+  email: z.string().optional(),
   role: z.string().optional(),
   namespace: z.string().optional(),
   csrfToken: z.string().optional(),
@@ -95,23 +97,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       });
 
       if (res.status === 401 || res.status === 403) {
-        // 401 in 'unknown' mode: ask the server what mode we're in. If the
-        // server returned a JSON body that includes a mode hint, honor it;
-        // otherwise assume 'pat' (since open-mode whoami should never 401).
-        let inferredMode: AuthMode = 'pat';
-        const bodyParse = ErrorResponseSchema.safeParse(await res.json().catch(() => ({})));
-        if (bodyParse.success && /open/i.test(bodyParse.data.error)) {
-          inferredMode = 'open';
-        }
+        // The server is in pat-mode and we don't have a session; bounce to
+        // /login. Open-mode whoami is now guaranteed 200 (server side) so any
+        // 401/403 here means we genuinely need to authenticate.
         set({
           csrfToken: null,
           user: null,
-          mode: inferredMode,
+          mode: 'pat',
           bootstrapped: true,
           loading: false,
           error: null,
         });
-        if (inferredMode === 'pat') redirectToLogin();
+        redirectToLogin();
         return;
       }
 
@@ -139,17 +136,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         return;
       }
 
-      // If the response carries a csrfToken we're authed (pat-mode).
-      // If not, the server is in 'open' mode — no auth required, no CSRF.
+      // The server returns `mode: 'open' | 'pat'`. If absent (older builds)
+      // fall back to detecting via csrfToken presence.
       const data = parsed.data;
-      const mode: AuthMode = data.csrfToken ? 'pat' : 'open';
+      const mode: AuthMode = data.mode ?? (data.csrfToken ? 'pat' : 'open');
       set({
         csrfToken: data.csrfToken ?? null,
-        user: {
-          id: data.userId,
-          email: data.email,
-          namespace: data.namespace ?? 'default',
-        },
+        user: data.userId && data.email
+          ? { id: data.userId, email: data.email, namespace: data.namespace ?? 'default' }
+          : null,
         mode,
         relayUrl: data.relayUrl ?? null,
         bootstrapped: true,

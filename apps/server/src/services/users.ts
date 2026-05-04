@@ -83,6 +83,25 @@ export const ARGON2_OPTIONS = {
   parallelism: 4,
 } as const;
 
+/**
+ * Parse an argon2 encoded hash and assert it meets the mint policy:
+ * argon2id, m ≥ 65536, t ≥ 3, p ≥ 4. The prefix shape is
+ * `$argon2id$v=19$m=65536,t=3,p=4$salt$hash`.
+ */
+export function hashMatchesPolicy(hash: string): boolean {
+  const m = /^\$argon2id\$v=\d+\$m=(\d+),t=(\d+),p=(\d+)\$/.exec(hash);
+  if (!m) return false;
+  const memoryCost = Number(m[1]);
+  const timeCost = Number(m[2]);
+  const parallelism = Number(m[3]);
+  if (!Number.isFinite(memoryCost) || !Number.isFinite(timeCost) || !Number.isFinite(parallelism)) return false;
+  return (
+    memoryCost >= ARGON2_OPTIONS.memoryCost &&
+    timeCost >= ARGON2_OPTIONS.timeCost &&
+    parallelism >= ARGON2_OPTIONS.parallelism
+  );
+}
+
 // --- Zod schemas for hardened DB row decoding ------------------------------
 
 const UserRowSchema = z.object({
@@ -188,7 +207,7 @@ export interface SessionRecord {
 const SCOPE_VALUES: readonly Scope[] = ['hook:read', 'read', 'write', 'admin'];
 
 function isScope(value: string): value is Scope {
-  return (SCOPE_VALUES as readonly string[]).includes(value);
+  return value === 'hook:read' || value === 'read' || value === 'write' || value === 'admin';
 }
 
 function parseScopes(raw: string): Scope[] {
@@ -476,6 +495,12 @@ export class UsersService {
     if (record.revokedAt !== null) return null;
     if (record.expiresAt !== null && record.expiresAt <= this.nowFn()) return null;
 
+    // Enforce the argon2id policy at verify time. The argon2 npm library's
+    // verify(digest, password, options?) signature only accepts a `secret`
+    // pepper — algorithm + cost params come from the encoded hash header. We
+    // therefore parse the hash prefix and reject anything weaker than the
+    // mint policy (or non-argon2id) before we even attempt verification.
+    if (!hashMatchesPolicy(hash)) return null;
     let ok = false;
     try {
       ok = await argon2.verify(hash, parsed.secret);

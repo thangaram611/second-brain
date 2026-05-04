@@ -19,7 +19,7 @@ import { Router, type Response } from 'express';
 import { z } from 'zod';
 import { verifyInvite } from '../lib/invite.js';
 import type { UsersService, Scope } from '../services/users.js';
-import { SESSION_COOKIE, type RequestWithUser } from '../middleware/auth.js';
+import { SESSION_COOKIE, type RequestWithUser, type AuthMode } from '../middleware/auth.js';
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const PAT_TTL_MS = 90 * 24 * 60 * 60 * 1000;    // 90 days
@@ -35,6 +35,13 @@ export interface AuthRoutesOptions {
   now?: () => number;
   /** Whether to set the `Secure` cookie attribute. Default true; tests pass false. */
   secureCookies?: boolean;
+  /**
+   * Auth mode the server is configured with. `whoami` uses this to keep the
+   * solo (`open`) UI back-compat: in open mode, an unauth'd `GET /api/auth/whoami`
+   * returns 200 with `{ mode: "open" }` instead of 401, so the React bootstrap
+   * doesn't bounce solo users to /login.
+   */
+  authMode?: AuthMode;
 }
 
 function setSessionCookie(res: Response, sessionId: string, expiresAt: number, secure: boolean): void {
@@ -62,6 +69,7 @@ export function authRoutes(options: AuthRoutesOptions): Router {
   const { users, inviteSigningKey } = options;
   const now = options.now ?? Date.now;
   const secureCookies = options.secureCookies !== false;
+  const authMode: AuthMode = options.authMode ?? 'pat';
 
   router.post('/api/auth/redeem-invite', async (req, res, next) => {
     try {
@@ -188,6 +196,14 @@ export function authRoutes(options: AuthRoutesOptions): Router {
 
   router.get('/api/auth/whoami', (req: RequestWithUser, res) => {
     if (!req.user) {
+      // In open mode (solo back-compat) return a 200 stub so the UI bootstrap
+      // can detect the mode without bouncing to /login. In pat mode return 401
+      // — the auth middleware would have already 401'd at /api/* but whoami is
+      // mounted alongside it and we don't want the body to leak user info.
+      if (authMode === 'open') {
+        res.json({ mode: 'open' });
+        return;
+      }
       res.status(401).json({ error: 'unauthorized' });
       return;
     }
@@ -195,6 +211,7 @@ export function authRoutes(options: AuthRoutesOptions): Router {
       ? users.getSession(req.user.sessionId)?.csrfToken ?? undefined
       : undefined;
     res.json({
+      mode: authMode,
       userId: req.user.id,
       email: req.user.email,
       role: req.user.role,

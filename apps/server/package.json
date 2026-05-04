@@ -5,6 +5,16 @@
   "type": "module",
   "main": "./dist/index.mjs",
   "types": "./dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    },
+    "./services/users": {
+      "types": "./src/services/users.ts",
+      "import": "./src/services/users.ts"
+    }
+  },
   "scripts": {
     "build": "tsdown src/index.ts --format esm --dts",
     "dev": "tsx --watch src/index.ts",

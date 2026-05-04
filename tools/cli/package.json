@@ -39,9 +39,12 @@
     "@second-brain/core": "workspace:*",
     "@second-brain/collectors": "workspace:*",
     "@second-brain/ingestion": "workspace:*",
+    "@second-brain/server": "workspace:*",
     "@second-brain/types": "workspace:*",
     "@noble/ciphers": "^1.2.0",
     "@noble/hashes": "^1.7.0",
+    "argon2": "^0.44.0",
+    "better-sqlite3": "^12.0.0",
     "commander": "^14.0.3",
     "proper-lockfile": "^4.1.2",
     "zod": "^4.3.6"

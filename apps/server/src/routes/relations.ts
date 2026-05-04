@@ -4,13 +4,24 @@ import type { SyncManager } from '@second-brain/sync';
 import type { RelationType } from '@second-brain/types';
 import { CreateRelationSchema } from '../schemas.js';
 import { broadcast } from '../ws/ws-server.js';
-import { requireRelation, deleteRelationWithSync } from './helpers.js';
+import { requireRelation, deleteRelationWithSync, paramString } from './helpers.js';
+import { enforceNamespace, requireScope } from '../middleware/auth.js';
+import type { UsersService } from '../services/users.js';
 
-export function relationRoutes(brain: Brain, syncManager?: SyncManager): Router {
+export interface RelationRoutesOptions {
+  users?: UsersService | null;
+}
+
+export function relationRoutes(
+  brain: Brain,
+  syncManager?: SyncManager,
+  options: RelationRoutesOptions = {},
+): Router {
   const router = Router();
+  const users = options.users ?? null;
 
   // Create relation
-  router.post('/api/relations', (req, res) => {
+  router.post('/api/relations', requireScope('write', 'admin'), (req, res) => {
     const input = CreateRelationSchema.parse(req.body);
 
     // Validate both entities exist
@@ -24,6 +35,14 @@ export function relationRoutes(brain: Brain, syncManager?: SyncManager): Router 
       res.status(400).json({ error: `Target entity ${input.targetId} not found` });
       return;
     }
+
+    // Token must be allowed in BOTH endpoint namespaces (and the requested
+    // relation namespace, which the schema validator already constrained
+    // to default-or-explicit).
+    const targetNs = input.namespace ?? source.namespace;
+    if (!enforceNamespace(req, res, source.namespace, users)) return;
+    if (!enforceNamespace(req, res, target.namespace, users)) return;
+    if (!enforceNamespace(req, res, targetNs, users)) return;
 
     const relation = brain.relations.create({
       type: input.type as RelationType,
@@ -46,14 +65,21 @@ export function relationRoutes(brain: Brain, syncManager?: SyncManager): Router 
 
   // Get relation by ID
   router.get('/api/relations/:id', (req, res) => {
-    const relation = requireRelation(brain, req.params.id, res);
+    const relation = requireRelation(brain, paramString(req.params.id), res);
     if (!relation) return;
+    if (!enforceNamespace(req, res, relation.namespace, users)) return;
     res.json(relation);
   });
 
   // Delete relation
-  router.delete('/api/relations/:id', (req, res) => {
-    const deleted = deleteRelationWithSync(req.params.id, brain, syncManager);
+  router.delete('/api/relations/:id', requireScope('write', 'admin'), (req, res) => {
+    const existing = brain.relations.get(paramString(req.params.id));
+    if (!existing) {
+      res.status(404).json({ error: 'Relation not found' });
+      return;
+    }
+    if (!enforceNamespace(req, res, existing.namespace, users)) return;
+    const deleted = deleteRelationWithSync(paramString(req.params.id), brain, syncManager);
     if (!deleted) {
       res.status(404).json({ error: 'Relation not found' });
       return;
