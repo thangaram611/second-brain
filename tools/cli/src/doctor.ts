@@ -11,7 +11,7 @@ import * as os from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { listCredentials, type CredentialsRecord } from './credentials.js';
-import { readSecret } from './keychain.js';
+import { readSecret, loadKeytar } from './keychain.js';
 import { loadTeamManifest, hashTeamManifest } from './team-manifest.js';
 import { loadWiredRepos, computeRepoHash } from './git-context-daemon.js';
 
@@ -371,6 +371,64 @@ function checkGitHooks(ctx: RepoCheckCtx): CheckResult {
   };
 }
 
+// ABI probe — load native modules and surface a fix hint on mismatch.
+// nvm/fnm switches after install leave better-sqlite3's prebuilt binary
+// compiled against the wrong NODE_MODULE_VERSION; keytar lacking a build/
+// directory shows up as a runtime import failure. Both are recoverable
+// via `pnpm rebuild-native` (or `pnpm install --force`).
+async function checkBetterSqlite3Abi(): Promise<CheckResult> {
+  try {
+    const { default: Database } = await import('better-sqlite3');
+    const db = new Database(':memory:');
+    db.close();
+    return {
+      name: 'native module ABI (better-sqlite3)',
+      status: 'pass',
+      message: 'loaded + in-memory DB opened OK.',
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes('NODE_MODULE_VERSION')) {
+      return {
+        name: 'native module ABI (better-sqlite3)',
+        status: 'fail',
+        message:
+          'NODE_MODULE_VERSION mismatch — run `pnpm rebuild-native` or `pnpm install --force`.',
+      };
+    }
+    return {
+      name: 'native module load (better-sqlite3)',
+      status: 'fail',
+      message,
+    };
+  }
+}
+
+async function checkKeytarAbi(): Promise<CheckResult> {
+  const state = await loadKeytar();
+  if ('keytar' in state) {
+    return {
+      name: 'native module ABI (keytar)',
+      status: 'pass',
+      message: 'loaded OK.',
+    };
+  }
+  // module-missing only — runtime-error is T4 territory and reported elsewhere.
+  if (state.message.includes('NODE_MODULE_VERSION')) {
+    return {
+      name: 'native module ABI (keytar)',
+      status: 'fail',
+      message:
+        'NODE_MODULE_VERSION mismatch — run `pnpm rebuild-native` or `pnpm install --force`.',
+    };
+  }
+  return {
+    name: 'native module ABI (keytar)',
+    status: 'warn',
+    message: `keytar not loadable (${state.message}); keychain features unavailable.`,
+  };
+}
+
 export async function runDoctor(opts: DoctorOptions = {}): Promise<DoctorResult> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const homeDir = opts.homeDir ?? os.homedir();
@@ -378,6 +436,11 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<DoctorResult>
   const stdout = opts.stdout ?? process.stdout;
 
   const checks: CheckResult[] = [];
+
+  // Native-module ABI probes run first — a NODE_MODULE_VERSION mismatch
+  // makes the per-host checks below useless, so surface the fix hint up top.
+  checks.push(await checkBetterSqlite3Abi());
+  checks.push(await checkKeytarAbi());
 
   // Per-host checks (one set per credentials record).
   const hosts = listCredentials(homeDir);

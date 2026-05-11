@@ -10,7 +10,8 @@
     "test": "turbo test",
     "lint": "turbo lint",
     "check-types": "turbo check-types",
-    "clean": "turbo clean"
+    "clean": "turbo clean",
+    "rebuild-native": "pnpm rebuild -r better-sqlite3 keytar argon2"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",

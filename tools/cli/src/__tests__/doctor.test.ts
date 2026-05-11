@@ -1,7 +1,25 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+
+// The doctor's native-module ABI probe loads `better-sqlite3` via dynamic
+// `import()`. Mock it once at the module level so every test gets a healthy
+// stub by default — keeps the existing assertions independent of whatever
+// ABI the host machine's prebuilt binary actually targets. The ABI-probe
+// suite below overrides this with `vi.doMock` + `vi.resetModules()` to
+// exercise the failure paths.
+vi.mock('better-sqlite3', () => ({
+  default: class FakeDatabase {
+    constructor(_path: string) {
+      /* no-op */
+    }
+    close(): void {
+      /* no-op */
+    }
+  },
+}));
+
 import { runDoctor } from '../doctor.js';
 import { writeCredentials } from '../credentials.js';
 import { setKeychainTestOverride, resetKeychainCache } from '../keychain.js';
@@ -356,6 +374,90 @@ describe('runDoctor — manifest drift', () => {
     const written = JSON.parse(fs.readFileSync(snapshotPath, 'utf8'));
     expect(written.version).toBe(1);
     expect(written.hashes).toBeDefined();
+  });
+});
+
+describe('runDoctor — native module ABI probe', () => {
+  // The probes load `better-sqlite3` via dynamic `import()`. To keep these
+  // tests independent of whatever Node ABI the host's prebuilt binary
+  // targets, every case uses `vi.doMock('better-sqlite3', ...)` to inject a
+  // deterministic factory before re-importing the doctor module.
+  afterEach(() => {
+    vi.doUnmock('better-sqlite3');
+    vi.resetModules();
+  });
+
+  it('passes when better-sqlite3 mock loads + opens an in-memory DB', async () => {
+    // Uses the module-level `vi.mock('better-sqlite3')` stub.
+    const result = await runDoctor({
+      homeDir: homeOverride,
+      cwd: repoRoot,
+      stdout: sinkStdout,
+      fetchImpl: fakeFetch(async () => new Response('', { status: 200 })),
+    });
+    const probe = result.checks.find((c) => c.name === 'native module ABI (better-sqlite3)');
+    expect(probe?.status).toBe('pass');
+  });
+
+  it('emits the rebuild hint on a NODE_MODULE_VERSION mismatch', async () => {
+    // Real ABI mismatch throws on `require(...)` of the .node file, which
+    // surfaces during `new Database(...)` because better-sqlite3 lazy-loads
+    // its native binding via `bindings()` in the Database constructor.
+    // Simulate that: import succeeds, construction throws. Avoids cascading
+    // failure into unrelated workspace packages that also import the module.
+    vi.resetModules();
+    vi.doMock('better-sqlite3', () => ({
+      default: class FakeDatabase {
+        constructor(_path: string) {
+          throw new Error(
+            "The module '/x/node_modules/better-sqlite3/build/Release/better_sqlite3.node' " +
+              'was compiled against a different Node.js version using NODE_MODULE_VERSION 141. ' +
+              'This version of Node.js requires NODE_MODULE_VERSION 127.',
+          );
+        }
+        close(): void {
+          /* unreachable */
+        }
+      },
+    }));
+    const { runDoctor: freshRunDoctor } = await import('../doctor.js');
+    const result = await freshRunDoctor({
+      homeDir: homeOverride,
+      cwd: repoRoot,
+      stdout: sinkStdout,
+      fetchImpl: fakeFetch(async () => new Response('', { status: 200 })),
+    });
+    const probe = result.checks.find((c) => c.name === 'native module ABI (better-sqlite3)');
+    expect(probe?.status).toBe('fail');
+    expect(probe?.message).toContain('NODE_MODULE_VERSION mismatch');
+    expect(probe?.message).toContain('pnpm rebuild-native');
+    expect(result.exitCode).toBe(1);
+    expect(stdoutBuf).toContain('pnpm rebuild-native');
+  });
+
+  it('emits a generic load failure when better-sqlite3 throws an unrelated error', async () => {
+    vi.resetModules();
+    vi.doMock('better-sqlite3', () => ({
+      default: class FakeDatabase {
+        constructor(_path: string) {
+          throw new Error('libsqlite3.so: cannot open shared object file');
+        }
+        close(): void {
+          /* unreachable */
+        }
+      },
+    }));
+    const { runDoctor: freshRunDoctor } = await import('../doctor.js');
+    const result = await freshRunDoctor({
+      homeDir: homeOverride,
+      cwd: repoRoot,
+      stdout: sinkStdout,
+      fetchImpl: fakeFetch(async () => new Response('', { status: 200 })),
+    });
+    const probe = result.checks.find((c) => c.name === 'native module load (better-sqlite3)');
+    expect(probe?.status).toBe('fail');
+    expect(probe?.message).toContain('libsqlite3.so');
+    expect(result.exitCode).toBe(1);
   });
 });
 

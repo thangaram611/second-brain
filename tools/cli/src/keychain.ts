@@ -43,7 +43,7 @@ interface KeytarLike {
 
 let cached: { keytar: KeytarLike } | KeychainUnavailable | null = null;
 
-async function loadKeytar(): Promise<{ keytar: KeytarLike } | KeychainUnavailable> {
+export async function loadKeytar(): Promise<{ keytar: KeytarLike } | KeychainUnavailable> {
   if (cached !== null) return cached;
   try {
     const mod = await import('keytar');

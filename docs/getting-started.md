@@ -737,6 +737,13 @@ ollama pull llama3.2                  # Chat model
 ollama pull nomic-embed-text          # Embedding model
 ```
 
+### Native module ABI mismatch after switching Node versions
+
+If `brain init` or `brain doctor` reports `NODE_MODULE_VERSION` mismatch,
+rebuild native bindings:
+
+    pnpm rebuild-native
+
 ### `brain query` returns no results
 
 1. **Check if data exists:** Run `brain status` to verify entities exist
