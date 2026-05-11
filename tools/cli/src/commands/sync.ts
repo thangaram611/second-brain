@@ -1,6 +1,6 @@
 import type { Command } from 'commander';
 import * as os from 'node:os';
-import { getServerUrl } from '../lib/config.js';
+import { getServerUrl, buildAuthHeadersAsync } from '../lib/config.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -108,9 +108,13 @@ export function registerSyncCommand(program: Command): void {
         const { token } = tokenBody;
 
         // Step 2: Tell the server to join sync
+        const joinHeaders = {
+          ...(await buildAuthHeadersAsync()),
+          'Content-Type': 'application/json',
+        };
         const joinRes = await fetch(`${SERVER_URL}/api/sync/join`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: joinHeaders,
           body: JSON.stringify({
             namespace: options.namespace,
             relayUrl: options.relay,
@@ -146,7 +150,10 @@ export function registerSyncCommand(program: Command): void {
     .description('Show sync status for all synced namespaces')
     .action(async () => {
       try {
-        const res = await fetch(`${SERVER_URL}/api/sync/status`);
+        const statusHeaders = await buildAuthHeadersAsync();
+        const res = await fetch(`${SERVER_URL}/api/sync/status`, {
+          headers: statusHeaders,
+        });
         if (!res.ok) {
           console.error('Failed to fetch sync status. Is the server running?');
           process.exit(1);
@@ -191,9 +198,13 @@ export function registerSyncCommand(program: Command): void {
     .requiredOption('--namespace <namespace>', 'Namespace to stop syncing')
     .action(async (options: { namespace: string }) => {
       try {
+        const leaveHeaders = {
+          ...(await buildAuthHeadersAsync()),
+          'Content-Type': 'application/json',
+        };
         const res = await fetch(`${SERVER_URL}/api/sync/leave`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: leaveHeaders,
           body: JSON.stringify({ namespace: options.namespace }),
         });
 
