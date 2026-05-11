@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { runInitClient } from '../init-client.js';
 import { setKeychainTestOverride, resetKeychainCache } from '../keychain.js';
+import { setMacKeychainProbeForTest, resetMacKeychainProbeCache } from '../probe-mac-keychain.js';
 import { readCredentials } from '../credentials.js';
 import type { TeamManifest } from '../team-manifest.js';
 
@@ -31,6 +32,11 @@ beforeEach(() => {
   });
   process.env.BRAIN_API_URL = 'http://localhost:7430';
   delete process.env.BRAIN_AUTH_TOKEN;
+  // Pre-set the macOS probe to "healthy" so opt-in tests reach the
+  // keytar stub deterministically; tests that want the probe-fail path
+  // call setMacKeychainProbeForTest(false) explicitly.
+  resetMacKeychainProbeCache();
+  setMacKeychainProbeForTest(true);
 });
 
 afterEach(() => {
@@ -39,6 +45,8 @@ afterEach(() => {
   process.env = { ...ORIG_ENV };
   setKeychainTestOverride(null);
   resetKeychainCache();
+  setMacKeychainProbeForTest(null);
+  resetMacKeychainProbeCache();
 });
 
 function makeInvite(opts?: {
@@ -95,6 +103,9 @@ describe('runInitClient — fresh client (no manifest in cwd)', () => {
     expect(result.host).toBe('localhost:7430');
     expect(result.namespace).toBe('team-x');
     expect(result.tokenId).toBe('aaaaaaaa');
+    // beforeEach pre-sets the macOS probe to "healthy" and wires a working
+    // keytar stub, so the dispatcher routes through the keychain on
+    // every platform here. The probe-fail path is asserted below.
     expect(result.patStored).toBe('keychain');
     expect(result.wiredRepoRoot).toBeNull();
 
@@ -290,15 +301,7 @@ describe('runInitClient — with team.json in cwd', () => {
   });
 });
 
-describe('runInitClient — keychain failure handling', () => {
-  beforeEach(() => {
-    delete process.env.SECOND_BRAIN_REQUIRE_KEYCHAIN;
-  });
-
-  afterEach(() => {
-    delete process.env.SECOND_BRAIN_REQUIRE_KEYCHAIN;
-  });
-
+describe('runInitClient — storage backend auto-selection', () => {
   function makeRedeemFetch(): typeof fetch {
     return makeFakeFetch(async () =>
       new Response(
@@ -313,8 +316,9 @@ describe('runInitClient — keychain failure handling', () => {
     );
   }
 
-  it('stores in keychain when storeSecret succeeds — no warning, no plaintext', async () => {
-    // The outer beforeEach already wires an in-memory keytar stub.
+  it('healthy probe + working keytar: stores in keychain silently', async () => {
+    // beforeEach already pre-sets the probe to healthy and wires a
+    // working keytar stub.
     const invite = makeInvite();
     const result = await runInitClient({
       invite,
@@ -329,7 +333,43 @@ describe('runInitClient — keychain failure handling', () => {
     expect(stdoutBuf).not.toContain('sbp_aaaaaaaa');
   });
 
-  it('module-missing auto-falls back to plaintext with a "not available" warning', async () => {
+  it('probe-fail (broken keychain on darwin): silently falls back to file', async () => {
+    if (process.platform !== 'darwin') return; // probe is darwin-only
+    setMacKeychainProbeForTest(false);
+    const invite = makeInvite();
+    const result = await runInitClient({
+      invite,
+      fetchImpl: makeRedeemFetch(),
+      homeDir: tmp,
+      cwd: repo,
+      stdout: sinkStdout,
+      nonInteractive: true,
+    });
+    expect(result.patStored).toBe('file');
+    expect(result.patStorageWarning).toBeNull();
+    expect(stdoutBuf).not.toContain('sbp_aaaaaaaa');
+  });
+
+  it('keytar runtime error: silently falls back to file', async () => {
+    setKeychainTestOverride({
+      setPassword: async () => { throw new Error('libsecret missing'); },
+      getPassword: async () => null,
+      deletePassword: async () => false,
+    });
+    const invite = makeInvite();
+    const result = await runInitClient({
+      invite,
+      fetchImpl: makeRedeemFetch(),
+      homeDir: tmp,
+      cwd: repo,
+      stdout: sinkStdout,
+      nonInteractive: true,
+    });
+    expect(result.patStored).toBe('file');
+    expect(result.patStorageWarning).toBeNull();
+  });
+
+  it('module-missing: silently falls back to file', async () => {
     setKeychainTestOverride({
       ok: false,
       reason: 'module-missing',
@@ -344,49 +384,7 @@ describe('runInitClient — keychain failure handling', () => {
       stdout: sinkStdout,
       nonInteractive: true,
     });
-    expect(result.patStored).toBe('plaintext');
-    expect(result.patStorageWarning).toMatch(/not available on this host/);
-    expect(stdoutBuf).toContain('sbp_aaaaaaaa');
-  });
-
-  it('runtime-error without REQUIRE_KEYCHAIN falls back to plaintext with a "runtime error" warning', async () => {
-    setKeychainTestOverride({
-      ok: false,
-      reason: 'runtime-error',
-      message: 'libsecret missing',
-    });
-    const invite = makeInvite();
-    const result = await runInitClient({
-      invite,
-      fetchImpl: makeRedeemFetch(),
-      homeDir: tmp,
-      cwd: repo,
-      stdout: sinkStdout,
-      nonInteractive: true,
-    });
-    expect(result.patStored).toBe('plaintext');
-    expect(result.patStorageWarning).toMatch(/runtime error/);
-    expect(result.patStorageWarning).toMatch(/SECOND_BRAIN_REQUIRE_KEYCHAIN=1/);
-    expect(stdoutBuf).toContain('sbp_aaaaaaaa');
-  });
-
-  it('runtime-error WITH SECOND_BRAIN_REQUIRE_KEYCHAIN=1 throws — refuses plaintext fallback', async () => {
-    process.env.SECOND_BRAIN_REQUIRE_KEYCHAIN = '1';
-    setKeychainTestOverride({
-      ok: false,
-      reason: 'runtime-error',
-      message: 'libsecret missing',
-    });
-    const invite = makeInvite();
-    await expect(
-      runInitClient({
-        invite,
-        fetchImpl: makeRedeemFetch(),
-        homeDir: tmp,
-        cwd: repo,
-        stdout: sinkStdout,
-        nonInteractive: true,
-      }),
-    ).rejects.toThrow(/refusing plaintext fallback/);
+    expect(result.patStored).toBe('file');
+    expect(result.patStorageWarning).toBeNull();
   });
 });

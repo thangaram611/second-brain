@@ -5,15 +5,18 @@
  *   1. Decode invite client-side (HMAC verify is server-side; we just
  *      sanity-check the shape + expiry for early UX).
  *   2. POST /api/auth/redeem-invite — receive { pat, tokenId, userId, expiresAt }.
- *   3. Store PAT in keychain at `pat:<host>:<tokenId>`. Fallback policy:
- *      `module-missing` (keytar absent) → auto-fall back to plaintext;
- *      `runtime-error` (keytar present but threw) → fall back UNLESS
- *      `SECOND_BRAIN_REQUIRE_KEYCHAIN=1`, in which case we hard-fail.
+ *   3. Store PAT at `pat:<host>:<tokenId>`. Storage backend is picked
+ *      automatically: macOS probes the login keychain once per process
+ *      (non-interactively, via `security list-keychains`); healthy →
+ *      keychain, otherwise → 0600 file under
+ *      `~/.second-brain/credentials/secrets/`. Linux / Windows default
+ *      to the OS keychain with file fallback when the native binding is
+ *      missing.
  *   4. Write `~/.second-brain/credentials/<host>.json` (mode 0600).
  *   5. If cwd is inside a repo with `.second-brain/team.json`, prompt to wire.
  *      `--non-interactive` skips the prompt.
- *   6. Print summary; PAT is shown ONLY if keychain storage failed AND
- *      we fell back to plaintext.
+ *   6. Print summary; the PAT is shown one-time only if the operator may
+ *      need it for an env-var export.
  */
 
 import * as fs from 'node:fs';
@@ -85,7 +88,7 @@ export interface InitClientResult {
   userId: string;
   tokenId: string;
   pat: string;
-  patStored: 'keychain' | 'plaintext';
+  patStored: 'keychain' | 'file';
   patStorageWarning: string | null;
   credentialsPath: string;
   wiredRepoRoot: string | null;
@@ -224,32 +227,18 @@ export async function runInitClient(opts: InitClientOptions): Promise<InitClient
   }
   const redeemed: RedeemResponse = parsed.data;
 
-  // 4. Store PAT in keychain — policy split on failure reason.
-  //    `module-missing`  → never had keychain; auto-fall back, no security regression.
-  //    `runtime-error`   → keychain present but refused. Fall back unless
-  //                        SECOND_BRAIN_REQUIRE_KEYCHAIN=1 forces strict mode.
+  // 4. Store the PAT. The dispatcher in `keychain.ts` auto-picks keychain
+  //    vs 0600 file (probe-based on macOS; module-availability based on
+  //    Linux/Windows) and always succeeds via the file fallback.
   const account = patAccount(host, redeemed.tokenId);
   const stored = await storeSecret(account, redeemed.pat);
-  let patStored: 'keychain' | 'plaintext';
-  let patStorageWarning: string | null = null;
+  let patStored: 'keychain' | 'file';
   if (stored.ok) {
-    patStored = 'keychain';
-  } else if (stored.reason === 'module-missing') {
-    patStored = 'plaintext';
-    patStorageWarning = `keychain not available on this host (${stored.message}); PAT stored 0600 at credentials file.`;
+    patStored = stored.backend;
   } else {
-    if (process.env.SECOND_BRAIN_REQUIRE_KEYCHAIN === '1') {
-      throw new Error(
-        `keychain runtime error (${stored.message}); ` +
-          `SECOND_BRAIN_REQUIRE_KEYCHAIN=1 — refusing plaintext fallback. ` +
-          `Fix the keychain (e.g., unlock login keychain on macOS) and retry.`,
-      );
-    }
-    patStored = 'plaintext';
-    patStorageWarning =
-      `keychain runtime error (${stored.message}); PAT stored 0600 as plaintext. ` +
-      `Set SECOND_BRAIN_REQUIRE_KEYCHAIN=1 to require keychain in strict environments.`;
+    throw new Error(`secret storage failed: ${stored.message}`);
   }
+  const patStorageWarning: string | null = null;
 
   // 5. Write credentials pointer file.
   const { path: credentialsPath } = writeCredentials(
@@ -302,10 +291,6 @@ export async function runInitClient(opts: InitClientOptions): Promise<InitClient
     `  PAT storage:    ${patStored}`,
   ];
   if (patStorageWarning) lines.push(`  warn:           ${patStorageWarning}`);
-  if (patStored === 'plaintext') {
-    lines.push(`  PAT (one-time): ${redeemed.pat}`);
-    lines.push(`     — keychain failed; export BRAIN_AUTH_TOKEN with this value.`);
-  }
   lines.push(`  credentials:    ${credentialsPath}`);
   lines.push(`  PAT expiry:     ${redeemed.expiresAt}`);
   if (wiredRepoRoot) {

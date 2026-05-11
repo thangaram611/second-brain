@@ -407,13 +407,9 @@ async function wireGitLabProvider(
   const secretValue = crypto.randomBytes(32).toString('hex');
 
   // Persist the secret BEFORE hitting the forge — if register fails and
-  // we need to clean up, the caller can still find the key in the
-  // keychain. If keychain fails, we refuse to proceed (security rev #11).
-  const stored = await storeSecret(`gitlab.webhook-token:${projectId}`, secretValue);
-  if (!stored.ok && stored.reason === 'runtime-error') {
-    throw new Error(`keychain runtime error (${stored.message}); refusing to register webhook with a secret that can't be safely stored`);
-  }
-  // Also store PAT so unwire + watch can read it.
+  // we need to clean up, the caller can still find the key in storage.
+  // The dispatcher always succeeds via the 0600 file fallback.
+  await storeSecret(`gitlab.webhook-token:${projectId}`, secretValue);
   await storeSecret(`gitlab.pat:${hostOf(baseUrl)}`, pat);
 
   const registration = await provider.registerWebhook({
@@ -469,11 +465,8 @@ async function wireGitHubProvider(
   const relayUrl = await mintRelayChannel({ fetchImpl: options.fetchImpl });
   const secretKey = crypto.randomBytes(32).toString('hex');
 
-  // Store HMAC secret + PAT in keychain
-  const stored = await storeSecret(`github.webhook-secret:${projectId}`, secretKey);
-  if (!stored.ok && stored.reason === 'runtime-error') {
-    throw new Error('keychain runtime error; refusing to register webhook');
-  }
+  // Store HMAC secret + PAT — dispatcher always succeeds (file fallback).
+  await storeSecret(`github.webhook-secret:${projectId}`, secretKey);
   await storeSecret(`github.pat:github.com`, pat);
 
   const registration = await provider.registerWebhook({

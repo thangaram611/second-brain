@@ -269,14 +269,7 @@ export async function runAuthRotate(opts: AuthRotateOptions = {}): Promise<AuthR
   // tokenId (printed on error) — losing only the local bookkeeping, not
   // the secret itself.
   const newAccount = patAccount(host, minted.tokenId);
-  const stored = await storeSecret(newAccount, minted.pat);
-  if (!stored.ok) {
-    throw new Error(
-      `keychain unavailable while storing new token: ${stored.message}. ` +
-        `Server-side rotation already happened; the new PAT is: ${minted.pat} ` +
-        `(token id ${minted.tokenId}, expires ${minted.expiresAt}).`,
-    );
-  }
+  await storeSecret(newAccount, minted.pat);
 
   // Patch the credentials file. patchCredentials() reads the existing
   // record, applies the slot-pointer update, and atomically rewrites — so

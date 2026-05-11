@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import { runAuthRotate, AUTH_ROTATE_ENV_FALLBACK_EXIT_CODE } from '../auth-rotate.js';
 import { resolveToken, resetTokenCache } from '../lib/resolve-token.js';
 import { setKeychainTestOverride, resetKeychainCache } from '../keychain.js';
+import { setMacKeychainProbeForTest, resetMacKeychainProbeCache } from '../probe-mac-keychain.js';
 import { writeCredentials, readCredentials, type CredentialsRecord } from '../credentials.js';
 
 const ORIG_ENV = { ...process.env };
@@ -54,6 +55,11 @@ beforeEach(() => {
   stderrBuf = '';
   resetKeychainCache();
   resetTokenCache();
+  resetMacKeychainProbeCache();
+  // These tests exercise the keychain backend path — pre-pass the macOS
+  // probe so the dispatcher routes through the injected fake keychain
+  // instead of the file-store fallback.
+  setMacKeychainProbeForTest(true);
   installFakeKeychain();
   process.env.BRAIN_API_URL = 'http://server.test';
   delete process.env.BRAIN_AUTH_TOKEN;
@@ -63,7 +69,9 @@ afterEach(() => {
   fs.rmSync(tmp, { recursive: true, force: true });
   process.env = { ...ORIG_ENV };
   setKeychainTestOverride(null);
+  setMacKeychainProbeForTest(null);
   resetKeychainCache();
+  resetMacKeychainProbeCache();
   resetTokenCache();
 });
 
