@@ -2,7 +2,15 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import Database from 'better-sqlite3';
+import { z } from 'zod';
 import { runInitServer, renderSystemdUnit, renderLaunchdPlist } from '../init-server.js';
+
+const MembershipRowSchema = z.object({
+  user_id: z.string(),
+  namespace: z.string(),
+  role: z.string(),
+});
 
 let tmp: string;
 let stdoutBuf: string;
@@ -72,6 +80,59 @@ describe('runInitServer (Linux/systemd)', () => {
 
     // Output mentions the PAT once.
     expect(stdoutBuf).toContain(result.adminPat);
+  });
+
+  it('with --namespace: inserts a user_namespaces row for the admin', async () => {
+    const result = await runInitServer({
+      platform: 'linux',
+      namespace: 'acme',
+      storageDir: tmpPath('storage'),
+      secretsPath: tmpPath('etc/second-brain/secrets.env'),
+      serviceFilePath: tmpPath('etc/systemd/system/second-brain-server.service'),
+      adminEmail: 'admin@example.com',
+      stdout: sinkStdout,
+    });
+
+    const db = new Database(result.usersDbPath, { readonly: true });
+    try {
+      const rows = db
+        .prepare('SELECT user_id, namespace, role FROM user_namespaces')
+        .all()
+        .map((r) => MembershipRowSchema.parse(r));
+      expect(rows).toHaveLength(1);
+      const adminUser = db
+        .prepare('SELECT id FROM users WHERE email = ?')
+        .get('admin@example.com');
+      const adminId = z.object({ id: z.string() }).parse(adminUser).id;
+      expect(rows[0]).toEqual({ user_id: adminId, namespace: 'acme', role: 'admin' });
+    } finally {
+      db.close();
+    }
+
+    // Next-steps hint substitutes the actual namespace.
+    expect(stdoutBuf).toContain('brain admin invite --namespace acme --role member');
+  });
+
+  it('without --namespace: leaves user_namespaces empty (no NULL row)', async () => {
+    const result = await runInitServer({
+      platform: 'linux',
+      storageDir: tmpPath('storage'),
+      secretsPath: tmpPath('etc/second-brain/secrets.env'),
+      serviceFilePath: tmpPath('etc/systemd/system/second-brain-server.service'),
+      adminEmail: 'admin@example.com',
+      stdout: sinkStdout,
+    });
+
+    const db = new Database(result.usersDbPath, { readonly: true });
+    try {
+      const rows = db.prepare('SELECT user_id, namespace, role FROM user_namespaces').all();
+      expect(rows).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+
+    // Hint falls back to the placeholder when --namespace is omitted.
+    expect(stdoutBuf).toContain('brain admin invite --namespace <team>');
   });
 
   it('refuses re-run without --force (idempotency guard)', async () => {

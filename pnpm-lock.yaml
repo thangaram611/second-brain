@@ -450,6 +450,9 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.13
+        version: 7.6.13
       '@types/proper-lockfile':
         specifier: ^4.1.4
         version: 4.1.4

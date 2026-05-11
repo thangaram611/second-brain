@@ -53,6 +53,7 @@
     "keytar": "^7.9.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/proper-lockfile": "^4.1.4",
     "tsdown": "^0.21.0",
     "tsx": "^4.19.0",

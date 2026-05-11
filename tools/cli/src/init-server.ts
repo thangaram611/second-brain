@@ -392,6 +392,16 @@ export async function runInitServer(options: InitServerOptions = {}): Promise<In
 
   // 3. Bootstrap admin user (idempotent — upserts by email).
   const adminUser = usersSvc.upsertUser({ email: adminEmail, role: 'admin' });
+  // Guard the membership write — without `if`, an init call that omits
+  // `--namespace` would write a NULL into user_namespaces.namespace and
+  // poison every later hasNamespaceMembership() check for that user.
+  if (options.namespace) {
+    usersSvc.addNamespaceMembership({
+      userId: adminUser.id,
+      namespace: options.namespace,
+      role: 'admin',
+    });
+  }
   // Admin gets a NULL-namespace token by default — reaches every namespace.
   const expiresAt = Date.now() + ttlMs;
   const minted = await usersSvc.mintPat({
@@ -479,7 +489,7 @@ export async function runInitServer(options: InitServerOptions = {}): Promise<In
     '',
     '  Next:',
     '    export BRAIN_AUTH_TOKEN=' + minted.pat,
-    '    brain admin invite --namespace <team> --role member --ttl 24h',
+    `    brain admin invite --namespace ${options.namespace ?? '<team>'} --role member --ttl 24h`,
     '',
   );
   stdout.write(lines.join('\n'));
