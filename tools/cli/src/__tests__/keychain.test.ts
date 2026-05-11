@@ -27,13 +27,13 @@ function inMemoryKeytar() {
 
 beforeEach(() => {
   resetKeychainCache();
-  delete process.env.SECOND_BRAIN_ALLOW_PLAINTEXT_PAT;
+  delete process.env.SECOND_BRAIN_REQUIRE_KEYCHAIN;
   delete process.env.TEST_SECRET_ENV;
 });
 
 afterEach(() => {
   setKeychainTestOverride(null);
-  delete process.env.SECOND_BRAIN_ALLOW_PLAINTEXT_PAT;
+  delete process.env.SECOND_BRAIN_REQUIRE_KEYCHAIN;
   delete process.env.TEST_SECRET_ENV;
 });
 
@@ -70,13 +70,14 @@ describe('keychain helpers', () => {
     expect(resolved.unavailable?.reason).toBe('module-missing');
   });
 
-  it('runtime-error refuses env-var fallback without SECOND_BRAIN_ALLOW_PLAINTEXT_PAT=1', async () => {
+  it('runtime-error refuses env-var fallback when SECOND_BRAIN_REQUIRE_KEYCHAIN=1', async () => {
     setKeychainTestOverride({
       ok: false,
       reason: 'runtime-error',
       message: 'keychain is locked',
     });
     process.env.TEST_SECRET_ENV = 'from-env';
+    process.env.SECOND_BRAIN_REQUIRE_KEYCHAIN = '1';
 
     const resolved = await resolveSecret('gitlab.pat:whatever', 'TEST_SECRET_ENV');
     expect(resolved.value).toBeNull();
@@ -84,14 +85,13 @@ describe('keychain helpers', () => {
     expect(resolved.unavailable?.reason).toBe('runtime-error');
   });
 
-  it('runtime-error with opt-in env=1 accepts env-var fallback', async () => {
+  it('runtime-error without REQUIRE_KEYCHAIN accepts env-var fallback with warning', async () => {
     setKeychainTestOverride({
       ok: false,
       reason: 'runtime-error',
       message: 'keychain is locked',
     });
     process.env.TEST_SECRET_ENV = 'from-env';
-    process.env.SECOND_BRAIN_ALLOW_PLAINTEXT_PAT = '1';
 
     const resolved = await resolveSecret('gitlab.pat:whatever', 'TEST_SECRET_ENV');
     expect(resolved.value).toBe('from-env');

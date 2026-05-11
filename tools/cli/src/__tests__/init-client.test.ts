@@ -291,38 +291,16 @@ describe('runInitClient — with team.json in cwd', () => {
 });
 
 describe('runInitClient — keychain failure handling', () => {
-  it('throws when keychain fails AND plaintext fallback is not enabled', async () => {
-    setKeychainTestOverride({
-      ok: false,
-      reason: 'runtime-error',
-      message: 'libsecret missing',
-    });
-    const invite = makeInvite();
-    const fetchImpl = makeFakeFetch(async () =>
-      new Response(
-        JSON.stringify({
-          pat: 'sbp_aaaaaaaa_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_3i8aJj',
-          tokenId: 'aaaaaaaa',
-          userId: 'usr_1',
-          expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
-        }),
-        { status: 201 },
-      ),
-    );
-    await expect(
-      runInitClient({ invite, fetchImpl, homeDir: tmp, cwd: repo, stdout: sinkStdout }),
-    ).rejects.toThrow(/keychain unavailable/);
+  beforeEach(() => {
+    delete process.env.SECOND_BRAIN_REQUIRE_KEYCHAIN;
   });
 
-  it('falls back to plaintext when SECOND_BRAIN_ALLOW_PLAINTEXT_PAT=1 is set', async () => {
-    process.env.SECOND_BRAIN_ALLOW_PLAINTEXT_PAT = '1';
-    setKeychainTestOverride({
-      ok: false,
-      reason: 'runtime-error',
-      message: 'libsecret missing',
-    });
-    const invite = makeInvite();
-    const fetchImpl = makeFakeFetch(async () =>
+  afterEach(() => {
+    delete process.env.SECOND_BRAIN_REQUIRE_KEYCHAIN;
+  });
+
+  function makeRedeemFetch(): typeof fetch {
+    return makeFakeFetch(async () =>
       new Response(
         JSON.stringify({
           pat: 'sbp_aaaaaaaa_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_3i8aJj',
@@ -333,15 +311,82 @@ describe('runInitClient — keychain failure handling', () => {
         { status: 201 },
       ),
     );
+  }
+
+  it('stores in keychain when storeSecret succeeds — no warning, no plaintext', async () => {
+    // The outer beforeEach already wires an in-memory keytar stub.
+    const invite = makeInvite();
     const result = await runInitClient({
       invite,
-      fetchImpl,
+      fetchImpl: makeRedeemFetch(),
+      homeDir: tmp,
+      cwd: repo,
+      stdout: sinkStdout,
+      nonInteractive: true,
+    });
+    expect(result.patStored).toBe('keychain');
+    expect(result.patStorageWarning).toBeNull();
+    expect(stdoutBuf).not.toContain('sbp_aaaaaaaa');
+  });
+
+  it('module-missing auto-falls back to plaintext with a "not available" warning', async () => {
+    setKeychainTestOverride({
+      ok: false,
+      reason: 'module-missing',
+      message: 'keytar not installed',
+    });
+    const invite = makeInvite();
+    const result = await runInitClient({
+      invite,
+      fetchImpl: makeRedeemFetch(),
       homeDir: tmp,
       cwd: repo,
       stdout: sinkStdout,
       nonInteractive: true,
     });
     expect(result.patStored).toBe('plaintext');
+    expect(result.patStorageWarning).toMatch(/not available on this host/);
     expect(stdoutBuf).toContain('sbp_aaaaaaaa');
+  });
+
+  it('runtime-error without REQUIRE_KEYCHAIN falls back to plaintext with a "runtime error" warning', async () => {
+    setKeychainTestOverride({
+      ok: false,
+      reason: 'runtime-error',
+      message: 'libsecret missing',
+    });
+    const invite = makeInvite();
+    const result = await runInitClient({
+      invite,
+      fetchImpl: makeRedeemFetch(),
+      homeDir: tmp,
+      cwd: repo,
+      stdout: sinkStdout,
+      nonInteractive: true,
+    });
+    expect(result.patStored).toBe('plaintext');
+    expect(result.patStorageWarning).toMatch(/runtime error/);
+    expect(result.patStorageWarning).toMatch(/SECOND_BRAIN_REQUIRE_KEYCHAIN=1/);
+    expect(stdoutBuf).toContain('sbp_aaaaaaaa');
+  });
+
+  it('runtime-error WITH SECOND_BRAIN_REQUIRE_KEYCHAIN=1 throws — refuses plaintext fallback', async () => {
+    process.env.SECOND_BRAIN_REQUIRE_KEYCHAIN = '1';
+    setKeychainTestOverride({
+      ok: false,
+      reason: 'runtime-error',
+      message: 'libsecret missing',
+    });
+    const invite = makeInvite();
+    await expect(
+      runInitClient({
+        invite,
+        fetchImpl: makeRedeemFetch(),
+        homeDir: tmp,
+        cwd: repo,
+        stdout: sinkStdout,
+        nonInteractive: true,
+      }),
+    ).rejects.toThrow(/refusing plaintext fallback/);
   });
 });

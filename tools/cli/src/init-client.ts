@@ -5,13 +5,15 @@
  *   1. Decode invite client-side (HMAC verify is server-side; we just
  *      sanity-check the shape + expiry for early UX).
  *   2. POST /api/auth/redeem-invite — receive { pat, tokenId, userId, expiresAt }.
- *   3. Store PAT in keychain at `pat:<host>:<tokenId>`. Plaintext fallback
- *      requires `SECOND_BRAIN_ALLOW_PLAINTEXT_PAT=1`.
+ *   3. Store PAT in keychain at `pat:<host>:<tokenId>`. Fallback policy:
+ *      `module-missing` (keytar absent) → auto-fall back to plaintext;
+ *      `runtime-error` (keytar present but threw) → fall back UNLESS
+ *      `SECOND_BRAIN_REQUIRE_KEYCHAIN=1`, in which case we hard-fail.
  *   4. Write `~/.second-brain/credentials/<host>.json` (mode 0600).
  *   5. If cwd is inside a repo with `.second-brain/team.json`, prompt to wire.
  *      `--non-interactive` skips the prompt.
  *   6. Print summary; PAT is shown ONLY if keychain storage failed AND
- *      plaintext fallback was opted into.
+ *      we fell back to plaintext.
  */
 
 import * as fs from 'node:fs';
@@ -222,26 +224,31 @@ export async function runInitClient(opts: InitClientOptions): Promise<InitClient
   }
   const redeemed: RedeemResponse = parsed.data;
 
-  // 4. Store PAT in keychain — fall back to plaintext only when explicitly opted in.
+  // 4. Store PAT in keychain — policy split on failure reason.
+  //    `module-missing`  → never had keychain; auto-fall back, no security regression.
+  //    `runtime-error`   → keychain present but refused. Fall back unless
+  //                        SECOND_BRAIN_REQUIRE_KEYCHAIN=1 forces strict mode.
   const account = patAccount(host, redeemed.tokenId);
   const stored = await storeSecret(account, redeemed.pat);
   let patStored: 'keychain' | 'plaintext';
   let patStorageWarning: string | null = null;
   if (stored.ok) {
     patStored = 'keychain';
+  } else if (stored.reason === 'module-missing') {
+    patStored = 'plaintext';
+    patStorageWarning = `keychain not available on this host (${stored.message}); PAT stored 0600 at credentials file.`;
   } else {
-    // `stored` is structurally narrowed to KeychainUnavailable here — the
-    // discriminated union exits the `ok: true` branch above.
-    if (process.env.SECOND_BRAIN_ALLOW_PLAINTEXT_PAT === '1') {
-      patStored = 'plaintext';
-      patStorageWarning = `keychain unavailable (${stored.message}); using BRAIN_AUTH_TOKEN env fallback only.`;
-    } else {
+    if (process.env.SECOND_BRAIN_REQUIRE_KEYCHAIN === '1') {
       throw new Error(
-        `keychain unavailable (${stored.message}); ` +
-          `re-run with SECOND_BRAIN_ALLOW_PLAINTEXT_PAT=1 to fall back to env-var, ` +
-          `or fix the keychain (e.g., install libsecret on Linux) and try again.`,
+        `keychain runtime error (${stored.message}); ` +
+          `SECOND_BRAIN_REQUIRE_KEYCHAIN=1 — refusing plaintext fallback. ` +
+          `Fix the keychain (e.g., unlock login keychain on macOS) and retry.`,
       );
     }
+    patStored = 'plaintext';
+    patStorageWarning =
+      `keychain runtime error (${stored.message}); PAT stored 0600 as plaintext. ` +
+      `Set SECOND_BRAIN_REQUIRE_KEYCHAIN=1 to require keychain in strict environments.`;
   }
 
   // 5. Write credentials pointer file.

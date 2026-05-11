@@ -5,13 +5,15 @@
  *
  * Two failure modes are handled distinctly (plan revision #11):
  *   — `keytar` module not installed → `KeychainUnavailable { reason:
- *     'module-missing' }`. The caller's env-var fallback is expected
- *     and logged at `info` level.
+ *     'module-missing' }`. No security surface ever existed on this
+ *     host; the caller's env-var fallback is taken automatically.
  *   — `keytar` installed but throws at runtime (libsecret missing on
  *     Linux, macOS keychain locked, user denied the prompt) →
- *     `KeychainUnavailable { reason: 'runtime-error', cause }`. This
- *     is a real security downgrade; `brain wire` refuses to fall back
- *     unless `SECOND_BRAIN_ALLOW_PLAINTEXT_PAT=1` is set.
+ *     `KeychainUnavailable { reason: 'runtime-error', cause }`. The
+ *     user expected encrypted storage, so silent fallback is a real
+ *     security downgrade. Callers fall back ONLY when
+ *     `SECOND_BRAIN_REQUIRE_KEYCHAIN` is NOT `'1'`; setting it to `'1'`
+ *     forces a hard failure on strict hosts (CI / shared boxes).
  *
  * The module exports three primitives — `storeSecret`, `readSecret`,
  * `deleteSecret` — each returning a discriminated `KeychainResult`.
@@ -133,9 +135,13 @@ export async function deleteSecret(account: string): Promise<KeychainResult<bool
 
 /**
  * Resolve a secret from keychain, falling back to the named env var if
- * keychain is unavailable. Honors `SECOND_BRAIN_ALLOW_PLAINTEXT_PAT=1`
- * for the `runtime-error` downgrade path — if keytar installed but
- * failed, callers must explicitly opt in.
+ * keychain is unavailable. Policy split by `reason`:
+ *   — `module-missing` → env-var fallback is taken automatically; no
+ *     security surface ever existed on this host.
+ *   — `runtime-error` → keytar was installed but threw. If
+ *     `SECOND_BRAIN_REQUIRE_KEYCHAIN === '1'` we refuse env fallback
+ *     (`{ value: null, … }`); otherwise we surface the env value with
+ *     `unavailable` populated so callers can warn.
  *
  * Returns `{ value, source: 'keychain' | 'env' | null }` plus the
  * original `KeychainUnavailable` (if any) so callers can surface it.
@@ -156,7 +162,7 @@ export async function resolveSecret(
   if (envValue === undefined) {
     return { value: null, source: null, unavailable: res };
   }
-  if (res.reason === 'runtime-error' && process.env.SECOND_BRAIN_ALLOW_PLAINTEXT_PAT !== '1') {
+  if (res.reason === 'runtime-error' && process.env.SECOND_BRAIN_REQUIRE_KEYCHAIN === '1') {
     return { value: null, source: null, unavailable: res };
   }
   return { value: envValue, source: 'env', unavailable: res };

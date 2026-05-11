@@ -693,7 +693,7 @@ All environment variables with their defaults and descriptions.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ENABLE_CLAUDE_MEM_INGEST` | `false` | Enable claude-mem co-ingestion |
-| `SECOND_BRAIN_ALLOW_PLAINTEXT_PAT` | — | Set to `1` to allow plaintext PAT storage |
+| `SECOND_BRAIN_REQUIRE_KEYCHAIN` | — | Set to `1` to hard-fail `brain init client` on keychain runtime errors instead of falling back to a 0600 plaintext credentials file. Module-missing hosts (headless Linux without `libsecret`) always fall back. |
 | `SERVE_UI` | `false` | Serve UI static files from relay |
 
 ### Logging
