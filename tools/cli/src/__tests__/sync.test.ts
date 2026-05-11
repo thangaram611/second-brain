@@ -50,10 +50,11 @@ function getHeader(init: RequestInit, name: string): string | undefined {
     }
     return undefined;
   }
-  // Plain object.
-  for (const key of Object.keys(headers)) {
+  // Plain object: read via a Record<string, unknown> view, then narrow with typeof.
+  const record: Record<string, unknown> = { ...headers };
+  for (const key of Object.keys(record)) {
     if (key.toLowerCase() === name.toLowerCase()) {
-      const value = (headers as Record<string, string>)[key];
+      const value = record[key];
       return typeof value === 'string' ? value : undefined;
     }
   }
@@ -78,9 +79,10 @@ beforeEach(() => {
   captured = [];
   logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
   errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-  exitSpy = vi.spyOn(process, 'exit').mockImplementation(((_code?: number) => {
+  const exitImpl: (code?: number | string | null | undefined) => never = () => {
     throw new Error('process.exit');
-  }) as never);
+  };
+  exitSpy = vi.spyOn(process, 'exit').mockImplementation(exitImpl);
 });
 
 afterEach(() => {
