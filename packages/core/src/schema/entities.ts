@@ -66,5 +66,6 @@ export const embeddings = sqliteTable('embeddings', {
     .references(() => entities.id, { onDelete: 'cascade' }),
   vector: blob('vector'),
   model: text('model').notNull(),
+  contentHash: text('content_hash'),
   createdAt: text('created_at').notNull(),
 });

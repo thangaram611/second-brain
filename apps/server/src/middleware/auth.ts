@@ -2,8 +2,6 @@
  * Auth middleware — accepts:
  *   1. `Authorization: Bearer sbp_<id>_<secret>`  (CLI / hooks / programmatic)
  *   2. `Cookie: sb_session=<id>` + `X-CSRF-Token: <csrf>`  (UI)
- *   3. `Authorization: Bearer <legacy>` matching `BRAIN_AUTH_TOKEN` env
- *      (solo back-compat)
  *
  * Resolves the request's effective namespace per plan §F:
  *   - locked-namespace tokens (`tokens.namespace IS NOT NULL`) → that namespace
@@ -11,7 +9,7 @@
  *   - sessions                → `sessions.namespace`
  *
  * BRAIN_AUTH_MODE governs strictness:
- *   - 'open' (default) → permissive when no auth provided (matches today)
+ *   - 'open' (default) → permissive when no auth provided
  *   - 'pat'            → 401 unless one of the schemes above succeeds
  */
 import type { Request, Response, NextFunction } from 'express';
@@ -32,7 +30,7 @@ export interface AuthedUser {
    */
   tokenNamespace: string | null;
   scopes: Scope[];
-  authMode: 'pat' | 'session' | 'legacy';
+  authMode: 'pat' | 'session';
   tokenId: string | null;
   sessionId: string | null;
 }
@@ -40,8 +38,8 @@ export interface AuthedUser {
 /**
  * Augment the Express Request globally with `user?: AuthedUser`. This keeps
  * callback parameter typing intact (path params remain `string`) so route
- * handlers don't need an explicit `RequestWithUser` annotation that would
- * otherwise widen `req.params` and `req.query`.
+ * handlers do not need explicit request annotations that would otherwise
+ * widen `req.params` and `req.query`.
  */
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -52,16 +50,11 @@ declare global {
   }
 }
 
-/** Alias kept for back-compat callers that already use `RequestWithUser`. */
-export type RequestWithUser = Request;
-
 export interface AuthMiddlewareOptions {
   /** Auth mode — 'open' is permissive, 'pat' rejects unauth'd /api/* requests. */
   mode: AuthMode;
   /** UsersService instance (required when mode='pat' or when minted PATs are used). */
   users?: UsersService | null;
-  /** Legacy bearer token for solo back-compat. */
-  legacyBearerToken?: string | null;
   /** Paths (under /api/*) to skip auth on. */
   skipPaths?: string[];
   /** Override clock for tests. */
@@ -165,18 +158,12 @@ function collectRequestedNamespaces(req: Request): string[] {
   return [...out];
 }
 
-/** Returns the first namespace (priority body.namespace → body.project → query) or null. */
-function pickRequestedNamespace(req: Request): string | null {
-  const all = collectRequestedNamespaces(req);
-  return all.length > 0 ? all[0] : null;
-}
-
 export function createAuthMiddleware(options: AuthMiddlewareOptions) {
   const skipPaths = [...DEFAULT_SKIP_PATHS, ...(options.skipPaths ?? [])];
   const now = options.now ?? Date.now;
 
   return async function authMiddleware(
-    req: RequestWithUser,
+    req: Request,
     res: Response,
     next: NextFunction,
   ): Promise<void> {
@@ -214,23 +201,7 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions) {
       }
     }
 
-    // 2) Legacy bearer
-    if (bearer && options.legacyBearerToken && bearer === options.legacyBearerToken) {
-      req.user = {
-        id: 'legacy',
-        email: 'legacy@second-brain.local',
-        role: 'admin',
-        namespace: pickRequestedNamespace(req),
-        tokenNamespace: null,
-        scopes: ['admin'],
-        authMode: 'legacy',
-        tokenId: null,
-        sessionId: null,
-      };
-      return next();
-    }
-
-    // 3) Session cookie
+    // 2) Session cookie
     if (sessionId && options.users) {
       try {
         const session = options.users.getSession(sessionId);
@@ -285,7 +256,7 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions) {
       }
     }
 
-    // 4) No auth provided
+    // 3) No auth provided
     if (options.mode === 'pat') {
       res.status(401).json({ error: 'unauthorized' });
       return;
@@ -300,7 +271,6 @@ export function requireScope(...required: Scope[]) {
     // request through): treat as permissive — we never enforce scopes when
     // there's no identity to compare against. This matches `enforceNamespace`.
     if (!req.user) return next();
-    if (req.user.authMode === 'legacy') return next();
     const has = req.user.scopes;
     for (const r of required) {
       if (has.includes(r)) return next();
@@ -310,19 +280,18 @@ export function requireScope(...required: Scope[]) {
 }
 
 /**
- * Admin guard — when an identity exists, require it to be admin or legacy.
+ * Admin guard — when an identity exists, require it to be admin.
  *
  * Open-mode passthrough (`if (!req.user) return next()`) is safe because:
  *   - In pat mode the global auth middleware already 401'd on /api/* before
  *     this guard runs, so a missing `req.user` here means open mode.
  *   - In open mode the operator has explicitly chosen "no auth" — admin
- *     endpoints are reachable, matching pre-PR1 behavior. Operators who
- *     want pat-style guarding should switch to `BRAIN_AUTH_MODE='pat'`
- *     (or set `BRAIN_AUTH_TOKEN` for legacy bearer protection).
+ *     endpoints are reachable. Operators who want auth should switch to
+ *     `BRAIN_AUTH_MODE='pat'`.
  */
 export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
   if (!req.user) return next();
-  if (req.user.role === 'admin' || req.user.authMode === 'legacy') return next();
+  if (req.user.role === 'admin') return next();
   res.status(403).json({ error: 'admin-required' });
 }
 
@@ -336,7 +305,6 @@ export const SESSION_COOKIE = SESSION_COOKIE_NAME;
  *
  * Rules:
  *   - No `req.user`         → open mode, return `requested` unchanged.
- *   - `authMode === 'legacy'` → return `requested` unchanged (solo bypass).
  *   - Token locked (`tokenNamespace !== null`):
  *       · `requested` matches or omitted → return `tokenNamespace` (forced).
  *       · `requested` differs            → 403, return null.
@@ -347,12 +315,12 @@ export const SESSION_COOKIE = SESSION_COOKIE_NAME;
  *         every namespace in storage (verified — core APIs treat
  *         `namespace=undefined` as "no constraint"). Requiring the caller
  *         to be explicit closes that hole. If you genuinely need to query
- *         across namespaces, mint multiple namespace-locked tokens or use
- *         the legacy bearer / open mode.
+ *         across namespaces, use open mode locally or mint multiple
+ *         namespace-locked tokens.
  *
  * The return value is `string | undefined | null`:
  *   - `string`     → use this namespace
- *   - `undefined`  → no constraint to apply (open / legacy)
+ *   - `undefined`  → no constraint to apply (open)
  *   - `null`       → response already sent (403 or 400); caller must `return`.
  */
 export function resolveScopedNamespace(
@@ -363,7 +331,6 @@ export function resolveScopedNamespace(
 ): string | undefined | null {
   const u = req.user;
   if (!u) return requested;
-  if (u.authMode === 'legacy') return requested;
 
   if (u.tokenNamespace !== null) {
     if (requested && requested !== u.tokenNamespace) {
@@ -394,7 +361,6 @@ export function resolveScopedNamespace(
  *
  * Permissive cases (return true without checking):
  *   - No `req.user`         — open mode, no auth required
- *   - `authMode === 'legacy'`— solo / CI master token bypasses scoping
  *
  * Strict cases:
  *   - PAT with locked `tokenNamespace` → must equal `namespace`
@@ -403,14 +369,13 @@ export function resolveScopedNamespace(
  *     pre-loaded into req.user; we fall back to `req.user.namespace`).
  */
 export function enforceNamespace(
-  req: RequestWithUser,
+  req: Request,
   res: Response,
   namespace: string,
   users: UsersService | null | undefined,
 ): boolean {
   const u = req.user;
   if (!u) return true;
-  if (u.authMode === 'legacy') return true;
 
   if (u.tokenNamespace !== null) {
     if (u.tokenNamespace === namespace) return true;

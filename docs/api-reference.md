@@ -548,7 +548,7 @@ Bi-temporal query: view entities as they existed at a specific point in time.
 | Body Field | Type | Required | Description |
 |------------|------|----------|-------------|
 | `namespace` | string | ✓ | Project namespace to sync |
-| `relayUrl` | string | ✓ | WebSocket relay URL |
+| `relayUrl` | string | ✓ | WebSocket relay URL (`ws://` or `wss://`) |
 | `token` | string | ✓ | Auth token for relay |
 
 **Response** `200` — `SyncStatus`
@@ -562,7 +562,7 @@ Bi-temporal query: view entities as they existed at a specific point in time.
 **Response** `200`
 
 ```json
-{ "left": true }
+{ "left": "my-team-project" }
 ```
 
 #### `GET /api/sync/peers/:namespace`
@@ -615,6 +615,11 @@ Called on each prompt submission within a session.
 #### `POST /api/observe/mr-event`
 
 Receives forge webhooks (GitLab/GitHub) for merge/pull request lifecycle events.
+Webhook verification secrets are loaded from server env vars:
+`SECOND_BRAIN_WEBHOOK_SECRET_HEX__<provider>__<hexProjectId>` for token
+verification and `SECOND_BRAIN_WEBHOOK_HMAC_HEX__<provider>__<hexProjectId>`
+for HMAC verification. `brain wire --provider ...` prints the exact `export`
+line to add to the server environment.
 
 #### `POST /api/observe/file-change`
 
@@ -1388,7 +1393,7 @@ brain watch [options]
 | `--repo <path>` | Repo root (default: cwd) |
 | `-n, --namespace <ns>` | Override namespace |
 | `--server-url <url>` | Server URL (default: `http://localhost:7430`) |
-| `--token <token>` | Bearer token |
+| `--token <token>` | Bearer token for watcher requests |
 | `--author-email <email>` | Override git user.email |
 | `--author-name <name>` | Override git user.name |
 
@@ -1423,26 +1428,24 @@ brain poll [options]
 
 ### Hook Management
 
-#### `brain install-hooks`
+#### `brain wire-assistant`
 
-Install realtime hooks for supported AI CLIs.
+Install Second Brain hooks for supported AI assistants.
 
 ```bash
-brain install-hooks [options]
+brain wire-assistant <claude|cursor|codex|copilot|all> [options]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `-s, --scope <scope>` | `user` \| `project` (default: `user`) |
-| `-t, --tool <tool>` | `claude` \| `codex` \| `copilot` \| `gemini` \| `all` (default: `claude`) |
-| `--exclusive` | Remove `claude-mem` hooks (backup kept) |
-| `--skip-if-claude-mem` | Abort if `claude-mem` detected |
 | `--hook-command <cmd>` | Override hook binary path |
+| `--dry-run` | Print what would be installed without writing files |
 
-#### `brain uninstall-hooks`
+#### `brain unwire-assistant`
 
 ```bash
-brain uninstall-hooks [-s <scope>]
+brain unwire-assistant <claude|cursor|codex|copilot|all> [-s <scope>]
 ```
 
 ---
@@ -1462,14 +1465,18 @@ brain wire [options]
 | `--repo <path>` | Repo root (auto-detected) |
 | `-n, --namespace <ns>` | Override namespace |
 | `--server-url <url>` | Server URL |
-| `--token <token>` | Bearer token |
+| `--token <token>` | Bearer token embedded into local git hooks |
 | `--require-project` | Fail without project namespace |
 | `--no-claude` | Skip Claude Code hook install |
 | `--skip-if-claude-mem` | Abort if `claude-mem` present |
-| `--provider <name>` | Forge provider (`gitlab`) |
+| `--provider <name>` | Forge provider (`gitlab` or `github`) |
 | `--gitlab-url <url>` | GitLab base URL |
 | `--gitlab-token <pat>` | GitLab PAT |
 | `--gitlab-project-path <p>` | `group/subgroup/project` |
+| `--github-token <pat>` | GitHub PAT |
+| `--github-base-url <url>` | GitHub API base URL |
+| `--github-owner <owner>` | GitHub owner/org |
+| `--github-repo <repo>` | GitHub repo name |
 
 #### `brain unwire`
 

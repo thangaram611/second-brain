@@ -6,25 +6,25 @@
 
 `src/index.ts` → Commander program. Commands in `src/commands/`.
 
-## Commands (18)
+## Commands
 
 | File | Command(s) | Purpose |
 |------|-----------|---------|
-| `init-reset.ts` | `init`, `reset` | Initialize/reset brain database |
+| `init-reset.ts` | `init`, `init server`, `init client`, `reset`, `admin`, `doctor`, `auth rotate` | Solo/team initialization, admin, diagnostics, auth |
 | `add.ts` | `add` | Add entities manually |
 | `decide.ts` | `decide` | Record decisions |
-| `recall.ts` | `recall` | Recall entity by name |
+| `recall.ts` | `recall` | Build assistant context blocks |
 | `search.ts` | `search` | Full-text search |
-| `query.ts` | `query` | Graph traversal queries |
+| `query.ts` | `query` | Natural-language graph query |
 | `index-cmd.ts` | `index` | Run collector pipelines |
 | `embed.ts` | `embed` | Generate embeddings |
 | `export-import.ts` | `export`, `import` | JSON export/import |
 | `status.ts` | `status` | Show brain status/stats |
 | `sync.ts` | `sync` | Manage sync state |
-| `wire-unwire.ts` | `wire`, `unwire` | Connect/disconnect MCP |
+| `wire-unwire.ts` | `wire`, `unwire` | Connect/disconnect repositories |
+| `wire-assistant.ts` | `wire-assistant`, `unwire-assistant` | Install/remove assistant hooks |
 | `watch.ts` | `watch` | File system watcher |
 | `tail.ts` | `tail` | Stream recent changes |
-| `hooks.ts` | `hooks` | Manage git hooks |
 | `flip-branch.ts` | `flip-branch` | Switch branch context |
 | `ownership-cmd.ts` | `ownership` | Entity ownership management |
 | `personal-cmd.ts` | `personal` | Personal namespace operations |

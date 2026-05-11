@@ -21,7 +21,6 @@ beforeEach(() => {
       mode: 'pat',
       users,
       inviteSigningKey: INVITE_KEY,
-      legacyBearerToken: null,
       secureCookies: false,
     },
   });
@@ -265,7 +264,7 @@ describe('rotate', () => {
   });
 });
 
-describe('open mode back-compat', () => {
+describe('open auth mode', () => {
   it('permits unauth requests when BRAIN_AUTH_MODE is open', async () => {
     const brain2 = new Brain({ path: ':memory:', wal: false });
     const users2 = new UsersService({ path: ':memory:' });
@@ -274,7 +273,6 @@ describe('open mode back-compat', () => {
         mode: 'open',
         users: users2,
         inviteSigningKey: INVITE_KEY,
-        legacyBearerToken: null,
       },
     });
     await request(app2).get('/api/embeddings/status').expect(200);
@@ -282,7 +280,7 @@ describe('open mode back-compat', () => {
     users2.close();
   });
 
-  it('whoami returns 200 with mode=open in open mode (UI back-compat)', async () => {
+  it('whoami returns 200 with mode=open in open mode', async () => {
     const brain2 = new Brain({ path: ':memory:', wal: false });
     const users2 = new UsersService({ path: ':memory:' });
     const app2 = createApp(brain2, {
@@ -290,7 +288,6 @@ describe('open mode back-compat', () => {
         mode: 'open',
         users: users2,
         inviteSigningKey: INVITE_KEY,
-        legacyBearerToken: null,
       },
     });
     const res = await request(app2).get('/api/auth/whoami').expect(200);
@@ -311,7 +308,6 @@ describe('cookie security flags (default secureCookies = true)', () => {
         mode: 'pat',
         users: users2,
         inviteSigningKey: INVITE_KEY,
-        legacyBearerToken: null,
       },
     });
     const u = users2.createUser({ id: generateUserId(), email: 'secure@u.test', role: 'member' });

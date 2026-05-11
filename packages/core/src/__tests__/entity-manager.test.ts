@@ -185,7 +185,7 @@ describe('EntityManager', () => {
     });
   });
 
-  describe('listByBranchContext (migration 002 generated columns)', () => {
+  describe('listByBranchContext (generated columns)', () => {
     it('returns entities whose properties.branchContext.branch matches', () => {
       brain.entities.create({
         type: 'event',

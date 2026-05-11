@@ -21,6 +21,7 @@ import { z } from 'zod';
 export const TEAM_MANIFEST_REL_PATH = path.join('.second-brain', 'team.json');
 
 const HttpUrl = z.url({ protocol: /^https?$/ });
+const WebSocketUrl = z.url({ protocol: /^wss?$/ });
 
 const GitHookEnum = z.enum(['post-commit', 'post-merge', 'post-checkout']);
 const AssistantEnum = z.enum(['claude', 'cursor', 'codex', 'copilot']);
@@ -33,7 +34,7 @@ export const TeamManifestSchema = z.object({
   namespace: z.string().min(1),
   server: z.object({
     url: HttpUrl,
-    relayUrl: HttpUrl.optional(),
+    relayUrl: WebSocketUrl.optional(),
   }),
   hooks: z
     .object({

@@ -15,7 +15,7 @@ export function registerInitResetCommands(program: Command): void {
     });
 
   // --- brain init [<subcommand>] ---
-  // No subcommand → solo init wizard (back-compat, runInit).
+  // No subcommand → solo init wizard.
   // `server`     → bootstrap a team-mode server install.
   // `client`     → redeem invite + wire local repo.
   const init = program

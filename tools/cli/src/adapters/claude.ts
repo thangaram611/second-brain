@@ -2,8 +2,7 @@
  * Claude Code adapter — full capability (Pre/Prompt/Session-start injection).
  *
  * This file owns the Claude `~/.claude/settings.json` (or project-scope
- * `<cwd>/.claude/settings.json`) lifecycle. The legacy module
- * `install-claude-hooks.ts` re-exports from here for back-compat.
+ * `<cwd>/.claude/settings.json`) lifecycle.
  *
  * Per-tool matcher split (PR3 §C):
  *   - `Read|Edit|Write|MultiEdit|Bash|Grep|Glob` → heavy retrieval (PreToolUse).
@@ -25,7 +24,7 @@ import type {
 } from './types.js';
 import { HOOK_SENTINEL } from './types.js';
 
-export const CLAUDE_HOOK_EVENTS = [
+const CLAUDE_HOOK_EVENTS = [
   'SessionStart',
   'UserPromptSubmit',
   'PreToolUse',
@@ -33,7 +32,7 @@ export const CLAUDE_HOOK_EVENTS = [
   'Stop',
   'SessionEnd',
 ] as const;
-export type ClaudeHookEvent = (typeof CLAUDE_HOOK_EVENTS)[number];
+type ClaudeHookEvent = (typeof CLAUDE_HOOK_EVENTS)[number];
 
 /**
  * Tool matcher used for `PreToolUse` heavy-retrieval. The remaining tools
@@ -194,11 +193,11 @@ function writeJson(p: string, value: unknown): void {
   fs.writeFileSync(p, JSON.stringify(value, null, 2) + '\n', 'utf8');
 }
 
-export function isClaudeMemCommand(cmd: string): boolean {
+function isClaudeMemCommand(cmd: string): boolean {
   return /\b(claude-mem|@claude-mem)\b/.test(cmd);
 }
 
-export function detectClaudeMem(settings: ClaudeSettings): boolean {
+function detectClaudeMem(settings: ClaudeSettings): boolean {
   const hooks = settings.hooks ?? {};
   for (const groups of Object.values(hooks)) {
     if (!groups) continue;
@@ -211,7 +210,7 @@ export function detectClaudeMem(settings: ClaudeSettings): boolean {
   return false;
 }
 
-export function stripClaudeMem(settings: ClaudeSettings): ClaudeSettings {
+function stripClaudeMem(settings: ClaudeSettings): ClaudeSettings {
   const next: ClaudeSettings = { ...settings, hooks: {} };
   const hooks = settings.hooks ?? {};
   const target = next.hooks;
@@ -402,58 +401,3 @@ export const claudeAdapter: Adapter = {
   uninstall: uninstallImpl,
   detect: detectImpl,
 };
-
-// ── Back-compat re-exports for callers that still import from
-// `install-claude-hooks.ts`. These mirror the old surface as closely as
-// possible while delegating to the adapter.
-export interface LegacyInstallOptions {
-  scope: 'user' | 'project';
-  tool: 'claude' | 'codex' | 'copilot' | 'gemini' | 'all';
-  exclusive?: boolean;
-  skipIfClaudeMem?: boolean;
-  homeDir?: string;
-  cwd?: string;
-  hookCommand?: string;
-}
-
-export interface LegacyInstallResult {
-  settingsPath: string;
-  sidecarPath: string;
-  addedHooks: string[];
-  coexistedWithClaudeMem: boolean;
-  skipped?: string;
-  backupPath?: string;
-}
-
-export function installClaudeHooks(options: LegacyInstallOptions): LegacyInstallResult {
-  const home = options.homeDir ?? '';
-  const cwd = options.cwd ?? '';
-  const result = installImpl({
-    scope: options.scope,
-    home,
-    cwd,
-    hookCommand: options.hookCommand,
-    skipIfClaudeMem: options.skipIfClaudeMem,
-    exclusive: options.exclusive,
-  });
-  const sidecarPath = result.auxFiles.find((p) => p.endsWith('settings.brain-hooks.json')) ?? '';
-  return {
-    settingsPath: result.configPath,
-    sidecarPath,
-    addedHooks: result.addedEvents,
-    coexistedWithClaudeMem: result.warnings.some((w) => w.toLowerCase().includes('claude-mem')),
-    skipped: result.skipped,
-    backupPath: result.backupPath,
-  };
-}
-
-export function uninstallClaudeHooks(
-  options: Pick<LegacyInstallOptions, 'scope' | 'homeDir' | 'cwd'>,
-): { removed: string[]; settingsPath: string } {
-  const result = uninstallImpl({
-    scope: options.scope,
-    home: options.homeDir ?? '',
-    cwd: options.cwd ?? '',
-  });
-  return { removed: result.removed, settingsPath: result.configPath };
-}

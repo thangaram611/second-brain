@@ -50,7 +50,13 @@ GitLab uses **token-based** verification:
 - Header: `X-Gitlab-Token`
 - The token is generated during `brain wire` and stored in the system keychain
   as `gitlab.webhook-token:<projectId>`.
+- `brain wire` also prints a `server env: export ...` line. Add that variable
+  to the server environment before receiving webhooks.
 - Verified server-side via `timingSafeEqual` (constant-time comparison).
+
+The generated variable uses the shell-safe form
+`SECOND_BRAIN_WEBHOOK_SECRET_HEX__gitlab__<hexProjectId>`, where
+`<hexProjectId>` is the UTF-8 hex encoding of the forge project ID.
 
 ### Keychain Entries
 
@@ -109,7 +115,13 @@ GitHub uses **HMAC-SHA256** verification:
 - Format: `sha256=<hex-digest>`
 - The HMAC secret is generated during `brain wire` and stored in the keychain
   as `github.webhook-secret:<owner>/<repo>`.
+- `brain wire` also prints a `server env: export ...` line. Add that variable
+  to the server environment before receiving webhooks.
 - Verified server-side via `timingSafeEqual` on the HMAC digest.
+
+The generated variable uses the shell-safe form
+`SECOND_BRAIN_WEBHOOK_HMAC_HEX__github__<hexProjectId>`, where
+`<hexProjectId>` is the UTF-8 hex encoding of `<owner>/<repo>`.
 
 ### GitHub Enterprise
 
@@ -133,7 +145,7 @@ ${id}+${username}@users.noreply.github.com
 | Key                                       | Value              |
 |-------------------------------------------|--------------------|
 | `github.webhook-secret:<owner>/<repo>`    | HMAC secret        |
-| `github.pat:github.com`                   | Personal Access Token |
+| `github.pat:<api-host>`                   | Personal Access Token |
 
 ---
 

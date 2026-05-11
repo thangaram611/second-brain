@@ -27,7 +27,6 @@ export interface RegisterRoutesOptions {
     mode: AuthMode;
     users: UsersService;
     inviteSigningKey: string | null;
-    legacyBearerToken?: string | null;
     /** Override clock for tests. */
     now?: () => number;
     /** Set the Secure flag on session cookies (defaults to true). */
@@ -58,7 +57,6 @@ export function registerRoutes(
       createAuthMiddleware({
         mode: options.auth.mode,
         users: options.auth.users,
-        legacyBearerToken: options.auth.legacyBearerToken ?? null,
         now: options.auth.now,
       }),
     );

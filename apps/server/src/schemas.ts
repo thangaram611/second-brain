@@ -3,6 +3,7 @@ import { ENTITY_TYPES, RELATION_TYPES } from '@second-brain/types';
 
 const entityTypeEnum = z.enum(ENTITY_TYPES);
 const relationTypeEnum = z.enum(RELATION_TYPES);
+const websocketUrl = z.url({ protocol: /^wss?$/ });
 
 export const CreateEntitySchema = z.object({
   type: entityTypeEnum,
@@ -107,7 +108,7 @@ export const SyncJoinSchema = z.object({
   namespace: z.string().min(1).refine(ns => ns !== 'personal', {
     message: 'Cannot sync the personal namespace',
   }),
-  relayUrl: z.string().url(),
+  relayUrl: websocketUrl,
   token: z.string().min(1),
 });
 

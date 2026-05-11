@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { z } from 'zod';
 import {
   exportJson,
@@ -18,7 +18,7 @@ import {
 } from '@second-brain/collectors';
 import { newJti, signInvite, type InvitePayload } from '../lib/invite.js';
 import type { UsersService } from '../services/users.js';
-import { requireAdmin, type RequestWithUser } from '../middleware/auth.js';
+import { requireAdmin } from '../middleware/auth.js';
 
 const serverLogger = createLogger('server.admin');
 import {
@@ -196,7 +196,7 @@ export function adminRoutes(brain: Brain, authOptions: AdminAuthOptions = {}): R
   if (authOptions.users) {
     const users = authOptions.users;
 
-    router.post('/api/admin/invites', requireAdmin, (req: RequestWithUser, res, next) => {
+    router.post('/api/admin/invites', requireAdmin, (req: Request, res, next) => {
       try {
         if (!authOptions.inviteSigningKey) {
           res.status(503).json({ error: 'invites-not-configured' });

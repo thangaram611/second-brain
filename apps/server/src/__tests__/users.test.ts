@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 describe('users service — schema', () => {
-  it('runs migrations idempotently', () => {
+  it('initializes schema idempotently', () => {
     // Re-applying schema must not throw.
     const second = new UsersService({ path: ':memory:' });
     expect(second).toBeDefined();
@@ -116,12 +116,12 @@ describe('users service — token namespace binding', () => {
     expect(await users.verifyPat(tampered)).toBeNull();
   });
 
-  it('verifyPat rejects a legacy-format-shaped PAT (no CRC32 suffix)', async () => {
+  it('verifyPat rejects an old-format-shaped PAT (no CRC32 suffix)', async () => {
     // 8-id + 32-char base62 secret, no _<6> suffix → fails new regex outright.
-    const legacy = 'sbp_abcdefgh_aaaaaaaaBBBBBBBBccccccccDDDDDDDD';
-    expect(legacy).not.toMatch(/^sbp_[a-z0-9]{8}_[A-Za-z0-9]{32}_[A-Za-z0-9]{6}$/);
-    expect(parsePat(legacy)).toBeNull();
-    expect(await users.verifyPat(legacy)).toBeNull();
+    const oldFormat = 'sbp_abcdefgh_aaaaaaaaBBBBBBBBccccccccDDDDDDDD';
+    expect(oldFormat).not.toMatch(/^sbp_[a-z0-9]{8}_[A-Za-z0-9]{32}_[A-Za-z0-9]{6}$/);
+    expect(parsePat(oldFormat)).toBeNull();
+    expect(await users.verifyPat(oldFormat)).toBeNull();
   });
 });
 

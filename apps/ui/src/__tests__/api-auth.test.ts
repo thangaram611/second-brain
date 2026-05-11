@@ -9,7 +9,7 @@ import { api } from '../lib/api.js';
  *   - on 401 in 'pat' mode, navigates to /login (HashRouter convention)
  *   - on 401 in 'open' or 'unknown' mode, surfaces the error to the caller
  *   - login() success populates auth-store; login() 401 surfaces the error
- *   - bootstrap() in 'open' mode (whoami returns no csrfToken) does NOT redirect
+ *   - bootstrap() in 'open' mode (whoami returns mode:open) does NOT redirect
  *
  * We mock global fetch and inspect the call arguments. To avoid `as` casts
  * (project rule), we type the spy as a Mock<typeof fetch>.
@@ -60,7 +60,7 @@ describe('api request() helper — auth integration', () => {
 
     useAuthStore.setState(initialAuthState);
 
-    // vitest's default node test env provides a `window` shim. If it's not
+    // vitest's default node test env provides a `window` stand-in. If it's not
     // present, stub one with just the bits the auth code touches.
     if (typeof window === 'undefined') {
       vi.stubGlobal('window', { location: { hash: '', pathname: '/' } });
@@ -181,6 +181,7 @@ describe('auth-store login()', () => {
     });
     // Second call: triggered bootstrap() → /api/auth/whoami
     mockFetchOnce(fetchSpy, 200, {
+      mode: 'pat',
       userId: 'u1',
       email: 'a@b.dev',
       role: 'member',
@@ -255,17 +256,6 @@ describe('auth-store bootstrap()', () => {
     expect(useAuthStore.getState().csrfToken).toBeNull();
   });
 
-  it('legacy back-compat: whoami 200 with userId+email but no mode falls back to open', async () => {
-    mockFetchOnce(fetchSpy, 200, { userId: 'solo', email: 'solo@local' });
-    window.location.hash = '#/dashboard';
-
-    await useAuthStore.getState().bootstrap();
-
-    expect(window.location.hash).toBe('#/dashboard');
-    expect(useAuthStore.getState().mode).toBe('open');
-    expect(useAuthStore.getState().user?.email).toBe('solo@local');
-  });
-
   it('in pat mode (whoami 401) redirects to /login', async () => {
     mockFetchOnce(fetchSpy, 401, { error: 'auth required' });
     window.location.hash = '#/dashboard';
@@ -278,7 +268,7 @@ describe('auth-store bootstrap()', () => {
   });
 
   it('whoami calls /api/auth/whoami with credentials: include', async () => {
-    mockFetchOnce(fetchSpy, 200, { userId: 'u', email: 'e@e' });
+    mockFetchOnce(fetchSpy, 200, { mode: 'pat', userId: 'u', email: 'e@e' });
     await useAuthStore.getState().bootstrap();
     const c = callOf(fetchSpy, 0);
     expect(c.url).toBe('/api/auth/whoami');

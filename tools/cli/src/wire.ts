@@ -9,7 +9,6 @@ import { canonicalizeEmail } from '@second-brain/types';
 import { GitLabProvider, GitHubProvider, resolveGitLabProject, mintRelayChannel } from '@second-brain/collectors';
 
 const ProjectConfigSchema = z.object({ namespace: z.string().min(1).optional() }).passthrough();
-import type { InstallHooksResult } from './install-claude-hooks.js';
 import { ADAPTERS, type AdapterName } from './adapters/index.js';
 import {
   installGitHooks,
@@ -26,6 +25,7 @@ import {
   type TeamManifest,
   loadTeamManifest,
 } from './team-manifest.js';
+import { getServerUrl } from './lib/config.js';
 
 export interface WireOptions {
   /** Repo root. Defaults to `git rev-parse --show-toplevel` from cwd. */
@@ -38,13 +38,7 @@ export interface WireOptions {
   bearerToken?: string;
   /** Hard-fail if no project namespace is resolved (for CI). */
   requireProject?: boolean;
-  /** Also install Claude Code session hooks (user scope). Default true. */
-  installClaudeSession?: boolean;
-  /**
-   * List of assistants to install hooks for (PR3). Defaults to `['claude']` to
-   * preserve back-compat. Pass `['claude','cursor','codex','copilot']` (or any
-   * subset) to wire multiple at once. Per-adapter failures degrade to warnings.
-   */
+  /** Assistants to install hooks for. Defaults to `['claude']`; pass `[]` to skip assistant hooks. */
   installAssistants?: AdapterName[];
   /** Skip if claude-mem already present. */
   skipIfClaudeMem?: boolean;
@@ -70,6 +64,8 @@ export interface WireOptions {
   // ── GitHub provider options ─────────────────────────────────────────────
   /** GitHub PAT. Falls back to SECOND_BRAIN_GITHUB_TOKEN or GITHUB_TOKEN env. */
   githubToken?: string;
+  /** GitHub API base URL. Defaults to api.github.com, or /api/v3 for enterprise remotes. */
+  githubBaseUrl?: string;
   /** GitHub owner (user or org). Auto-detected from git remote. */
   githubOwner?: string;
   /** GitHub repo name. Auto-detected from git remote. */
@@ -85,6 +81,10 @@ export interface ProviderWireResult {
   webhookAlreadyExisted: boolean;
   relayUrl: string;
   baseUrl: string;
+  serverSecretEnv: {
+    name: string;
+    value: string;
+  };
 }
 
 export interface WireResult {
@@ -94,11 +94,20 @@ export interface WireResult {
   authorEmail: string | null;
   authorName: string | null;
   warnings: string[];
-  claudeHooks?: InstallHooksResult;
+  claudeHooks?: ClaudeHookInstallSummary;
   gitHooks: InstallGitHooksResult;
   configPath: string;
   watchCommand: string;
   providerResult?: ProviderWireResult;
+}
+
+export interface ClaudeHookInstallSummary {
+  settingsPath: string;
+  sidecarPath: string;
+  addedHooks: string[];
+  coexistedWithClaudeMem: boolean;
+  skipped?: string;
+  backupPath?: string;
 }
 
 function resolveRepoRoot(explicit?: string): string {
@@ -210,7 +219,7 @@ async function runWireInternal(options: WireOptions): Promise<WireResult> {
     namespace = 'personal';
   }
 
-  const serverUrl = options.serverUrl ?? process.env.SECOND_BRAIN_SERVER_URL ?? 'http://localhost:7430';
+  const serverUrl = getServerUrl(options.serverUrl);
 
   const gitHooks = installGitHooks({
     repoRoot,
@@ -219,16 +228,8 @@ async function runWireInternal(options: WireOptions): Promise<WireResult> {
     namespace,
   });
 
-  let claudeHooks: InstallHooksResult | undefined;
-  // Resolve the assistant list. The legacy `installClaudeSession` flag is
-  // honored for back-compat — when it is set to false explicitly, we skip
-  // ALL assistant hooks (callers that disable Claude expect no hooks).
-  let assistants: AdapterName[];
-  if (options.installClaudeSession === false) {
-    assistants = [];
-  } else {
-    assistants = options.installAssistants ?? ['claude'];
-  }
+  let claudeHooks: ClaudeHookInstallSummary | undefined;
+  const assistants = options.installAssistants ?? ['claude'];
 
   for (const name of assistants) {
     const adapter = ADAPTERS[name];
@@ -241,7 +242,6 @@ async function runWireInternal(options: WireOptions): Promise<WireResult> {
         skipIfClaudeMem: options.skipIfClaudeMem,
       });
       if (name === 'claude') {
-        // Preserve the original Claude-only return shape used downstream.
         const sidecar = result.auxFiles.find((p) => p.endsWith('settings.brain-hooks.json')) ?? '';
         claudeHooks = {
           settingsPath: result.configPath,
@@ -349,6 +349,18 @@ function readGitRemoteOrigin(repoRoot: string): string | null {
   }
 }
 
+function webhookSecretEnvName(
+  provider: 'gitlab' | 'github',
+  projectId: string,
+  kind: 'token' | 'hmac',
+): string {
+  const prefix = kind === 'token'
+    ? 'SECOND_BRAIN_WEBHOOK_SECRET_HEX'
+    : 'SECOND_BRAIN_WEBHOOK_HMAC_HEX';
+  const hexProjectId = Buffer.from(projectId, 'utf8').toString('hex');
+  return `${prefix}__${provider}__${hexProjectId}`;
+}
+
 /**
  * Extract `(host, projectPath)` from a git remote URL.
  *   SSH  — git@host:group/subgroup/project.git → {host, path: 'group/subgroup/project'}
@@ -426,6 +438,10 @@ async function wireGitLabProvider(
     webhookAlreadyExisted: registration.alreadyExisted,
     relayUrl,
     baseUrl,
+    serverSecretEnv: {
+      name: webhookSecretEnvName('gitlab', projectId, 'token'),
+      value: secretValue,
+    },
   };
 }
 
@@ -441,7 +457,7 @@ async function wireGitHubProvider(
   let owner = options.githubOwner;
   let repo = options.githubRepo;
   if (!owner || !repo) {
-    if (parsed && (parsed.host === 'github.com' || parsed.host.includes('github'))) {
+    if (parsed) {
       const parts = parsed.projectPath.split('/');
       owner = owner ?? parts[0];
       repo = repo ?? parts[1];
@@ -459,15 +475,23 @@ async function wireGitHubProvider(
   }
 
   const projectId = `${owner}/${repo}`;
+  const baseUrl =
+    options.githubBaseUrl ??
+    (parsed && parsed.host !== 'github.com'
+      ? `https://${parsed.host}/api/v3`
+      : 'https://api.github.com');
   const provider = options.githubProvider ?? new GitHubProvider();
-  await provider.auth({ baseUrl: 'https://api.github.com', pat });
+  await provider.auth({ baseUrl, pat });
 
   const relayUrl = await mintRelayChannel({ fetchImpl: options.fetchImpl });
   const secretKey = crypto.randomBytes(32).toString('hex');
 
   // Store HMAC secret + PAT — dispatcher always succeeds (file fallback).
+  // PAT account key uses the dynamic host so GitHub Enterprise instances
+  // get their own slot (`github.pat:ghe.example.com`) instead of colliding
+  // with the github.com slot.
   await storeSecret(`github.webhook-secret:${projectId}`, secretKey);
-  await storeSecret(`github.pat:github.com`, pat);
+  await storeSecret(`github.pat:${hostOf(baseUrl)}`, pat);
 
   const registration = await provider.registerWebhook({
     provider: 'github',
@@ -482,7 +506,11 @@ async function wireGitHubProvider(
     webhookId: registration.webhookId,
     webhookAlreadyExisted: registration.alreadyExisted,
     relayUrl,
-    baseUrl: 'https://api.github.com',
+    baseUrl,
+    serverSecretEnv: {
+      name: webhookSecretEnvName('github', projectId, 'hmac'),
+      value: secretKey,
+    },
   };
 }
 

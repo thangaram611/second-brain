@@ -29,10 +29,10 @@ with memory and time traded off against each other. RFC 9106 §4 gives the
 underlying analysis; the second profile is the "memory-constrained" one
 recommended for IoT and small-VPS deployments.
 
-## Why the default is `p=1` (not `p=4`)
+## Why the default is `p=1`
 
-Earlier versions used `p=4` to spread argon2's lane parallelism across CPU
-cores. Three things made this a worse default than `p=1`:
+Using `p=4` can spread argon2's lane parallelism across CPU cores, but three
+things make it a worse default than `p=1`:
 
 1. **Libuv thread pool exhaustion** — node-argon2 runs each hash on a libuv
    worker. With the default pool size of 4, a single concurrent login burst
@@ -61,7 +61,7 @@ BRAIN_ARGON2_P=1
 
 **Tradeoff:** lowering `m` linearly reduces the cost an attacker pays per
 guess on memory-bound hardware (GPU/ASIC). At `m=19 MiB` you're still well
-above legacy bcrypt cost, but if your threat model includes a sophisticated
+above bcrypt-style cost, but if your threat model includes a sophisticated
 offline attacker with custom hardware, prefer the default `m=65536` profile.
 
 ## Verification
@@ -72,14 +72,11 @@ params actually flow through to the hashes on disk. A second test asserts
 that env values below both OWASP baselines fail at startup with an
 actionable error naming the offending variable(s).
 
-## Changing params on a running deployment
+## Changing params after PATs exist
 
-There is **no upgrade path for already-stored hashes** — the project has
-never run in production, so this section is forward-looking. If you change
-`BRAIN_ARGON2_*` after users have minted PATs, the verify path enforces the
-new policy: existing hashes that fall below it will be rejected and the
-user must rotate their PAT (`brain auth rotate`). Plan migrations
-accordingly.
+If you change `BRAIN_ARGON2_*` after users have minted PATs, the verify path
+enforces the new policy: existing hashes that fall below it will be rejected,
+and the user must rotate their PAT (`brain auth rotate`).
 
 ## References
 

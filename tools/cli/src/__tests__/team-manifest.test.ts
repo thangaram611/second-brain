@@ -24,7 +24,7 @@ afterEach(() => {
 const VALID_MANIFEST: TeamManifest = {
   version: 1,
   namespace: 'team-graph',
-  server: { url: 'https://api.example.com', relayUrl: 'https://relay.example.com' },
+  server: { url: 'https://api.example.com', relayUrl: 'wss://relay.example.com' },
   hooks: {
     git: ['post-commit', 'post-merge'],
     assistants: ['claude', 'cursor'],
@@ -66,6 +66,14 @@ describe('TeamManifestSchema', () => {
       version: 1,
       namespace: 'team',
       server: { url: 'ftp://example.com' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('requires relayUrl to use ws/wss when present', () => {
+    const result = TeamManifestSchema.safeParse({
+      ...VALID_MANIFEST,
+      server: { url: 'https://api.example.com', relayUrl: 'https://relay.example.com' },
     });
     expect(result.success).toBe(false);
   });

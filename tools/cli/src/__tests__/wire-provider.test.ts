@@ -7,7 +7,7 @@ import { runWire } from '../wire.js';
 import { runUnwire } from '../unwire.js';
 import { loadWiredRepos } from '../git-context-daemon.js';
 import { setKeychainTestOverride, resetKeychainCache } from '../keychain.js';
-import { GitLabProvider } from '@second-brain/collectors';
+import { GitHubProvider, GitLabProvider } from '@second-brain/collectors';
 
 let tmpRepo: string;
 let tmpHome: string;
@@ -101,6 +101,46 @@ function mockGitLabFetch(options: {
   });
 }
 
+function mockGitHubFetch(options: {
+  onRegister?: () => void;
+  existingHooks?: Array<{ id: number; config: { url: string } }>;
+} = {}) {
+  const existing = options.existingHooks ?? [];
+  return vi.fn<typeof fetch>(async (input, init) => {
+    const url = typeof input === 'string' ? input : input.toString();
+    const method = init?.method ?? 'GET';
+
+    if (url.endsWith('/user')) {
+      return new Response(JSON.stringify({ id: 1, login: 'alice' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (url.includes('/repos/acme/repo/hooks')) {
+      if (method === 'GET') {
+        return new Response(JSON.stringify(existing), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (method === 'POST') {
+        options.onRegister?.();
+        return new Response(JSON.stringify({ id: 999, config: { url: 'https://private-relay.example' } }), {
+          status: 201,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+    }
+    if (url.startsWith('https://smee.io')) {
+      return new Response(null, {
+        status: 302,
+        headers: { location: 'https://smee.io/test-channel' },
+      });
+    }
+    return new Response('not found', { status: 404 });
+  });
+}
+
 beforeEach(() => {
   tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'brain-wire-prov-'));
   tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'brain-wire-home-'));
@@ -134,11 +174,15 @@ describe('brain wire + provider', () => {
       gitlabProjectPath: 'acme/repo',
       gitlabProvider: new GitLabProvider({ fetchImpl }),
       fetchImpl,
-      installClaudeSession: false,
+      installAssistants: [],
     });
     expect(result.providerResult).toBeTruthy();
     expect(result.providerResult?.webhookId).toBe(777);
     expect(result.providerResult?.webhookAlreadyExisted).toBe(false);
+    expect(result.providerResult?.serverSecretEnv.name).toBe(
+      'SECOND_BRAIN_WEBHOOK_SECRET_HEX__gitlab__313233',
+    );
+    expect(result.providerResult?.serverSecretEnv.value).toMatch(/^[0-9a-f]{64}$/);
 
     const wired = loadWiredRepos();
     const entry = Object.values(wired.wiredRepos)[0];
@@ -161,10 +205,42 @@ describe('brain wire + provider', () => {
       gitlabProjectPath: 'acme/repo',
       gitlabProvider: new GitLabProvider({ fetchImpl }),
       fetchImpl,
-      installClaudeSession: false,
+      installAssistants: [],
     });
     expect(result.providerResult?.webhookId).toBe(888);
     expect(result.providerResult?.webhookAlreadyExisted).toBe(true);
+  });
+
+  it('wires GitHub Enterprise from remote URL and records provider metadata', async () => {
+    git(['remote', 'set-url', 'origin', 'git@github.enterprise.example:acme/repo.git'], tmpRepo);
+    const fetchImpl = mockGitHubFetch();
+    const result = await runWire({
+      repo: tmpRepo,
+      namespace: 'proj',
+      provider: 'github',
+      githubToken: 'ghp-test',
+      githubProvider: new GitHubProvider({ fetchImpl }),
+      fetchImpl,
+      installAssistants: [],
+    });
+
+    expect(result.providerResult).toMatchObject({
+      provider: 'github',
+      projectId: 'acme/repo',
+      webhookId: 999,
+      baseUrl: 'https://github.enterprise.example/api/v3',
+      serverSecretEnv: {
+        name: 'SECOND_BRAIN_WEBHOOK_HMAC_HEX__github__61636d652f7265706f',
+      },
+    });
+    expect(result.providerResult?.serverSecretEnv.value).toMatch(/^[0-9a-f]{64}$/);
+
+    const wired = loadWiredRepos();
+    const entry = Object.values(wired.wiredRepos)[0];
+    expect(entry.providerId).toBe('github');
+    expect(entry.githubOwner).toBe('acme');
+    expect(entry.githubRepo).toBe('repo');
+    expect(entry.providerBaseUrl).toBe('https://github.enterprise.example/api/v3');
   });
 
   it('concurrent-wire lock rejects a second invocation in the same process', async () => {
@@ -179,7 +255,7 @@ describe('brain wire + provider', () => {
       gitlabProjectPath: 'acme/repo',
       gitlabProvider: new GitLabProvider({ fetchImpl: fetch1 }),
       fetchImpl: fetch1,
-      installClaudeSession: false,
+      installAssistants: [],
     });
     // Second concurrent call should fail — the lock is already held.
     const fetch2 = mockGitLabFetch();
@@ -192,7 +268,7 @@ describe('brain wire + provider', () => {
       gitlabProjectPath: 'acme/repo',
       gitlabProvider: new GitLabProvider({ fetchImpl: fetch2 }),
       fetchImpl: fetch2,
-      installClaudeSession: false,
+      installAssistants: [],
     });
     // One should fail (the one that loses the lock race).
     const [firstRes, secondRes] = await Promise.allSettled([first, second]);
@@ -217,7 +293,7 @@ describe('brain unwire', () => {
       gitlabProjectPath: 'acme/repo',
       gitlabProvider: new GitLabProvider({ fetchImpl }),
       fetchImpl,
-      installClaudeSession: false,
+      installAssistants: [],
     });
 
     const unwireFetch = mockGitLabFetch();
@@ -245,7 +321,7 @@ describe('brain unwire', () => {
       gitlabProjectPath: 'acme/repo',
       gitlabProvider: new GitLabProvider({ fetchImpl }),
       fetchImpl,
-      installClaudeSession: false,
+      installAssistants: [],
     });
 
     const unauthFetch = vi.fn<typeof fetch>(async () =>

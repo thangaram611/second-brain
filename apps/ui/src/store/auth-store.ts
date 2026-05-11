@@ -22,17 +22,15 @@ export interface AuthUser {
 }
 
 const WhoamiSchema = z.object({
-  // Server returns this on every shape — `'open'` for the no-auth solo path,
-  // `'pat'` for the team flow. `userId/email/...` are present only when the
-  // request was authenticated.
-  mode: z.enum(['open', 'pat']).optional(),
+  // Server returns this on every shape. `userId/email/...` are present only
+  // when the request was authenticated.
+  mode: z.enum(['open', 'pat']),
   userId: z.string().optional(),
   email: z.string().optional(),
   role: z.string().optional(),
   namespace: z.string().optional(),
   csrfToken: z.string().optional(),
-  // The server-side stream is adding this so the UI can drop the hardcoded
-  // ws://localhost:7421 default. Optional for back-compat.
+  // Optional because local open mode may not have a team relay configured.
   relayUrl: z.string().optional(),
 });
 
@@ -136,16 +134,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         return;
       }
 
-      // The server returns `mode: 'open' | 'pat'`. If absent (older builds)
-      // fall back to detecting via csrfToken presence.
       const data = parsed.data;
-      const mode: AuthMode = data.mode ?? (data.csrfToken ? 'pat' : 'open');
       set({
         csrfToken: data.csrfToken ?? null,
         user: data.userId && data.email
           ? { id: data.userId, email: data.email, namespace: data.namespace ?? 'default' }
           : null,
-        mode,
+        mode: data.mode,
         relayUrl: data.relayUrl ?? null,
         bootstrapped: true,
         loading: false,

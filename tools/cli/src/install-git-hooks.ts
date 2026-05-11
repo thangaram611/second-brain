@@ -15,7 +15,7 @@ export interface InstallGitHooksOptions {
   repoRoot: string;
   /** Server URL the hooks POST to. */
   serverUrl: string;
-  /** Bearer token (optional — env override at runtime). */
+  /** Bearer token to embed in local hook scripts; env overrides it at runtime. */
   bearerToken?: string;
   /** Namespace to stamp on observations. */
   namespace: string;
@@ -42,10 +42,12 @@ function gitHookBody(
   name: GitHookName,
   serverUrl: string,
   namespace: string,
+  bearerToken?: string,
 ): string {
   const kind = name === 'post-commit' ? 'commit' : name === 'post-merge' ? 'merge' : 'checkout';
   const nsLit = shSingleQuote(namespace);
   const urlLit = shSingleQuote(serverUrl);
+  const tokenLit = bearerToken ? shSingleQuote(bearerToken) : "''";
   return [
     '#!/bin/sh',
     '# Installed by second-brain `brain wire`. Safe to keep alongside other',
@@ -56,6 +58,7 @@ function gitHookBody(
     `KIND=${kind}`,
     `NAMESPACE=${nsLit}`,
     `SERVER_URL=${urlLit}`,
+    `WIRED_TOKEN=${tokenLit}`,
     'REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"',
     'BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"',
     'HEAD_SHA="$(git rev-parse HEAD 2>/dev/null || echo unknown)"',
@@ -106,13 +109,18 @@ function gitHookBody(
     'JSON',
     ')',
     '',
-    'AUTH_HEADER=""',
-    '[ -n "${SECOND_BRAIN_TOKEN:-}" ] && AUTH_HEADER="-H Authorization: Bearer ${SECOND_BRAIN_TOKEN}"',
+    'TOKEN="${SECOND_BRAIN_TOKEN:-${BRAIN_AUTH_TOKEN:-$WIRED_TOKEN}}"',
     '',
-    'curl -s -m 2 -X POST "$SERVER_URL/api/observe/git-event" \\',
-    '  -H "content-type: application/json" \\',
-    '  $AUTH_HEADER \\',
-    '  -d "$BODY" >/dev/null 2>&1 || true',
+    'if [ -n "$TOKEN" ]; then',
+    '  curl -s -m 2 -X POST "$SERVER_URL/api/observe/git-event" \\',
+    '    -H "content-type: application/json" \\',
+    '    -H "Authorization: Bearer $TOKEN" \\',
+    '    -d "$BODY" >/dev/null 2>&1 || true',
+    'else',
+    '  curl -s -m 2 -X POST "$SERVER_URL/api/observe/git-event" \\',
+    '    -H "content-type: application/json" \\',
+    '    -d "$BODY" >/dev/null 2>&1 || true',
+    'fi',
     '',
     'exit 0',
     '',
@@ -156,7 +164,7 @@ export function installGitHooks(options: InstallGitHooksOptions): InstallGitHook
 
   for (const name of GIT_HOOK_NAMES) {
     const hookPath = path.join(hooksDir, name);
-    const body = gitHookBody(name, options.serverUrl, options.namespace);
+    const body = gitHookBody(name, options.serverUrl, options.namespace, options.bearerToken);
 
     // If a hook already exists and isn't ours, preserve it.
     let backupPath: string | undefined;

@@ -236,7 +236,6 @@ describe('ownership route — unbound-token namespace requirement', () => {
         mode: 'pat',
         users,
         inviteSigningKey: INVITE_KEY,
-        legacyBearerToken: null,
         secureCookies: false,
       },
     });

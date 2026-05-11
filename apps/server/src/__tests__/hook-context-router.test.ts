@@ -216,7 +216,7 @@ describe('HookContextRouter', () => {
 
   describe('prompt-submit', () => {
     it('returns block from buildRecallContextBlock for sufficient prompts', async () => {
-      seedDecision('Postgres migration', [
+      seedDecision('Postgres schema change', [
         'Postgres replaces MongoDB for relational data in service tier',
       ]);
 
@@ -224,7 +224,7 @@ describe('HookContextRouter', () => {
       // appears in the seeded decision body.
       const res = await router.routeContext({
         toolName: 'prompt-submit',
-        toolInput: { prompt: 'Postgres migration for service tier data' },
+        toolInput: { prompt: 'Postgres schema change for service tier data' },
         cwd: '/repo',
         sessionId: 's-prompt',
         namespace: NAMESPACE,

@@ -5,6 +5,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { z } from 'zod';
+import { getServerUrl } from './lib/config.js';
 
 export interface WatchOptions {
   repo: string;
@@ -105,8 +106,8 @@ export async function runWatch(options: WatchOptions): Promise<FileChangeCollect
   const repoHash = computeRepoHash(repoRoot);
   const entry = wired.wiredRepos[repoHash];
   const namespace = options.namespace ?? entry?.namespace ?? 'personal';
-  const serverUrl = options.serverUrl ?? process.env.SECOND_BRAIN_SERVER_URL ?? 'http://localhost:7430';
-  const bearerToken = options.bearerToken ?? process.env.SECOND_BRAIN_TOKEN;
+  const serverUrl = getServerUrl(options.serverUrl);
+  const bearerToken = options.bearerToken ?? process.env.SECOND_BRAIN_TOKEN ?? process.env.BRAIN_AUTH_TOKEN;
 
   const author = options.authorEmail
     ? { canonicalEmail: options.authorEmail, displayName: options.authorName }

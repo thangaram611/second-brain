@@ -221,7 +221,7 @@ export class RelationManager {
 
   /**
    * Symmetric to EntityManager.listByBranchContext — returns relations whose
-   * `properties.branchContext.branch` matches. Uses migration-002 generated
+   * `properties.branchContext.branch` matches. Uses the indexed generated
    * column on the relations table.
    */
   listByBranchContext(

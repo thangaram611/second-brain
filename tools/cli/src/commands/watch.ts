@@ -6,8 +6,8 @@ export function registerWatchCommand(program: Command): void {
     .description('Run the file-change + branch-change daemon for a wired repo')
     .option('--repo <path>', 'Repo root (defaults to cwd)')
     .option('-n, --namespace <ns>', 'Override namespace (defaults to wired value or personal)')
-    .option('--server-url <url>', 'Server URL (defaults to http://localhost:7430 or $SECOND_BRAIN_SERVER_URL)')
-    .option('--token <token>', 'Bearer token (or $SECOND_BRAIN_TOKEN)')
+    .option('--server-url <url>', 'Server URL (defaults to BRAIN_API_URL/BRAIN_SERVER_URL/SECOND_BRAIN_SERVER_URL or localhost)')
+    .option('--token <token>', 'Bearer token (or $SECOND_BRAIN_TOKEN / $BRAIN_AUTH_TOKEN)')
     .option('--author-email <email>', 'Override git config user.email')
     .option('--author-name <name>', 'Override git config user.name')
     .action(async (options: {

@@ -63,7 +63,7 @@ brain wire
 
 What happens:
 
-1. Installs `.git/hooks/{pre-commit,post-commit,post-merge}` to observe file
+1. Installs `.git/hooks/{post-commit,post-merge,post-checkout}` to observe file
    and branch changes.
 2. Installs Claude Code session hooks (skip with `--no-claude`).
 3. Records the repo in `~/.second-brain/config.json` with its namespace
@@ -76,7 +76,7 @@ What happens:
 | `--repo <path>`               | Repo root (auto-detects from cwd)                    |
 | `-n, --namespace <ns>`        | Namespace for observations                           |
 | `--server-url <url>`          | Server URL (default: `http://localhost:7430`)         |
-| `--token <token>`             | Bearer token for server auth                         |
+| `--token <token>`             | Bearer token embedded in local git hooks             |
 | `--require-project`           | Fail if no project namespace is set (CI use)         |
 | `--no-claude`                 | Skip Claude Code session hook install                |
 | `--skip-if-claude-mem`        | Abort if claude-mem hooks are present                |
@@ -108,7 +108,9 @@ What happens:
    (`gitlab.webhook-token:<projectId>`).
 4. Registers a webhook on the GitLab project scoped to
    `merge_requests_events`, `note_events`, and `pipeline_events`.
-5. Stores the PAT in the keychain (`gitlab.pat:<host>`).
+5. Prints the `server env: export ...` variable the server needs for webhook
+   verification.
+6. Stores the PAT in the keychain (`gitlab.pat:<host>`).
 
 ### GitHub Provider
 
@@ -122,6 +124,7 @@ Auto-detects the owner and repo name from `git remote -v`. Override with:
 |-------------------------------|------------------------------------------------------|
 | `--github-owner <owner>`      | Repository owner (auto-detected)                     |
 | `--github-repo <repo>`        | Repository name (auto-detected)                      |
+| `--github-base-url <url>`     | GitHub API base URL (auto-detected for Enterprise remotes) |
 | `--github-token <pat>`        | PAT (env: `SECOND_BRAIN_GITHUB_TOKEN` or `GITHUB_TOKEN`) |
 
 **Token requirements:** Classic PAT with `repo` + `admin:repo_hook` scopes, or
@@ -135,7 +138,9 @@ What happens:
 3. Registers a webhook on the GitHub repo with HMAC-SHA256 signing, scoped to
    `pull_request`, `pull_request_review`, `pull_request_review_comment`, and
    `check_suite` events.
-4. Stores the PAT in the keychain (`github.pat:github.com`).
+4. Prints the `server env: export ...` variable the server needs for webhook
+   verification.
+5. Stores the PAT in the keychain (`github.pat:<api-host>`).
 
 ---
 

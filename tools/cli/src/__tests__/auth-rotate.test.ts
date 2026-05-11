@@ -102,7 +102,7 @@ describe('resolveToken — slot annotation', () => {
   it('returns slot=cli when only cliTokenId is set', async () => {
     // Bypass strict schema: write a manual credentials JSON with only cliTokenId.
     // The strict writer requires defaultTokenId; the resolver tolerates absent
-    // defaults to support legacy / hand-edited files.
+    // defaults to support hand-edited files.
     const dir = path.join(tmp, '.second-brain', 'credentials');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(

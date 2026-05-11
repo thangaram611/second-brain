@@ -20,7 +20,6 @@ beforeEach(() => {
       mode: 'pat',
       users,
       inviteSigningKey: INVITE_KEY,
-      legacyBearerToken: null,
       secureCookies: false,
     },
   });

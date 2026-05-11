@@ -41,7 +41,6 @@ beforeEach(() => {
       mode: 'pat',
       users,
       inviteSigningKey: INVITE_KEY,
-      legacyBearerToken: null,
       secureCookies: false,
     },
   });
@@ -127,7 +126,7 @@ describe('cross-namespace authz — entity ID routes', () => {
       .post('/api/entities')
       .set('Authorization', `Bearer ${pat}`)
       .send({ type: 'file', name: 'x.ts', namespace: 'beta' });
-    // The middleware itself catches this via pickRequestedNamespace.
+    // The middleware itself catches this while collecting requested namespaces.
     expect(res.status).toBe(403);
   });
 

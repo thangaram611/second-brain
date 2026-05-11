@@ -1,6 +1,5 @@
 import { createServer } from 'node:http';
 import path from 'node:path';
-import type { WebhookSecret } from '@second-brain/collectors';
 import { GitLabProvider, GitHubProvider } from '@second-brain/collectors';
 import {
   getServices,
@@ -15,6 +14,7 @@ import {
 } from './lib/wired-repos-loader.js';
 import { startPersonalityScheduler } from './services/personality-scheduler.js';
 import { loadSigningKeys, requireSigningKeys } from './lib/signing-keys.js';
+import { loadWebhookSecretsFromEnv } from './lib/webhook-secrets.js';
 import { UsersService } from './services/users.js';
 import type { AuthMode } from './middleware/auth.js';
 
@@ -26,13 +26,6 @@ const authMode: AuthMode = rawAuthMode === 'pat' ? 'pat' : 'open';
 const signingKeys = loadSigningKeys();
 if (authMode === 'pat') {
   requireSigningKeys(signingKeys);
-  if (process.env.BRAIN_AUTH_TOKEN) {
-    console.warn(
-      '[second-brain] WARNING: BRAIN_AUTH_TOKEN is set in team mode (BRAIN_AUTH_MODE=pat). ' +
-        'Legacy bearer auth will continue to work as an admin fallback; remove the env var ' +
-        'after team migration to disable the fallback.',
-    );
-  }
 }
 
 const usersDbPath =
@@ -49,22 +42,7 @@ for (const entry of buildProviderNamespaceEntries(wiredConfig)) {
 }
 
 // Build webhook-secret map from env (keychain is a CLI-side concern).
-// Format: SECOND_BRAIN_WEBHOOK_SECRET__<provider>__<projectId>=<token>
-const webhookSecrets = new Map<string, WebhookSecret>();
-for (const [envKey, envValue] of Object.entries(process.env)) {
-  const match = envKey.match(/^SECOND_BRAIN_WEBHOOK_SECRET__([a-z]+)__(.+)$/);
-  if (match && typeof envValue === 'string' && envValue.length > 0) {
-    webhookSecrets.set(`${match[1]}:${match[2]}`, { kind: 'token', value: envValue });
-  }
-}
-
-// Check for HMAC-style secrets too
-for (const [envKey, envValue] of Object.entries(process.env)) {
-  const hmacMatch = envKey.match(/^SECOND_BRAIN_WEBHOOK_HMAC__([a-z]+)__(.+)$/);
-  if (hmacMatch && typeof envValue === 'string' && envValue.length > 0) {
-    webhookSecrets.set(`${hmacMatch[1]}:${hmacMatch[2]}`, { kind: 'hmac', key: envValue });
-  }
-}
+const webhookSecrets = loadWebhookSecretsFromEnv();
 
 // Build provider registry for observe routes
 const providerRegistry = new Map<string, import('@second-brain/collectors').GitProvider>();
@@ -109,7 +87,6 @@ const app = createApp(brain, {
     mode: authMode,
     users: usersService,
     inviteSigningKey: signingKeys.inviteSigningKey,
-    legacyBearerToken: process.env.BRAIN_AUTH_TOKEN ?? null,
   },
 });
 const server = createServer(app);

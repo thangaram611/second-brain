@@ -10,7 +10,7 @@ import type { UsersService } from '../services/users.js';
 
 /**
  * Resolve the namespace for an ownership lookup. Wraps `resolveScopedNamespace`
- * with the extra rule that even open / legacy mode (no auth wired) MUST receive
+ * with the extra rule that open mode (no auth wired) MUST receive
  * an explicit `?namespace=` — the underlying SQL filter has no sensible
  * fallback. Returns:
  *   - `string` → the namespace to use
@@ -25,7 +25,7 @@ function resolveOwnershipNamespace(
   const ns = resolveScopedNamespace(req, res, requested, users ?? null);
   if (ns === null) return null;
   if (ns === undefined) {
-    // Open / legacy mode — no auth gate to require namespace, but the service
+    // Open mode — no auth gate to require namespace, but the service
     // still needs one. Reject explicitly rather than silently scanning all.
     if (!requested) {
       res.status(400).json({ error: 'namespace-required' });

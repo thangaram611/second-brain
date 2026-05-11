@@ -8,10 +8,9 @@
  * (re-run `brain init client` or read pointers from `whoami`); losing the
  * keychain entry requires `brain auth rotate`.
  *
- * The legacy permissive reader at `lib/resolve-token.ts:readCredentials` is
- * kept around for the hook-binary's hot-path (it tolerates future fields
- * the user hasn't migrated past). New writers always use the strict schema
- * here.
+ * The permissive reader at `lib/resolve-token.ts:readCredentials` is used
+ * for the hook-binary's hot-path so future fields are tolerated by older
+ * hook processes. New writers always use the strict schema here.
  */
 
 import * as fs from 'node:fs';

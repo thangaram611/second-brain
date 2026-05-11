@@ -263,7 +263,7 @@ Pre-reqs: `brain init` completed; `brain serve` running at
    ```
    Expected: webhook removed from GitHub *Settings → Webhooks*; keychain
    entries `github.webhook-secret:<owner>/<repo>` and
-   `github.pat:github.com` removed; `~/.second-brain/config.json` no
+   `github.pat:<api-host>` removed; `~/.second-brain/config.json` no
    longer lists this repo. Historical PR entities remain recallable.
 
 ### B. Custom Provider (Gitea)

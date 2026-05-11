@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import * as schema from '../schema/index.js';
 import { loadSqliteVec, createVecTable, recreateVecTable } from './vec-extension.js';
-import { runMigrations, ALL_MIGRATIONS } from './migrations/index.js';
+import { initializeStorageSchema } from './schema-init.js';
 
 export type DrizzleDB = ReturnType<typeof createDrizzle>;
 
@@ -42,10 +42,7 @@ export class StorageDatabase {
 
     this.db = createDrizzle(this.sqlite);
 
-    // Run versioned schema migrations. The runner reads PRAGMA user_version
-    // and applies any migrations whose version is greater, transactionally.
-    // Fails fast if the DB is from a newer build than this binary knows about.
-    runMigrations(this.sqlite, ALL_MIGRATIONS);
+    initializeStorageSchema(this.sqlite);
 
     if (typeof options.vectorDimensions === 'number') {
       this.enableVectorSearch(options.vectorDimensions);

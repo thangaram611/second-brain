@@ -15,11 +15,11 @@
  * - The session cookie is `Secure; HttpOnly; SameSite=Lax`. CSRF is
  *   enforced for session-authed write requests at the middleware layer.
  */
-import { Router, type Response } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { verifyInvite } from '../lib/invite.js';
 import type { UsersService, Scope } from '../services/users.js';
-import { SESSION_COOKIE, type RequestWithUser, type AuthMode } from '../middleware/auth.js';
+import { SESSION_COOKIE, type AuthMode } from '../middleware/auth.js';
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const PAT_TTL_MS = 90 * 24 * 60 * 60 * 1000;    // 90 days
@@ -36,10 +36,9 @@ export interface AuthRoutesOptions {
   /** Whether to set the `Secure` cookie attribute. Default true; tests pass false. */
   secureCookies?: boolean;
   /**
-   * Auth mode the server is configured with. `whoami` uses this to keep the
-   * solo (`open`) UI back-compat: in open mode, an unauth'd `GET /api/auth/whoami`
-   * returns 200 with `{ mode: "open" }` instead of 401, so the React bootstrap
-   * doesn't bounce solo users to /login.
+   * Auth mode the server is configured with. In open mode, an unauth'd
+   * `GET /api/auth/whoami` returns 200 with `{ mode: "open" }`, so the React
+   * bootstrap can avoid routing local users to /login.
    */
   authMode?: AuthMode;
 }
@@ -182,7 +181,7 @@ export function authRoutes(options: AuthRoutesOptions): Router {
     }
   });
 
-  router.post('/api/auth/logout', (req: RequestWithUser, res, next) => {
+  router.post('/api/auth/logout', (req: Request, res, next) => {
     try {
       if (req.user?.sessionId) {
         users.deleteSession(req.user.sessionId);
@@ -194,12 +193,10 @@ export function authRoutes(options: AuthRoutesOptions): Router {
     }
   });
 
-  router.get('/api/auth/whoami', (req: RequestWithUser, res) => {
+  router.get('/api/auth/whoami', (req: Request, res) => {
     if (!req.user) {
-      // In open mode (solo back-compat) return a 200 stub so the UI bootstrap
-      // can detect the mode without bouncing to /login. In pat mode return 401
-      // — the auth middleware would have already 401'd at /api/* but whoami is
-      // mounted alongside it and we don't want the body to leak user info.
+      // In open mode return a 200 stub so the UI bootstrap can detect the mode
+      // without bouncing to /login. In pat mode return 401.
       if (authMode === 'open') {
         res.json({ mode: 'open' });
         return;
@@ -220,7 +217,7 @@ export function authRoutes(options: AuthRoutesOptions): Router {
     });
   });
 
-  router.post('/api/auth/rotate', async (req: RequestWithUser, res, next) => {
+  router.post('/api/auth/rotate', async (req: Request, res, next) => {
     try {
       if (!req.user) {
         res.status(401).json({ error: 'unauthorized' });

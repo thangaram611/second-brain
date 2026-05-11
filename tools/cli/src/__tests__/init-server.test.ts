@@ -207,7 +207,7 @@ describe('runInitServer (macOS/launchd)', () => {
     expect(plist).not.toContain('BRAIN_SERVER_SIGNING_KEY');
     expect(plist).not.toContain('BRAIN_INVITE_SIGNING_KEY');
     expect(plist).not.toContain('RELAY_AUTH_SECRET');
-    // Must source the env file via shell shim.
+    // Must source the env file via shell wrapper.
     expect(plist).toContain(result.secretsPath);
   });
 });
@@ -268,7 +268,7 @@ describe('renderSystemdUnit / renderLaunchdPlist (snapshots)', () => {
 
   it('launchd plist single-quotes path arguments to handle spaces in install/secret paths', () => {
     // A user with spaces in their home dir (common on macOS) must not break
-    // the /bin/sh -c body. The shim should produce something like
+    // the /bin/sh -c body. The wrapper should produce something like
     //   set -a; . '/Users/Jane Doe/.../secrets.env'; set +a; exec '/usr/bin/node' '/Volumes/My Drive/sb/.../index.mjs'
     const plist = renderLaunchdPlist({
       installDir: '/Volumes/My Drive/second-brain',
@@ -284,9 +284,9 @@ describe('renderSystemdUnit / renderLaunchdPlist (snapshots)', () => {
     expect(plist).toContain(`'/Volumes/My Drive/second-brain/apps/server/dist/index.mjs'`);
     // Make sure unquoted paths with spaces aren't sneaking through anywhere
     // in the shell-command string.
-    const shimMatch = plist.match(/<string>set -a;[^<]+<\/string>/);
-    expect(shimMatch).not.toBeNull();
-    expect(shimMatch![0]).not.toMatch(/\. \/Users\/Jane Doe/);
+    const wrapperMatch = plist.match(/<string>set -a;[^<]+<\/string>/);
+    expect(wrapperMatch).not.toBeNull();
+    expect(wrapperMatch![0]).not.toMatch(/\. \/Users\/Jane Doe/);
   });
 
   it('launchd plist correctly escapes single-quotes in paths', () => {

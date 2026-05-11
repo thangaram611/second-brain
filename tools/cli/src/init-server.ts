@@ -17,7 +17,7 @@
  *   2. Write `secrets.env` mode 0600 to /etc/second-brain (Linux) or
  *      ~/.second-brain (macOS / fallback). Refuse to overwrite without --force.
  *   3. Open + close Brain (storage-dir/brain.db) and UsersService
- *      (storage-dir/users.db) so migrations apply.
+ *      (storage-dir/users.db) so schemas are initialized.
  *   4. Render the systemd unit (Linux) or launchd plist (macOS) with the
  *      Tier-1 hardening directives from the plan.
  *   5. Mint a bootstrap admin PAT (default 90d expiry).
@@ -261,15 +261,15 @@ export function renderLaunchdPlist(args: {
   // XML, not shell), but they DO need XML-escaping if a path contained
   // `<`/`>`/`&`/`"` — exceedingly unlikely in a filesystem path, but we
   // pass them through as-is and document the constraint.
-  const shimSecrets = shSingleQuote(args.secretsPath);
-  const shimNode = shSingleQuote(args.nodeBin);
-  const shimEntry = shSingleQuote(`${args.installDir}/apps/server/dist/index.mjs`);
+  const shellSecrets = shSingleQuote(args.secretsPath);
+  const shellNode = shSingleQuote(args.nodeBin);
+  const shellEntry = shSingleQuote(`${args.installDir}/apps/server/dist/index.mjs`);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!--
   Second Brain server (macOS launchd agent).
   Written by \`brain init server\`. Secrets live in ${args.secretsPath} (mode 0600);
   this plist deliberately omits EnvironmentVariables for sensitive values — a
-  small shim sources the env file at startup.
+  small shell wrapper sources the env file at startup.
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -280,7 +280,7 @@ export function renderLaunchdPlist(args: {
   <array>
     <string>/bin/sh</string>
     <string>-c</string>
-    <string>set -a; . ${shimSecrets}; set +a; exec ${shimNode} ${shimEntry}</string>
+    <string>set -a; . ${shellSecrets}; set +a; exec ${shellNode} ${shellEntry}</string>
   </array>
   <key>WorkingDirectory</key>
   <string>${args.installDir}</string>
@@ -385,7 +385,7 @@ export async function runInitServer(options: InitServerOptions = {}): Promise<In
   fs.mkdirSync(relayPersistDir, { recursive: true });
   fs.mkdirSync(path.join(storageDir, 'logs'), { recursive: true });
 
-  // 2. Apply migrations by opening + closing each DB.
+  // 2. Initialize schemas by opening + closing each DB.
   const brain = new Brain({ path: brainDbPath });
   brain.close();
   const usersSvc = new UsersService({ path: usersDbPath });

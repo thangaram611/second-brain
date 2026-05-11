@@ -241,7 +241,11 @@ describe('runInitClient — with team.json in cwd', () => {
       stdout: sinkStdout,
     });
     expect(result.wiredRepoRoot).toBe(repo);
-    expect(fs.existsSync(path.join(repo, '.git', 'hooks', 'post-commit'))).toBe(true);
+    const hookPath = path.join(repo, '.git', 'hooks', 'post-commit');
+    expect(fs.existsSync(hookPath)).toBe(true);
+    expect(fs.readFileSync(hookPath, 'utf8')).toContain(
+      "WIRED_TOKEN='sbp_aaaaaaaa_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_3i8aJj'",
+    );
   });
 
   it('--no-wire skips wiring even when a manifest is present', async () => {

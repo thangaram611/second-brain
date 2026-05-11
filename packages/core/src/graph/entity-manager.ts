@@ -173,7 +173,7 @@ export class EntityManager {
    * parameters match JSON numbers, string parameters match JSON strings.
    * Uses the `entities.properties` TEXT column directly — no generated
    * column is required, so callers can key on arbitrary paths without a
-   * migration.
+   * schema change.
    *
    * Phase 10.3 uses this for MR dedup on `(type='merge_request',
    * properties.projectId, properties.iid)` because `findByName` is a
@@ -238,8 +238,7 @@ export class EntityManager {
 
   /**
    * List every entity whose `properties.branchContext.branch` matches the
-   * given branch. Uses the `branch_context_branch` generated column from
-   * migration 002 — index-backed, O(log n).
+   * given branch. Uses the indexed `branch_context_branch` generated column.
    */
   listByBranchContext(
     branch: string,

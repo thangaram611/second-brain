@@ -217,8 +217,8 @@ function checkAuthTokenEnv(): CheckResult {
   }
   return {
     name: 'BRAIN_AUTH_TOKEN env',
-    status: 'pass',
-    message: 'set to a non-PAT (legacy bearer mode).',
+    status: 'warn',
+    message: 'set to a non-PAT; most auth paths expect sbp_ PATs. Unset it or replace it with a minted PAT.',
   };
 }
 
@@ -532,7 +532,6 @@ function readManifestSnapshots(snapshotPath: string): ManifestSnapshot {
   }
   const result = ManifestSnapshotSchema.safeParse(parsed);
   if (result.success) return result.data;
-  // Legacy/un-versioned shape — start fresh; the next write upgrades it.
   return { version: 1, hashes: {} };
 }
 

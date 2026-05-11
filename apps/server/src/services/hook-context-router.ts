@@ -14,7 +14,7 @@ import { HookContextCache, PER_SESSION_BYTE_CAP } from './hook-context-cache.js'
  * compact markdown block that the assistant injects into its model context.
  * Stays within strict caps (4KB per block, 32KB cumulative per session, 8 entities,
  * 280-char truncated observations) — see plan §A. All work is server-side; the
- * CLI hook stays an HTTP-thin shim.
+ * CLI hook stays an HTTP-thin adapter.
  *
  * Quiet-mode rules return `null`:
  *  - empty entity set
@@ -574,7 +574,7 @@ function looksLikePath(t: string): boolean {
 
 function findEntitiesBySourceRef(brain: Brain, namespace: string, sourceRef: string): Entity[] {
   // The FTS5 virtual table doesn't index `source_ref`, so we use raw SQL backed
-  // by `idx_entities_namespace_source_ref` (migration 002). Drizzle's typed
+  // by `idx_entities_namespace_source_ref`. Drizzle's typed
   // builder doesn't know about every column shape we map back via
   // `rawRowToEntity`, so we go through the prepared statement directly and
   // validate the row shape with Zod.

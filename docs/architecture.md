@@ -3,7 +3,7 @@
 > **Shared source of truth** for the Second Brain developer knowledge graph.
 > Referenced by Cursor rules, Copilot instructions, MCP tool configs, and onboarding docs.
 >
-> Last verified against codebase: 2025-07
+> Last verified against codebase: 2026-05
 
 ---
 
@@ -146,7 +146,7 @@ relay (standalone Hocuspocus server)
 
 - **SQLite** via `better-sqlite3`, WAL mode for concurrent reads
 - **Drizzle ORM** for type-safe schema definition and queries
-- **1 versioned migration** (`001-initial.ts`)
+- **Single current schema initializer** (`src/storage/schema-init.ts`)
 
 ### Indexes
 
@@ -429,7 +429,7 @@ Commander.js-based CLI invoked as `brain`.
 
 | Category | Commands |
 |----------|----------|
-| **Setup** | `init`, `reset`, `install-hooks`, `uninstall-hooks` |
+| **Setup** | `init`, `reset`, `wire-assistant`, `unwire-assistant` |
 | **Entities** | `add`, `decide`, `personal` |
 | **Indexing** | `index`, `git`, `ast`, `github`, `docs`, `conversation`, `co-ingest-claude-mem` |
 | **Search** | `search`, `query`, `recall` |

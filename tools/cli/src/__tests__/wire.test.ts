@@ -40,7 +40,7 @@ afterEach(() => {
 });
 
 describe('installGitHooks / uninstallGitHooks', () => {
-  it('writes post-commit, post-merge, post-checkout shims under .git/hooks', () => {
+  it('writes post-commit, post-merge, post-checkout scripts under .git/hooks', () => {
     const result = installGitHooks({
       repoRoot: tmpDir,
       serverUrl: 'http://localhost:7430',
@@ -54,6 +54,7 @@ describe('installGitHooks / uninstallGitHooks', () => {
       const content = fs.readFileSync(hookPath, 'utf8');
       expect(content).toContain('Installed by second-brain `brain wire`');
       expect(content).toContain("SERVER_URL='http://localhost:7430'");
+      expect(content).toContain('TOKEN="${SECOND_BRAIN_TOKEN:-${BRAIN_AUTH_TOKEN:-$WIRED_TOKEN}}"');
       expect(content).toContain('/api/observe/git-event');
       // Executable mode bit should be set.
       const mode = fs.statSync(hookPath).mode & 0o777;
@@ -61,6 +62,18 @@ describe('installGitHooks / uninstallGitHooks', () => {
     }
     // Sidecar file exists
     expect(fs.existsSync(result.sidecarPath)).toBe(true);
+  });
+
+  it('honors an explicit bearer token in installed git hooks', () => {
+    installGitHooks({
+      repoRoot: tmpDir,
+      serverUrl: 'http://localhost:7430',
+      namespace: 'proj',
+      bearerToken: `sbp_token'with-quote`,
+    });
+    const hook = fs.readFileSync(path.join(tmpDir, '.git', 'hooks', 'post-commit'), 'utf8');
+    expect(hook).toContain(`WIRED_TOKEN='sbp_token'\\''with-quote'`);
+    expect(hook).toContain('-H "Authorization: Bearer $TOKEN"');
   });
 
   it('backs up a pre-existing user hook before overwriting', () => {
@@ -135,7 +148,7 @@ describe('runWire / runUnwire (integration)', () => {
       const result = await runWire({
         repo: tmpDir,
         namespace: 'myproj',
-        installClaudeSession: false,
+        installAssistants: [],
       });
       expect(result.namespace).toBe('myproj');
       expect(result.gitHooks.installed.length).toBe(3);
@@ -158,6 +171,29 @@ describe('runWire / runUnwire (integration)', () => {
     }
   });
 
+  it('uses BRAIN_API_URL as the default hook server URL', async () => {
+    const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'brain-wire-home-'));
+    const previous = process.env.BRAIN_API_URL;
+    try {
+      swapHome(fakeHome);
+      process.env.BRAIN_API_URL = 'http://brain.example.test:7430';
+      const { runWire } = await import('../wire.js');
+
+      await runWire({
+        repo: tmpDir,
+        namespace: 'myproj',
+        installAssistants: [],
+      });
+
+      const hook = fs.readFileSync(path.join(tmpDir, '.git', 'hooks', 'post-commit'), 'utf8');
+      expect(hook).toContain("SERVER_URL='http://brain.example.test:7430'");
+    } finally {
+      if (previous === undefined) delete process.env.BRAIN_API_URL;
+      else process.env.BRAIN_API_URL = previous;
+      fs.rmSync(fakeHome, { recursive: true, force: true });
+    }
+  });
+
   it('warns and falls back to personal when no project namespace is set', async () => {
     const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'brain-wire-home-ns-'));
     try {
@@ -165,7 +201,7 @@ describe('runWire / runUnwire (integration)', () => {
       const { runWire } = await import('../wire.js');
       const result = await runWire({
         repo: tmpDir,
-        installClaudeSession: false,
+        installAssistants: [],
       });
       expect(result.namespace).toBe('personal');
       expect(result.warnings.some((w) => w.includes('no project namespace'))).toBe(true);
@@ -180,7 +216,7 @@ describe('runWire / runUnwire (integration)', () => {
       swapHome(fakeHome);
       const { runWire } = await import('../wire.js');
       await expect(
-        runWire({ repo: tmpDir, installClaudeSession: false, requireProject: true }),
+        runWire({ repo: tmpDir, installAssistants: [], requireProject: true }),
       ).rejects.toThrow(/no project namespace set/);
     } finally {
       fs.rmSync(fakeHome, { recursive: true, force: true });

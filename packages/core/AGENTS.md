@@ -23,7 +23,7 @@ Knowledge graph engine. SQLite + Drizzle ORM + FTS5 + sqlite-vec.
 ## Schema
 
 Drizzle schema: `src/schema/entities.ts`
-Migrations: `src/storage/migrations/`
+SQLite initializer: `src/storage/schema-init.ts`
 
 ## Architecture Decisions
 

@@ -4,9 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import lockfile from 'proper-lockfile';
 import { GitLabProvider, GitHubProvider } from '@second-brain/collectors';
-import {
-  uninstallClaudeHooks,
-} from './install-claude-hooks.js';
+import { ADAPTERS } from './adapters/index.js';
 import {
   uninstallGitHooks,
   type UninstallGitHooksResult,
@@ -163,7 +161,11 @@ async function runUnwireInternal(options: UnwireOptions): Promise<UnwireResult> 
 
   let claudeRemoved: string[] | null = null;
   if (options.removeClaudeHooks) {
-    const res = uninstallClaudeHooks({ scope: 'user' });
+    const res = ADAPTERS.claude.uninstall({
+      scope: 'user',
+      home: os.homedir(),
+      cwd: repoRoot,
+    });
     claudeRemoved = res.removed;
   }
 

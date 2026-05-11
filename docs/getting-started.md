@@ -55,7 +55,7 @@ pnpm build
 The `brain` CLI is now available via the `tools/cli` package. You can run it directly:
 
 ```bash
-pnpm --filter @second-brain/cli dev -- <command>
+pnpm --filter @second-brain/cli dev <command>
 ```
 
 Or link it globally after building:
@@ -82,10 +82,14 @@ Commands:
   status            Show brain statistics
   index             Index development activity
   embed             Generate vector embeddings
+  admin             Server-admin operations
+  auth              Authentication helpers
   export            Export the knowledge graph
   import            Import entities + relations
   wire              Wire up a repository
   unwire            Reverse wire
+  wire-assistant    Install AI assistant hooks
+  unwire-assistant  Remove AI assistant hooks
   watch             Run file-change daemon
   sync              Team sync commands
   recall            Build context block
@@ -296,7 +300,7 @@ Brain Status
 
   Relations:
     depends_on      1,204
-    references        891
+    relates_to        891
     implements        340
     ...
 ```
@@ -340,10 +344,10 @@ brain add concept "React Hooks" -o "Use deps array to control re-renders" -t rea
 brain add tool "Vitest" -o "Fast unit test runner" -o "Compatible with Jest API" -t testing
 brain add pattern "Repository Pattern" -o "Abstract data access behind interface" -t architecture
 brain add fact "Node 22 LTS" -o "Released October 2024" -t node runtime
-brain add technique "Trunk-Based Dev" -o "Short-lived branches merged daily" -t git workflow
+brain add concept "Trunk-Based Development" -o "Short-lived branches merged daily" -t git workflow
 ```
 
-Supported types: `concept`, `decision`, `pattern`, `fact`, `tool`, `technique`, `reference`, `person`, `process`.
+Supported types: `concept`, `decision`, `pattern`, `person`, `file`, `symbol`, `event`, `tool`, `fact`, `conversation`, `reference`, `pull_request`, `merge_request`, `branch`, `review`.
 
 | Flag | Description |
 |------|-------------|
@@ -415,7 +419,7 @@ brain wire --repo . --namespace my-project
 ```
 
 This installs:
-- **Git hooks** — `pre-commit`, `post-commit`, `post-checkout`
+- **Git hooks** — `post-commit`, `post-merge`, `post-checkout`
 - **Claude Code session hooks** — captures AI pair-programming sessions
 - **Config registration** — adds repo to `wiredRepos` in brain config
 
@@ -424,9 +428,9 @@ This installs:
 | `--repo <path>` | Repository root (auto-detected via git) |
 | `-n, --namespace <ns>` | Namespace override |
 | `--server-url <url>` | Server URL for hook POST targets |
-| `--token <token>` | Bearer token for authentication |
+| `--token <token>` | Bearer token embedded into local git hooks; `SECOND_BRAIN_TOKEN` or `BRAIN_AUTH_TOKEN` override it at runtime |
 | `--no-claude` | Skip Claude Code session hook install |
-| `--provider <name>` | Forge provider: `gitlab` (GitHub coming soon) |
+| `--provider <name>` | Forge provider: `gitlab` or `github` |
 
 ### File-change daemon
 
@@ -442,7 +446,7 @@ Runs a persistent daemon that monitors file changes and branch switches, posting
 | `--repo <path>` | `.` | Repository root |
 | `-n, --namespace <ns>` | — | Override namespace |
 | `--server-url <url>` | `http://localhost:7430` | Server URL |
-| `--token <token>` | `$SECOND_BRAIN_TOKEN` | Bearer token |
+| `--token <token>` | `$SECOND_BRAIN_TOKEN` or `$BRAIN_AUTH_TOKEN` | Bearer token |
 
 ### Unwire
 
@@ -549,7 +553,7 @@ brain personal stats --audit                        # Detailed provenance per en
 
 ## MCP Integration (Claude Code)
 
-Second Brain exposes a Model Context Protocol (MCP) server with **30 tools** that Claude Code (and other MCP clients) can call directly.
+Second Brain exposes a Model Context Protocol (MCP) server with **32 tools** that Claude Code (and other MCP clients) can call directly.
 
 ### Automatic setup
 
@@ -577,7 +581,7 @@ Add to your MCP configuration (e.g., `~/.claude.json` or VS Code MCP settings):
 }
 ```
 
-### Available MCP tools (30 total)
+### Available MCP tools (32 total)
 
 **Read tools (15):**
 
@@ -616,13 +620,15 @@ Add to your MCP configuration (e.g., `~/.claude.json` or VS Code MCP settings):
 | `dismiss_contradiction` | Dismiss a contradiction |
 | `flip_branch_status` | Manually change branch status |
 
-**Pipeline tools (3):**
+**Pipeline tools (5):**
 
 | Tool | Description |
 |------|-------------|
 | `reindex` | Rebuild FTS5 search index |
 | `export_graph` | Export knowledge graph (JSON, JSON-LD, DOT) |
 | `import_graph` | Import graph data |
+| `rebuild_embeddings` | Generate or refresh vector embeddings |
+| `query_graph` | Natural-language query over the graph |
 
 ### MCP transport modes
 
@@ -671,17 +677,21 @@ All environment variables with their defaults and descriptions.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `BRAIN_AUTH_MODE` | `open` | `open` for local development, `pat` for invite/PAT-protected team mode |
 | `BRAIN_AUTH_TOKEN` | — | Bearer token for API authentication |
 | `RELAY_AUTH_SECRET` | — | **Required for relay** — shared secret for sync authentication |
-| `GITHUB_TOKEN` | — | GitHub PAT for `brain index github` |
-| `GITLAB_TOKEN` | — | GitLab PAT for provider integration |
+| `GITHUB_TOKEN` | — | GitHub PAT for `brain index github`; fallback for GitHub provider wiring |
+| `SECOND_BRAIN_GITHUB_TOKEN` | — | GitHub PAT for `brain wire --provider github` |
+| `SECOND_BRAIN_GITLAB_TOKEN` / `GITLAB_TOKEN` | — | GitLab PAT for `brain wire --provider gitlab` |
 | `SECOND_BRAIN_TOKEN` | — | Auth token for git hook daemon |
+| `SECOND_BRAIN_WEBHOOK_SECRET_HEX__<provider>__<hexProjectId>` | — | Token webhook verification secret printed by `brain wire --provider` |
+| `SECOND_BRAIN_WEBHOOK_HMAC_HEX__<provider>__<hexProjectId>` | — | HMAC webhook verification secret printed by `brain wire --provider` |
 
 ### Server Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SECOND_BRAIN_SERVER_URL` | `http://localhost:7430` | Server URL for CLI/hooks |
+| `BRAIN_API_URL` / `BRAIN_SERVER_URL` / `SECOND_BRAIN_SERVER_URL` | `http://localhost:7430` | Server URL for CLI/hooks |
 | `SECOND_BRAIN_RELAY_URL` | — | Custom relay URL |
 | `BRAIN_PROMOTION_CONFIDENCE_MIN` | `0.6` | Minimum confidence for entity promotion |
 | `SESSION_RETENTION_DAYS` | `30` | Session data retention (days) |
@@ -716,7 +726,7 @@ The CLI isn't linked globally. Either:
 cd tools/cli && pnpm link --global
 
 # Option 2: Run via pnpm
-pnpm --filter @second-brain/cli dev -- <command>
+pnpm --filter @second-brain/cli dev <command>
 
 # Option 3: Run the built binary directly
 node tools/cli/dist/index.mjs <command>

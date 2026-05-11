@@ -72,6 +72,19 @@ describe('Sync routes', () => {
 
       expect(res.body).toBeDefined();
     });
+
+    it('rejects non-websocket relay URLs with 400', async () => {
+      const res = await request(app)
+        .post('/api/sync/join')
+        .send({
+          namespace: 'project-x',
+          relayUrl: 'https://localhost:7421',
+          token: 'some-token',
+        })
+        .expect(400);
+
+      expect(res.body).toBeDefined();
+    });
   });
 
   describe('POST /api/sync/leave', () => {

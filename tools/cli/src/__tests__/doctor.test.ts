@@ -332,8 +332,8 @@ describe('runDoctor — manifest drift', () => {
     expect(Object.keys(raw.hashes)).toHaveLength(1);
   });
 
-  it('treats a legacy un-versioned snapshot file as fresh (no crash, re-records)', async () => {
-    // Pre-seed the snapshot file with the old un-versioned shape.
+  it('treats an invalid snapshot file as fresh (no crash, re-records)', async () => {
+    // Pre-seed the snapshot file with an invalid shape.
     const snapshotPath = path.join(homeOverride, '.second-brain', '.manifest-snapshots.json');
     fs.mkdirSync(path.dirname(snapshotPath), { recursive: true });
     fs.writeFileSync(snapshotPath, JSON.stringify({ somehash: 'oldvalue' }));
@@ -367,8 +367,7 @@ describe('runDoctor — manifest drift', () => {
       stdout: sinkStdout,
       fetchImpl: fakeFetch(async () => new Response('', { status: 200 })),
     });
-    // First run after upgrade reports `recorded for first time` (legacy entry
-    // is ignored; new schema replaces it).
+    // Invalid entries are ignored; the current schema replaces them.
     const m = result.checks.find((c) => c.name.startsWith('team manifest'));
     expect(m?.status).toBe('pass');
     const written = JSON.parse(fs.readFileSync(snapshotPath, 'utf8'));

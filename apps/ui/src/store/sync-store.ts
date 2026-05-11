@@ -5,8 +5,8 @@ import type { SyncStatus, PeerInfo } from '../lib/types.js';
 
 /**
  * Default relay URL used when the server's whoami response does not yet
- * carry a `relayUrl` field (back-compat with pre-PR1 servers, and used by
- * solo `'open'` mode where there is no team manifest).
+ * carry a `relayUrl` field. This is used by local open mode where there is
+ * no team manifest.
  */
 export const DEFAULT_RELAY_URL = 'ws://localhost:7421';
 
@@ -66,7 +66,7 @@ export const useSyncStore = create<SyncState>((set, get) => ({
     try {
       // If the caller didn't supply a relayUrl, use the value surfaced by
       // the server's whoami response (auth-store), falling back to the
-      // hardcoded default for solo back-compat.
+      // local default.
       const relayUrl = config.relayUrl ?? getEffectiveRelayUrl();
       const status = await api.sync.join({ ...config, relayUrl });
       set((s) => ({

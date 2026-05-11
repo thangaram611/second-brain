@@ -273,6 +273,7 @@ export async function runInitClient(opts: InitClientOptions): Promise<InitClient
           await runWireFromManifest({
             repoRoot,
             manifest: loaded.manifest,
+            bearerToken: redeemed.pat,
           });
           wiredRepoRoot = repoRoot;
         }

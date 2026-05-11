@@ -1,5 +1,4 @@
 import type Database from 'better-sqlite3';
-import type { Migration } from './runner.js';
 
 const CREATE_TABLES_SQL = `
   CREATE TABLE IF NOT EXISTS entities (
@@ -24,15 +23,6 @@ const CREATE_TABLES_SQL = `
     branch_context_status TEXT GENERATED ALWAYS AS (json_extract(properties, '$.branchContext.status')) VIRTUAL
   );
 
-  CREATE INDEX IF NOT EXISTS idx_entities_type_namespace ON entities(type, namespace);
-  CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
-  CREATE INDEX IF NOT EXISTS idx_entities_namespace_updated ON entities(namespace, updated_at);
-  CREATE INDEX IF NOT EXISTS idx_entities_event_time ON entities(event_time);
-  CREATE INDEX IF NOT EXISTS idx_entities_ingest_time ON entities(ingest_time);
-  CREATE INDEX IF NOT EXISTS idx_entities_created_at ON entities(created_at);
-  CREATE INDEX IF NOT EXISTS idx_entities_branch ON entities(branch_context_branch);
-  CREATE INDEX IF NOT EXISTS idx_entities_branch_status ON entities(branch_context_branch, branch_context_status);
-
   CREATE TABLE IF NOT EXISTS relations (
     id TEXT PRIMARY KEY,
     type TEXT NOT NULL,
@@ -54,14 +44,6 @@ const CREATE_TABLES_SQL = `
     branch_context_status TEXT GENERATED ALWAYS AS (json_extract(properties, '$.branchContext.status')) VIRTUAL
   );
 
-  CREATE INDEX IF NOT EXISTS idx_relations_source_type ON relations(source_id, type);
-  CREATE INDEX IF NOT EXISTS idx_relations_target_type ON relations(target_id, type);
-  CREATE INDEX IF NOT EXISTS idx_relations_namespace_type ON relations(namespace, type);
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_relations_unique_edge ON relations(source_id, target_id, type);
-  CREATE INDEX IF NOT EXISTS idx_relations_type ON relations(type);
-  CREATE INDEX IF NOT EXISTS idx_relations_branch ON relations(branch_context_branch);
-  CREATE INDEX IF NOT EXISTS idx_relations_branch_status ON relations(branch_context_branch, branch_context_status);
-
   CREATE TABLE IF NOT EXISTS embeddings (
     entity_id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
     vector BLOB,
@@ -69,6 +51,28 @@ const CREATE_TABLES_SQL = `
     content_hash TEXT,
     created_at TEXT NOT NULL
   );
+`;
+
+const CREATE_INDEXES_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_entities_type_namespace ON entities(type, namespace);
+  CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
+  CREATE INDEX IF NOT EXISTS idx_entities_namespace_updated ON entities(namespace, updated_at);
+  CREATE INDEX IF NOT EXISTS idx_entities_event_time ON entities(event_time);
+  CREATE INDEX IF NOT EXISTS idx_entities_ingest_time ON entities(ingest_time);
+  CREATE INDEX IF NOT EXISTS idx_entities_created_at ON entities(created_at);
+  CREATE INDEX IF NOT EXISTS idx_entities_namespace_source_ref
+    ON entities(namespace, source_ref)
+    WHERE source_ref IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_entities_branch ON entities(branch_context_branch);
+  CREATE INDEX IF NOT EXISTS idx_entities_branch_status ON entities(branch_context_branch, branch_context_status);
+
+  CREATE INDEX IF NOT EXISTS idx_relations_source_type ON relations(source_id, type);
+  CREATE INDEX IF NOT EXISTS idx_relations_target_type ON relations(target_id, type);
+  CREATE INDEX IF NOT EXISTS idx_relations_namespace_type ON relations(namespace, type);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_relations_unique_edge ON relations(source_id, target_id, type);
+  CREATE INDEX IF NOT EXISTS idx_relations_type ON relations(type);
+  CREATE INDEX IF NOT EXISTS idx_relations_branch ON relations(branch_context_branch);
+  CREATE INDEX IF NOT EXISTS idx_relations_branch_status ON relations(branch_context_branch, branch_context_status);
 `;
 
 const CREATE_FTS_SQL = `
@@ -120,16 +124,11 @@ const CREATE_FTS_SQL = `
   END;
 `;
 
-/**
- * v1 — Complete initial schema. Creates tables for entities, relations,
- * embeddings, and FTS5 full-text search with sync triggers. Includes
- * virtual generated columns for branch context filtering.
- */
-export const migration001: Migration = {
-  version: 1,
-  name: 'initial-schema',
-  up(sqlite: Database.Database) {
+export function initializeStorageSchema(sqlite: Database.Database): void {
+  const createSchema = sqlite.transaction(() => {
     sqlite.exec(CREATE_TABLES_SQL);
+    sqlite.exec(CREATE_INDEXES_SQL);
     sqlite.exec(CREATE_FTS_SQL);
-  },
-};
+  });
+  createSchema();
+}

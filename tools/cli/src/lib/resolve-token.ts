@@ -2,7 +2,7 @@
  * Token resolver for hooks and CLI commands.
  *
  * Resolution order (PR2 §F + plan §F):
- *   1. `BRAIN_AUTH_TOKEN` env (legacy + CI escape hatch — bypasses keychain).
+ *   1. `BRAIN_AUTH_TOKEN` env (CI override — bypasses keychain).
  *   2. `~/.second-brain/credentials/<host>.json` pointer + keychain entry
  *      keyed by the discriminated `pat:<host>:<tokenId>` account.
  *   3. None — caller decides whether to error or proceed unauthenticated.

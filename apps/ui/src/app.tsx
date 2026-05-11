@@ -1,17 +1,42 @@
+import { lazy, Suspense } from 'react';
 import { Routes, Route, useLocation } from 'react-router';
 import { Sidebar } from './components/layout/sidebar.js';
-import { Dashboard } from './components/pages/dashboard.js';
-import { SearchPage } from './components/pages/search.js';
-import { GraphExplorer } from './components/pages/graph-explorer.js';
-import { EntityPage } from './components/pages/entity-page.js';
-import { SettingsPage } from './components/pages/settings.js';
-import { TimelinePage } from './components/pages/timeline.js';
-import { DecisionsPage } from './components/pages/decisions.js';
-import { ContradictionsPage } from './components/pages/contradictions.js';
-import { OwnershipPage } from './components/pages/ownership.js';
-import { WipRadarPage } from './components/pages/wip-radar.js';
 import { LoginPage } from './pages/login.js';
 import { useWebSocket } from './hooks/use-websocket.js';
+import { LoadingState } from './components/ui/loading.js';
+
+const Dashboard = lazy(() =>
+  import('./components/pages/dashboard.js').then(({ Dashboard }) => ({ default: Dashboard })),
+);
+const SearchPage = lazy(() =>
+  import('./components/pages/search.js').then(({ SearchPage }) => ({ default: SearchPage })),
+);
+const GraphExplorer = lazy(() =>
+  import('./components/pages/graph-explorer.js').then(({ GraphExplorer }) => ({ default: GraphExplorer })),
+);
+const EntityPage = lazy(() =>
+  import('./components/pages/entity-page.js').then(({ EntityPage }) => ({ default: EntityPage })),
+);
+const SettingsPage = lazy(() =>
+  import('./components/pages/settings.js').then(({ SettingsPage }) => ({ default: SettingsPage })),
+);
+const TimelinePage = lazy(() =>
+  import('./components/pages/timeline.js').then(({ TimelinePage }) => ({ default: TimelinePage })),
+);
+const DecisionsPage = lazy(() =>
+  import('./components/pages/decisions.js').then(({ DecisionsPage }) => ({ default: DecisionsPage })),
+);
+const ContradictionsPage = lazy(() =>
+  import('./components/pages/contradictions.js').then(({ ContradictionsPage }) => ({
+    default: ContradictionsPage,
+  })),
+);
+const OwnershipPage = lazy(() =>
+  import('./components/pages/ownership.js').then(({ OwnershipPage }) => ({ default: OwnershipPage })),
+);
+const WipRadarPage = lazy(() =>
+  import('./components/pages/wip-radar.js').then(({ WipRadarPage }) => ({ default: WipRadarPage })),
+);
 
 export function App() {
   const location = useLocation();
@@ -38,20 +63,22 @@ function AuthedShell() {
     <div className="flex h-screen overflow-hidden">
       <Sidebar />
       <main className="flex-1 overflow-auto">
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/graph" element={<GraphExplorer />} />
-          <Route path="/graph/:id" element={<GraphExplorer />} />
-          <Route path="/search" element={<SearchPage />} />
-          <Route path="/entities/:id" element={<EntityPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/timeline" element={<TimelinePage />} />
-          <Route path="/decisions" element={<DecisionsPage />} />
-          <Route path="/contradictions" element={<ContradictionsPage />} />
-          <Route path="/ownership" element={<OwnershipPage />} />
-          <Route path="/wip-radar" element={<WipRadarPage />} />
-          <Route path="/login" element={<LoginPage />} />
-        </Routes>
+        <Suspense fallback={<LoadingState message="Loading page..." />}>
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/graph" element={<GraphExplorer />} />
+            <Route path="/graph/:id" element={<GraphExplorer />} />
+            <Route path="/search" element={<SearchPage />} />
+            <Route path="/entities/:id" element={<EntityPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/timeline" element={<TimelinePage />} />
+            <Route path="/decisions" element={<DecisionsPage />} />
+            <Route path="/contradictions" element={<ContradictionsPage />} />
+            <Route path="/ownership" element={<OwnershipPage />} />
+            <Route path="/wip-radar" element={<WipRadarPage />} />
+            <Route path="/login" element={<LoginPage />} />
+          </Routes>
+        </Suspense>
       </main>
     </div>
   );

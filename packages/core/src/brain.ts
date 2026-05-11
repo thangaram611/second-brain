@@ -163,8 +163,8 @@ export class Brain {
   /**
    * Bulk-update `properties.branchContext` on every entity and relation whose
    * `branch_context_branch` generated column matches `branch`. Single
-   * transaction, two prepared UPDATE statements — O(log n) via the index
-   * from migration 002.
+   * transaction, two prepared UPDATE statements — O(log n) via the generated
+   * column indexes created with the current schema.
    *
    * Note: this is the only raw-SQL bulk write in `Brain`; other mutations go
    * through EntityManager/RelationManager. We drop to SQL here because a

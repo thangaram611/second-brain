@@ -401,7 +401,7 @@ function generateTokenId(): string {
  * PAT regex — see the file header comment for the format and the security
  * framing of the CRC32 suffix (defense-in-depth, not the auth gate).
  *
- * Single format only — no legacy/dual-format grace window. The project has
+ * Single format only — no dual-format grace window. The project has
  * never run in production; old fixtures are regenerated.
  */
 const PAT_REGEX = /^sbp_([a-z0-9]{8})_([A-Za-z0-9]{32})_([A-Za-z0-9]{6})$/;
