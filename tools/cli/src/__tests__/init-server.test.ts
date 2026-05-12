@@ -1,10 +1,17 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import Database from 'better-sqlite3';
 import { z } from 'zod';
-import { runInitServer, renderSystemdUnit, renderLaunchdPlist } from '../init-server.js';
+import {
+  runInitServer,
+  renderSystemdUnit,
+  renderLaunchdPlist,
+  renderRelaySystemdUnit,
+  renderRelayLaunchdPlist,
+} from '../init-server.js';
+import { ServerConfigSchema } from '../lib/server-config.js';
 
 const MembershipRowSchema = z.object({
   user_id: z.string(),
@@ -13,11 +20,14 @@ const MembershipRowSchema = z.object({
 });
 
 let tmp: string;
+let home: string;
 let stdoutBuf: string;
 const sinkStdout = { write: (s: string): void => { stdoutBuf += s; } };
 
 beforeEach(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'brain-init-server-'));
+  home = path.join(tmp, 'home');
+  fs.mkdirSync(home, { recursive: true });
   stdoutBuf = '';
 });
 
@@ -29,10 +39,22 @@ function tmpPath(...parts: string[]): string {
   return path.join(tmp, ...parts);
 }
 
+/** Minimal Linux preflight bypass — `--service-user`, root euid, no-op chown. */
+function linuxRoot(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    platform: 'linux' as const,
+    serviceUser: 'sb',
+    getuid: () => 0,
+    execFileSync: vi.fn(() => Buffer.from('')) as unknown as () => Buffer,
+    homeDir: home,
+    ...extra,
+  };
+}
+
 describe('runInitServer (Linux/systemd)', () => {
   it('on a fresh dir: writes secrets 0600, creates DBs, writes systemd unit, mints admin PAT', async () => {
     const result = await runInitServer({
-      platform: 'linux',
+      ...linuxRoot(),
       storageDir: tmpPath('storage'),
       secretsPath: tmpPath('etc/second-brain/secrets.env'),
       serviceFilePath: tmpPath('etc/systemd/system/second-brain-server.service'),
@@ -67,6 +89,31 @@ describe('runInitServer (Linux/systemd)', () => {
     // V8 JIT requires W+X — must be explicitly OFF.
     expect(unit).toContain('MemoryDenyWriteExecute=no');
     expect(unit).toContain(`EnvironmentFile=${result.secretsPath}`);
+    expect(unit).toContain('User=sb');
+
+    // Relay unit also written, alongside the server unit.
+    expect(result.relayServiceFilePath).not.toBeNull();
+    expect(fs.existsSync(result.relayServiceFilePath!)).toBe(true);
+    const relayUnit = fs.readFileSync(result.relayServiceFilePath!, 'utf8');
+    expect(relayUnit).toContain('Description=Second Brain Yjs CRDT relay');
+    expect(relayUnit).toContain('SyslogIdentifier=second-brain-relay');
+    expect(relayUnit).toContain(`EnvironmentFile=${result.secretsPath}`);
+    expect(relayUnit).toContain('User=sb');
+    // Tier-1 hardening present on the relay unit too.
+    expect(relayUnit).toContain('NoNewPrivileges=yes');
+    expect(relayUnit).toContain('ProtectSystem=strict');
+    expect(relayUnit).toContain('CapabilityBoundingSet=');
+    expect(relayUnit).toContain('SystemCallFilter=@system-service');
+    expect(relayUnit).toContain('MemoryDenyWriteExecute=no');
+
+    // server.json discoverable config.
+    expect(fs.existsSync(result.serverConfigPath)).toBe(true);
+    const cfg = ServerConfigSchema.parse(JSON.parse(fs.readFileSync(result.serverConfigPath, 'utf8')));
+    expect(cfg.apiPort).toBe(7430);
+    expect(cfg.relayPort).toBe(7421);
+    expect(cfg.serviceFilePath).toBe(result.serviceFilePath);
+    expect(cfg.relayServiceFilePath).toBe(result.relayServiceFilePath);
+    expect(cfg.secretsPath).toBe(result.secretsPath);
 
     // Bootstrap PAT minted with expected shape.
     expect(result.adminPat).toMatch(/^sbp_[a-z0-9]{8}_[A-Za-z0-9]{32}_[A-Za-z0-9]{6}$/);
@@ -78,13 +125,15 @@ describe('runInitServer (Linux/systemd)', () => {
     expect(expiresMs - Date.now()).toBeGreaterThan(ninetyDays - 60_000);
     expect(expiresMs - Date.now()).toBeLessThan(ninetyDays + 60_000);
 
-    // Output mentions the PAT once.
+    // Output mentions the PAT once and the relay URL hint.
     expect(stdoutBuf).toContain(result.adminPat);
+    expect(stdoutBuf).toContain('relay unit:');
+    expect(stdoutBuf).toContain('ws://');
   });
 
   it('with --namespace: inserts a user_namespaces row for the admin', async () => {
     const result = await runInitServer({
-      platform: 'linux',
+      ...linuxRoot(),
       namespace: 'acme',
       storageDir: tmpPath('storage'),
       secretsPath: tmpPath('etc/second-brain/secrets.env'),
@@ -115,7 +164,7 @@ describe('runInitServer (Linux/systemd)', () => {
 
   it('without --namespace: leaves user_namespaces empty (no NULL row)', async () => {
     const result = await runInitServer({
-      platform: 'linux',
+      ...linuxRoot(),
       storageDir: tmpPath('storage'),
       secretsPath: tmpPath('etc/second-brain/secrets.env'),
       serviceFilePath: tmpPath('etc/systemd/system/second-brain-server.service'),
@@ -137,7 +186,7 @@ describe('runInitServer (Linux/systemd)', () => {
 
   it('refuses re-run without --force (idempotency guard)', async () => {
     const opts = {
-      platform: 'linux' as const,
+      ...linuxRoot(),
       storageDir: tmpPath('storage'),
       secretsPath: tmpPath('etc/second-brain/secrets.env'),
       serviceFilePath: tmpPath('etc/systemd/system/second-brain-server.service'),
@@ -150,7 +199,7 @@ describe('runInitServer (Linux/systemd)', () => {
 
   it('--force rotates secrets but preserves DBs', async () => {
     const opts = {
-      platform: 'linux' as const,
+      ...linuxRoot(),
       storageDir: tmpPath('storage'),
       secretsPath: tmpPath('etc/second-brain/secrets.env'),
       serviceFilePath: tmpPath('etc/systemd/system/second-brain-server.service'),
@@ -173,7 +222,7 @@ describe('runInitServer (Linux/systemd)', () => {
   it('rejects --admin-pat-ttl over 365d', async () => {
     await expect(
       runInitServer({
-        platform: 'linux',
+        ...linuxRoot(),
         storageDir: tmpPath('storage'),
         secretsPath: tmpPath('etc/second-brain/secrets.env'),
         serviceFilePath: tmpPath('etc/systemd/system/second-brain-server.service'),
@@ -183,12 +232,63 @@ describe('runInitServer (Linux/systemd)', () => {
       }),
     ).rejects.toThrow(/365-day/);
   });
+
+  it('chowns storage + secrets to service user under root', async () => {
+    const chown = vi.fn((_bin: string, _args: readonly string[]): Buffer => Buffer.from(''));
+    const result = await runInitServer({
+      ...linuxRoot({ execFileSync: chown }),
+      storageDir: tmpPath('storage'),
+      secretsPath: tmpPath('etc/second-brain/secrets.env'),
+      serviceFilePath: tmpPath('etc/systemd/system/second-brain-server.service'),
+      adminEmail: 'admin@example.com',
+      stdout: sinkStdout,
+    });
+    // Three shell-outs: recursive chown of storage, chown of secrets, chmod of secrets.
+    const calls = chown.mock.calls.map((c) => c[0]);
+    expect(calls).toEqual(['chown', 'chown', 'chmod']);
+    expect(chown.mock.calls[1]?.[1]).toEqual(['root:sb', result.secretsPath]);
+    expect(chown.mock.calls[2]?.[1]).toEqual(['0640', result.secretsPath]);
+  });
+});
+
+describe('runInitServer (Linux preflight)', () => {
+  it('non-root → throws with "requires root" message', async () => {
+    await expect(
+      runInitServer({
+        platform: 'linux',
+        getuid: () => 1000,
+        serviceUser: 'sb',
+        homeDir: home,
+        storageDir: tmpPath('storage'),
+        secretsPath: tmpPath('etc/second-brain/secrets.env'),
+        serviceFilePath: tmpPath('etc/systemd/system/second-brain-server.service'),
+        adminEmail: 'admin@example.com',
+        stdout: sinkStdout,
+      }),
+    ).rejects.toThrow(/require root/);
+  });
+
+  it('root without --service-user → throws with "service-user required" message', async () => {
+    await expect(
+      runInitServer({
+        platform: 'linux',
+        getuid: () => 0,
+        homeDir: home,
+        storageDir: tmpPath('storage'),
+        secretsPath: tmpPath('etc/second-brain/secrets.env'),
+        serviceFilePath: tmpPath('etc/systemd/system/second-brain-server.service'),
+        adminEmail: 'admin@example.com',
+        stdout: sinkStdout,
+      }),
+    ).rejects.toThrow(/--service-user <name>` is required/);
+  });
 });
 
 describe('runInitServer (macOS/launchd)', () => {
   it('writes a launchd plist with KeepAlive dict and no secrets in EnvironmentVariables', async () => {
     const result = await runInitServer({
       platform: 'darwin',
+      homeDir: home,
       storageDir: tmpPath('storage'),
       secretsPath: tmpPath('home/.second-brain/secrets.env'),
       serviceFilePath: tmpPath('home/Library/LaunchAgents/dev.secondbrain.server.plist'),
@@ -209,6 +309,69 @@ describe('runInitServer (macOS/launchd)', () => {
     expect(plist).not.toContain('RELAY_AUTH_SECRET');
     // Must source the env file via shell wrapper.
     expect(plist).toContain(result.secretsPath);
+  });
+
+  it('also writes a launchd plist for the relay alongside the server', async () => {
+    const result = await runInitServer({
+      platform: 'darwin',
+      homeDir: home,
+      storageDir: tmpPath('storage'),
+      secretsPath: tmpPath('home/.second-brain/secrets.env'),
+      serviceFilePath: tmpPath('home/Library/LaunchAgents/dev.secondbrain.server.plist'),
+      relayPort: 9421,
+      adminEmail: 'admin@example.com',
+      stdout: sinkStdout,
+    });
+    expect(result.relayServiceFilePath).not.toBeNull();
+    expect(result.relayServiceFilePath).toContain('dev.secondbrain.relay.plist');
+    const relayPlist = fs.readFileSync(result.relayServiceFilePath!, 'utf8');
+    expect(relayPlist).toContain('<string>dev.secondbrain.relay</string>');
+    // Uses the same secrets-wrapper pattern; never inlines RELAY_AUTH_SECRET.
+    expect(relayPlist).toMatch(/<string>set -a; \. /);
+    expect(relayPlist).not.toContain('RELAY_AUTH_SECRET=');
+    // RELAY_PORT honors the override.
+    expect(relayPlist).toMatch(/<key>RELAY_PORT<\/key>\s*<string>9421<\/string>/);
+  });
+
+  it('writes server.json under $HOME/.second-brain regardless of --storage-dir', async () => {
+    const result = await runInitServer({
+      platform: 'darwin',
+      homeDir: home,
+      storageDir: tmpPath('elsewhere/storage'),
+      secretsPath: tmpPath('home/.second-brain/secrets.env'),
+      serviceFilePath: tmpPath('home/Library/LaunchAgents/dev.secondbrain.server.plist'),
+      relayPort: 9421,
+      adminEmail: 'admin@example.com',
+      stdout: sinkStdout,
+    });
+    // server.json must live under $HOME, not under --storage-dir.
+    const expected = path.join(home, '.second-brain', 'server.json');
+    expect(result.serverConfigPath).toBe(expected);
+    expect(fs.existsSync(expected)).toBe(true);
+    const cfg = ServerConfigSchema.parse(JSON.parse(fs.readFileSync(expected, 'utf8')));
+    expect(cfg.storageDir).toBe(tmpPath('elsewhere/storage'));
+    expect(cfg.relayPort).toBe(9421);
+  });
+});
+
+describe('runInitServer (manual fallback)', () => {
+  it('prints both server and relay invocations, every path single-quoted', async () => {
+    // Platform with no defaultServicePath (e.g. freebsd) → manual mode.
+    // Use a storage dir with a space to prove the shell-quoting.
+    await runInitServer({
+      platform: 'freebsd',
+      homeDir: home,
+      storageDir: tmpPath('storage with space'),
+      secretsPath: tmpPath('home/.second-brain/secrets.env'),
+      // serviceFilePath omitted; defaultServicePath returns null on unknown platform.
+      adminEmail: 'admin@example.com',
+      stdout: sinkStdout,
+    });
+    expect(stdoutBuf).toContain('# Server (one shell):');
+    expect(stdoutBuf).toContain('# Relay (another shell):');
+    // Both paths must be single-quoted in the printed commands.
+    expect(stdoutBuf).toMatch(/set -a; \. '[^']*\/secrets\.env'; set \+a;/);
+    expect(stdoutBuf).toContain(`'${tmpPath('storage with space')}/relay'`);
   });
 });
 
@@ -252,6 +415,31 @@ describe('renderSystemdUnit / renderLaunchdPlist (snapshots)', () => {
     }
   });
 
+  it('relay systemd unit mirrors server hardening verbatim', () => {
+    const unit = renderRelaySystemdUnit({
+      user: 'sb',
+      storageDir: '/var/lib/sb',
+      installDir: '/opt/sb',
+      nodeBin: '/usr/bin/node',
+      secretsPath: '/etc/sb/secrets.env',
+      relayPort: 7421,
+    });
+    expect(unit).toContain('Description=Second Brain Yjs CRDT relay');
+    expect(unit).toContain('ExecStart=/usr/bin/node /opt/sb/apps/relay/dist/index.mjs');
+    expect(unit).toContain('Environment=RELAY_PORT=7421');
+    expect(unit).toContain('Environment=RELAY_PERSIST_DIR=/var/lib/sb/relay');
+    expect(unit).toContain('EnvironmentFile=/etc/sb/secrets.env');
+    for (const directive of [
+      'NoNewPrivileges=yes',
+      'ProtectSystem=strict',
+      'CapabilityBoundingSet=',
+      'SystemCallFilter=@system-service',
+      'MemoryDenyWriteExecute=no',
+    ]) {
+      expect(unit).toContain(directive);
+    }
+  });
+
   it('launchd plist uses KeepAlive dict and never inlines secrets', () => {
     const plist = renderLaunchdPlist({
       installDir: '/opt/sb',
@@ -266,10 +454,30 @@ describe('renderSystemdUnit / renderLaunchdPlist (snapshots)', () => {
     expect(plist).not.toContain('BRAIN_SERVER_SIGNING_KEY');
   });
 
+  it('relay launchd plist mirrors server plist shape', () => {
+    const plist = renderRelayLaunchdPlist({
+      installDir: '/opt/sb',
+      nodeBin: '/usr/bin/node',
+      secretsPath: '/Users/sb/.second-brain/secrets.env',
+      storageDir: '/Users/sb/.second-brain/data',
+      relayPort: 7421,
+    });
+    expect(plist).toContain('<string>dev.secondbrain.relay</string>');
+    expect(plist).toMatch(/<key>KeepAlive<\/key>\s*<dict>/);
+    expect(plist).toMatch(/<string>set -a; \. /);
+    // Must NOT inline the secret as a key in EnvironmentVariables — the
+    // wrapper sources it from secrets.env. (The plist comment is allowed
+    // to mention it by name.)
+    expect(plist).not.toMatch(/<key>RELAY_AUTH_SECRET<\/key>/);
+    expect(plist).toContain('/apps/relay/dist/index.mjs');
+  });
+
   it('launchd plist single-quotes path arguments to handle spaces in install/secret paths', () => {
     // A user with spaces in their home dir (common on macOS) must not break
-    // the /bin/sh -c body. The wrapper should produce something like
-    //   set -a; . '/Users/Jane Doe/.../secrets.env'; set +a; exec '/usr/bin/node' '/Volumes/My Drive/sb/.../index.mjs'
+    // the /bin/sh -c body. The wrapper produces something like
+    //   set -a; . '/Users/Jane Doe/.../secrets.env'; …
+    // and the resulting plist XML-escapes each `'` → `&apos;`. So the
+    // wrapper string contains `&apos;/Users/Jane Doe/.second-brain/secrets.env&apos;`.
     const plist = renderLaunchdPlist({
       installDir: '/Volumes/My Drive/second-brain',
       nodeBin: '/Users/Jane Doe/.nvm/v25/bin/node',
@@ -279,9 +487,9 @@ describe('renderSystemdUnit / renderLaunchdPlist (snapshots)', () => {
       relayPort: 7421,
       publicUrl: 'http://localhost:7430',
     });
-    expect(plist).toContain(`'/Users/Jane Doe/.second-brain/secrets.env'`);
-    expect(plist).toContain(`'/Users/Jane Doe/.nvm/v25/bin/node'`);
-    expect(plist).toContain(`'/Volumes/My Drive/second-brain/apps/server/dist/index.mjs'`);
+    expect(plist).toContain('&apos;/Users/Jane Doe/.second-brain/secrets.env&apos;');
+    expect(plist).toContain('&apos;/Users/Jane Doe/.nvm/v25/bin/node&apos;');
+    expect(plist).toContain('&apos;/Volumes/My Drive/second-brain/apps/server/dist/index.mjs&apos;');
     // Make sure unquoted paths with spaces aren't sneaking through anywhere
     // in the shell-command string.
     const wrapperMatch = plist.match(/<string>set -a;[^<]+<\/string>/);
@@ -290,9 +498,11 @@ describe('renderSystemdUnit / renderLaunchdPlist (snapshots)', () => {
   });
 
   it('launchd plist correctly escapes single-quotes in paths', () => {
-    // POSIX shell: `foo'bar` → `'foo'\''bar'`
+    // POSIX shell: `foo'bar` → `'foo'\''bar'` THEN XML-escape: `'` → `&apos;`
+    // For nodeBin `/Users/o'malley/node` the wrapper string contains the
+    // escape sequence `&apos;/Users/o&apos;\&apos;&apos;malley/node&apos;`.
     const plist = renderLaunchdPlist({
-      installDir: '/tmp/it’s',
+      installDir: '/tmp/its',
       nodeBin: "/Users/o'malley/node",
       secretsPath: '/tmp/secrets.env',
       storageDir: '/tmp/data',
@@ -300,6 +510,6 @@ describe('renderSystemdUnit / renderLaunchdPlist (snapshots)', () => {
       relayPort: 7421,
       publicUrl: 'http://localhost:7430',
     });
-    expect(plist).toContain(`'/Users/o'\\''malley/node'`);
+    expect(plist).toContain('&apos;/Users/o&apos;\\&apos;&apos;malley/node&apos;');
   });
 });

@@ -460,6 +460,99 @@ describe('runDoctor — native module ABI probe', () => {
   });
 });
 
+describe('runDoctor — local server checks (top-level, server.json-gated)', () => {
+  function seedServerConfig(opts: { apiPort: number; relayPort: number }): void {
+    const dir = path.join(homeOverride, '.second-brain');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'server.json'),
+      JSON.stringify({
+        apiPort: opts.apiPort,
+        relayPort: opts.relayPort,
+        publicUrl: `http://localhost:${opts.apiPort}`,
+        storageDir: path.join(homeOverride, '.second-brain', 'data'),
+        secretsPath: path.join(homeOverride, '.second-brain', 'secrets.env'),
+        serviceFilePath: null,
+        relayServiceFilePath: null,
+      }),
+    );
+  }
+
+  it('skips both local checks when server.json is absent (client-only box)', async () => {
+    const result = await runDoctor({
+      homeDir: homeOverride,
+      cwd: repoRoot,
+      stdout: sinkStdout,
+      fetchImpl: fakeFetch(async () => new Response('', { status: 200 })),
+    });
+    expect(result.checks.find((c) => c.name === 'local server reachable')).toBeUndefined();
+    expect(result.checks.find((c) => c.name === 'local relay reachable')).toBeUndefined();
+  });
+
+  it('passes local-server when /health on apiPort returns 200 + {status:ok}', async () => {
+    seedServerConfig({ apiPort: 7430, relayPort: 9421 });
+    const result = await runDoctor({
+      homeDir: homeOverride,
+      cwd: repoRoot,
+      stdout: sinkStdout,
+      fetchImpl: fakeFetch(async (url) => {
+        if (url === 'http://localhost:7430/health') {
+          return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
+        }
+        if (url === 'http://localhost:9421/health') {
+          return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
+        }
+        return new Response('not-found', { status: 404 });
+      }),
+    });
+    const server = result.checks.find((c) => c.name === 'local server reachable');
+    expect(server?.status).toBe('pass');
+    expect(server?.message).toContain('7430');
+    const relay = result.checks.find((c) => c.name === 'local relay reachable');
+    expect(relay?.status).toBe('pass');
+    expect(relay?.message).toContain('9421');
+  });
+
+  it('fails local-relay on ECONNREFUSED with a load-hint', async () => {
+    seedServerConfig({ apiPort: 7430, relayPort: 9421 });
+    const result = await runDoctor({
+      homeDir: homeOverride,
+      cwd: repoRoot,
+      stdout: sinkStdout,
+      fetchImpl: fakeFetch(async (url) => {
+        if (url === 'http://localhost:7430/health') {
+          return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
+        }
+        // Relay port: connection refused.
+        throw new Error('ECONNREFUSED');
+      }),
+    });
+    const relay = result.checks.find((c) => c.name === 'local relay reachable');
+    expect(relay?.status).toBe('fail');
+    expect(relay?.message).toMatch(/load relay plist\/unit/);
+    expect(result.exitCode).toBe(1);
+  });
+
+  it('reports unreadable server.json as a single fail check, does not crash', async () => {
+    const dir = path.join(homeOverride, '.second-brain');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'server.json'), '{ "broken');
+    const result = await runDoctor({
+      homeDir: homeOverride,
+      cwd: repoRoot,
+      stdout: sinkStdout,
+      fetchImpl: fakeFetch(async () => new Response('', { status: 200 })),
+    });
+    const cfgCheck = result.checks.find((c) => c.name === 'local server config');
+    expect(cfgCheck?.status).toBe('fail');
+    expect(cfgCheck?.message).toContain('unreadable');
+    expect(cfgCheck?.message).toContain('brain init server --force');
+    // Local-server / local-relay checks must NOT appear when config is unreadable.
+    expect(result.checks.find((c) => c.name === 'local server reachable')).toBeUndefined();
+    expect(result.checks.find((c) => c.name === 'local relay reachable')).toBeUndefined();
+  });
+});
+
 describe('runDoctor — unreadable manifest', () => {
   it('reports a fail (not a clean solo-repo pass) when the manifest file is unreadable', async () => {
     if (process.platform === 'win32') return;

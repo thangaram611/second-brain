@@ -123,13 +123,15 @@ describe('Section H walkthrough — automated coverage', () => {
     // 1. `brain init server` — bootstrap. We override every default path
     //    so the test is hermetic and parallel-safe.
     // -----------------------------------------------------------------
+    // Force the `manual` (no-service-file) branch: pass an explicitly-
+    // unrecognized platform so `defaultServicePath` returns null and
+    // `runInitServer` skips both service-file writes. This keeps the test
+    // hermetic — no launchd / systemd dirs touched, no chown / preflight.
     const serverResult = await runInitServer({
-      platform: process.platform,
+      platform: 'freebsd',
       homeDir: tmpServerHome,
       storageDir: path.join(tmpServerHome, 'data'),
       secretsPath: path.join(tmpServerHome, 'secrets.env'),
-      // No service file: avoid mutating the user's launchd / systemd dirs.
-      serviceFilePath: '/dev/null',
       port: 7430,
       relayPort: 7421,
       adminEmail: 'admin@e2e.test',

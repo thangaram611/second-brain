@@ -14,6 +14,13 @@ import { listCredentials, type CredentialsRecord } from './credentials.js';
 import { readSecret, loadKeytar } from './keychain.js';
 import { loadTeamManifest, hashTeamManifest } from './team-manifest.js';
 import { loadWiredRepos, computeRepoHash } from './git-context-daemon.js';
+import {
+  safeReadServerConfig,
+  serverConfigPath,
+  type ServerConfig,
+} from './lib/server-config.js';
+
+const LocalHealthSchema = z.object({ status: z.literal('ok') }).passthrough();
 
 export type CheckStatus = 'pass' | 'warn' | 'fail';
 
@@ -54,6 +61,80 @@ interface HostContext {
 
 function patAccount(host: string, tokenId: string): string {
   return `pat:${host}:${tokenId}`;
+}
+
+async function checkLocalServerReachable(
+  cfg: ServerConfig,
+  fetchImpl: typeof fetch,
+): Promise<CheckResult> {
+  const url = `http://localhost:${cfg.apiPort}/health`;
+  try {
+    const res = await fetchImpl(url, { method: 'GET' });
+    if (!res.ok) {
+      return {
+        name: 'local server reachable',
+        status: 'fail',
+        message: `${url} → ${res.status} ${res.statusText} — service may have failed to start (check journalctl / launchctl).`,
+      };
+    }
+    const json: unknown = await res.json();
+    const parsed = LocalHealthSchema.safeParse(json);
+    if (!parsed.success) {
+      return {
+        name: 'local server reachable',
+        status: 'warn',
+        message: `${url} → 200 but unexpected shape: ${z.prettifyError(parsed.error)}`,
+      };
+    }
+    return {
+      name: 'local server reachable',
+      status: 'pass',
+      message: `${url} → 200 (status=ok).`,
+    };
+  } catch (e) {
+    return {
+      name: 'local server reachable',
+      status: 'fail',
+      message: `${url} unreachable: ${e instanceof Error ? e.message : String(e)} — load server plist/unit (\`launchctl load …server.plist\` or \`sudo systemctl enable --now second-brain-server\`).`,
+    };
+  }
+}
+
+async function checkLocalRelayReachable(
+  cfg: ServerConfig,
+  fetchImpl: typeof fetch,
+): Promise<CheckResult> {
+  const url = `http://localhost:${cfg.relayPort}/health`;
+  try {
+    const res = await fetchImpl(url, { method: 'GET' });
+    if (!res.ok) {
+      return {
+        name: 'local relay reachable',
+        status: 'fail',
+        message: `${url} → ${res.status} ${res.statusText} — load relay plist/unit (\`launchctl load …relay.plist\` or \`sudo systemctl enable --now second-brain-relay\`).`,
+      };
+    }
+    const json: unknown = await res.json();
+    const parsed = LocalHealthSchema.safeParse(json);
+    if (!parsed.success) {
+      return {
+        name: 'local relay reachable',
+        status: 'warn',
+        message: `${url} → 200 but unexpected shape: ${z.prettifyError(parsed.error)}`,
+      };
+    }
+    return {
+      name: 'local relay reachable',
+      status: 'pass',
+      message: `${url} → 200 (status=ok).`,
+    };
+  } catch (e) {
+    return {
+      name: 'local relay reachable',
+      status: 'fail',
+      message: `${url} unreachable: ${e instanceof Error ? e.message : String(e)} — load relay plist/unit (\`launchctl load …relay.plist\` or \`sudo systemctl enable --now second-brain-relay\`).`,
+    };
+  }
 }
 
 async function checkServerReachable(
@@ -441,6 +522,20 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<DoctorResult>
   // makes the per-host checks below useless, so surface the fix hint up top.
   checks.push(await checkBetterSqlite3Abi());
   checks.push(await checkKeytarAbi());
+
+  // Top-level local checks — only fire on a SERVER box (server.json present
+  // at $HOME/.second-brain/server.json). Client-only boxes skip these.
+  const localCfg = safeReadServerConfig(homeDir);
+  if (localCfg.ok && localCfg.value !== null) {
+    checks.push(await checkLocalServerReachable(localCfg.value, fetchImpl));
+    checks.push(await checkLocalRelayReachable(localCfg.value, fetchImpl));
+  } else if (!localCfg.ok) {
+    checks.push({
+      name: 'local server config',
+      status: 'fail',
+      message: `${serverConfigPath(homeDir)} unreadable: ${localCfg.error}. Re-run \`brain init server --force\` to rewrite.`,
+    });
+  }
 
   // Per-host checks (one set per credentials record).
   const hosts = listCredentials(homeDir);

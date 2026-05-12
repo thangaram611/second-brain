@@ -119,13 +119,15 @@ brain import           # Import graph data
 ## Deployment
 
 Second Brain ships as a plain Node.js workspace — no container runtime is
-required. To run the server and relay as long-lived services, use the unit
-templates checked into the repo:
+required. `brain init server` generates the systemd units (Linux) or launchd
+plists (macOS) for **both** the API server and the Yjs relay, writes a
+mode-0600/0640 `secrets.env`, initializes the SQLite databases, and mints a
+bootstrap admin PAT. The full walk-throughs:
 
-| Platform | Template | Guide |
-|----------|----------|-------|
-| Linux (production) | `apps/server/systemd/*.service`, `apps/relay/systemd/*.service` | [docs/deployment-systemd.md](docs/deployment-systemd.md) |
-| macOS (dev/personal) | `apps/server/launchd/*.plist`, `apps/relay/launchd/*.plist` | [docs/deployment-launchd.md](docs/deployment-launchd.md) |
+| Platform | Guide |
+|----------|-------|
+| Linux (production) | [docs/deployment-systemd.md](docs/deployment-systemd.md) |
+| macOS (dev/personal) | [docs/deployment-launchd.md](docs/deployment-launchd.md) |
 
 For local development, `pnpm dev` from the repo root remains the fastest path —
 no installation needed.

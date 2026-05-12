@@ -43,6 +43,7 @@ export function registerInitResetCommands(program: Command): void {
     .option('--relay-port <n>', 'Relay port', (v) => Number(v))
     .option('--admin-email <email>', 'Bootstrap admin email')
     .option('--admin-pat-ttl <ttl>', 'Bootstrap admin PAT TTL (e.g., 90d, max 365d)', '90d')
+    .option('--service-user <name>', 'Linux: system account systemd runs the services as (required with sudo)')
     .option('--non-interactive', 'Skip all prompts')
     .option('--force', 'Overwrite an existing install (rotates secrets; preserves DBs)')
     .action(async (options) => {

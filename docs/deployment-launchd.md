@@ -6,7 +6,7 @@ personal/dev usage where you want services to come up at login and stay up
 across crashes.
 
 For Linux production, see [deployment-systemd.md](./deployment-systemd.md).
-For one-shot development, `pnpm dev` from the repo root is still the fastest
+For one-shot development, `pnpm dev` from the repo root remains the fastest
 loop.
 
 ---
@@ -20,19 +20,9 @@ loop.
 | pnpm 10+ | `corepack enable && corepack prepare pnpm@latest --activate` |
 | git | preinstalled or `brew install git` |
 
-Capture absolute paths — launchd does **not** read your shell rc files, so the
-plist must use full paths:
-
-```bash
-which node    # → e.g. /opt/homebrew/bin/node              — __NODE_BIN__
-which pnpm    # → e.g. /opt/homebrew/bin/pnpm              — __PNPM_BIN__
-echo $HOME    # → e.g. /Users/yourname                     — __HOME__
-pwd           # (from the cloned repo)                      — __INSTALL_DIR__
-```
-
 ---
 
-## 1. Install the code
+## 1. Clone + build
 
 ```bash
 git clone https://github.com/<your-org>/second-brain.git ~/code/second-brain
@@ -41,68 +31,41 @@ pnpm install
 pnpm build
 ```
 
-`__INSTALL_DIR__` is `~/code/second-brain` resolved to its absolute form
-(launchd does not expand `~`).
+---
 
-> **Note on `start` scripts.** The plists invoke
-> `pnpm --filter @second-brain/server start` (and the same for the relay). The
-> `start` script lands in `apps/server/package.json` as part of a separate
-> stream. Until then, swap the `<array>` block in the plist for a direct node
-> call (the comment inside the file shows the exact replacement).
+## 2. Initialize the server
+
+`brain init server` generates both plists (server + relay), writes
+`~/.second-brain/secrets.env` (mode 0600) with `RELAY_AUTH_SECRET`,
+initializes the SQLite databases, and mints a bootstrap admin PAT.
+
+```bash
+pnpm --filter @second-brain/cli build  # if not already built
+node tools/cli/dist/index.mjs init server \
+  --non-interactive \
+  --namespace acme \
+  --admin-email admin@example.com
+```
+
+The summary it prints includes the exact `launchctl load` lines you'll run in
+the next step. It also writes a discoverable config at
+`~/.second-brain/server.json` that `brain doctor` reads to know this box is a
+server install.
+
+To **rotate** secrets later: re-run with `--force`. The bootstrap admin PAT
+is shown one-time only — copy it from the summary; it is not recoverable.
 
 ---
 
-## 2. Customize the plists
-
-The templates live in:
-
-- `apps/server/launchd/dev.secondbrain.server.plist`
-- `apps/relay/launchd/dev.secondbrain.relay.plist`
-
-Each contains `__PLACEHOLDER__` markers. Make a copy and substitute:
-
-```bash
-mkdir -p ~/Library/LaunchAgents
-
-# Server
-sed \
-  -e "s#__PNPM_BIN__#$(which pnpm)#g" \
-  -e "s#__NODE_BIN__#$(which node)#g" \
-  -e "s#__INSTALL_DIR__#$HOME/code/second-brain#g" \
-  -e "s#__HOME__#$HOME#g" \
-  apps/server/launchd/dev.secondbrain.server.plist \
-  > ~/Library/LaunchAgents/dev.secondbrain.server.plist
-
-# Relay — provide a shared secret too
-sed \
-  -e "s#__PNPM_BIN__#$(which pnpm)#g" \
-  -e "s#__NODE_BIN__#$(which node)#g" \
-  -e "s#__INSTALL_DIR__#$HOME/code/second-brain#g" \
-  -e "s#__HOME__#$HOME#g" \
-  -e "s#__RELAY_AUTH_SECRET__#replace-with-a-strong-secret#g" \
-  apps/relay/launchd/dev.secondbrain.relay.plist \
-  > ~/Library/LaunchAgents/dev.secondbrain.relay.plist
-```
-
-Validate the result:
-
-```bash
-plutil -lint ~/Library/LaunchAgents/dev.secondbrain.server.plist
-plutil -lint ~/Library/LaunchAgents/dev.secondbrain.relay.plist
-```
-
-Both should print `OK`.
-
----
-
-## 3. Load the agents
+## 3. Load both agents
 
 ```bash
 launchctl load ~/Library/LaunchAgents/dev.secondbrain.server.plist
 launchctl load ~/Library/LaunchAgents/dev.secondbrain.relay.plist
 ```
 
-`RunAtLoad=true` means each service starts immediately and again on every login.
+`RunAtLoad=true` in both plists means each service starts immediately and
+again on every login.
 
 Confirm they're running:
 
@@ -118,23 +81,24 @@ the error log (next section).
 Quick smoke test:
 
 ```bash
+brain doctor
+# Expect: ✓ local server reachable; ✓ local relay reachable
+
+# Or directly:
 curl -fsS http://localhost:7430/health      # server
-curl -fsS http://localhost:7421/health      # relay (or whatever its health path is)
+curl -fsS http://localhost:7421/health      # relay
 ```
 
 ---
 
 ## 4. Logs
 
-The plists send stdout/stderr to `/tmp/`:
+The auto-generated plists send stdout/stderr under your storage dir:
 
 ```bash
-tail -f /tmp/second-brain-server.out.log /tmp/second-brain-server.err.log
-tail -f /tmp/second-brain-relay.out.log  /tmp/second-brain-relay.err.log
+tail -f ~/.second-brain/data/logs/server.out.log ~/.second-brain/data/logs/server.err.log
+tail -f ~/.second-brain/data/logs/relay.out.log  ~/.second-brain/data/logs/relay.err.log
 ```
-
-You can change the destinations by editing `StandardOutPath` /
-`StandardErrorPath` in the plist (e.g. `~/Library/Logs/second-brain-server.log`).
 
 ---
 
@@ -145,8 +109,9 @@ launchctl unload ~/Library/LaunchAgents/dev.secondbrain.server.plist
 launchctl unload ~/Library/LaunchAgents/dev.secondbrain.relay.plist
 ```
 
-`unload` removes the agent until next reload — use it before editing a plist,
-then `load` again to pick up changes.
+`unload` removes the agent until next reload — use it before re-running
+`brain init server --force` (which rewrites the plists), then `load` again
+to pick up changes.
 
 ---
 
@@ -162,8 +127,9 @@ launchctl kickstart -k gui/$(id -u)/dev.secondbrain.server
 launchctl kickstart -k gui/$(id -u)/dev.secondbrain.relay
 ```
 
-`kickstart -k` restarts the service in place; no need to unload/reload unless
-you edited the plist itself.
+`kickstart -k` restarts the service in place. If `brain init server --force`
+was run (secrets rotated), unload + load both plists instead — the running
+services hold stale signing keys until they restart.
 
 ---
 
@@ -175,10 +141,27 @@ launchctl unload ~/Library/LaunchAgents/dev.secondbrain.relay.plist
 rm ~/Library/LaunchAgents/dev.secondbrain.server.plist
 rm ~/Library/LaunchAgents/dev.secondbrain.relay.plist
 
-# Optional: drop logs and data
-rm -f /tmp/second-brain-*.log
+# Optional: drop logs + data + secrets + server.json
 rm -rf ~/.second-brain
 ```
+
+---
+
+## Sync URL + secret distribution (manual today)
+
+Each client that runs `brain sync join` needs the relay URL and the shared
+secret. Today this is shared out-of-band:
+
+```bash
+# On the server box:
+grep RELAY_AUTH_SECRET ~/.second-brain/secrets.env
+# Share with each client: the relay URL (ws://<host>:7421) and the secret.
+
+# On each client:
+brain sync join --namespace acme --relay ws://server.lan:7421 --secret <secret>
+```
+
+A future change will extend the team manifest to carry this automatically.
 
 ---
 
@@ -186,9 +169,10 @@ rm -rf ~/.second-brain
 
 | Symptom | Fix |
 |---------|-----|
-| `launchctl list` shows exit code `127` | The `__PNPM_BIN__` substitution missed; re-run the `sed` block. |
-| Service exits immediately, log says "Cannot find module" | `WorkingDirectory` is wrong, or you didn't run `pnpm build`. |
+| `launchctl list` shows exit code `127` | `nodeBin` path captured by `brain init server` is stale. Re-run `brain init server --force`. |
+| Service exits immediately, log says "Cannot find module" | You didn't `pnpm build`, or you `git pull`'d new code without rebuilding. |
 | `EADDRINUSE` | Another process holds the port. `lsof -i :7430` / `lsof -i :7421`. |
-| Relay refuses sync clients | `RELAY_AUTH_SECRET` in the plist must match what every `brain sync join` client uses. |
+| `brain doctor` shows ✗ local relay reachable | Run `launchctl load ~/Library/LaunchAgents/dev.secondbrain.relay.plist`. |
+| Sync clients are rejected | `RELAY_AUTH_SECRET` mismatch — every `brain sync join` must use the same secret as the server's `secrets.env`. |
 | Plist edits don't apply | `launchctl unload` then `launchctl load` — `kickstart` won't reread the file. |
-| Service runs once then stops | Check `KeepAlive`. The default keeps it alive on crash + non-zero exit; tweak as needed. |
+| Service runs once then stops | Check `KeepAlive` in the plist. The default keeps it alive on crash + non-zero exit. |

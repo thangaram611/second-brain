@@ -18,144 +18,83 @@ remains the fastest path.
 | Node.js | 22+ | [nodesource](https://github.com/nodesource/distributions), `nvm`, or your distro's package manager |
 | pnpm | 10+ | `corepack enable && corepack prepare pnpm@latest --activate` |
 | git | 2.x | distro package |
-| Service user | non-root | `sudo useradd --system --create-home --shell /bin/bash secondbrain` |
 
-Capture the absolute paths for the service unit:
+---
+
+## 1. Create the service user
+
+The systemd unit's `User=` value is supplied via `--service-user <name>`.
+Create that account first; it does not need a login shell or a home directory.
 
 ```bash
-which node    # → e.g. /usr/bin/node                       — <NODE_BIN>
-which pnpm    # → e.g. /usr/local/bin/pnpm                  — <PNPM_BIN>
-id -un        # → e.g. secondbrain                          — <USER>
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin secondbrain
 ```
 
 ---
 
-## 1. Install the code
-
-Clone and build the monorepo as `<USER>`:
+## 2. Clone + build
 
 ```bash
-sudo -iu secondbrain
-git clone https://github.com/<your-org>/second-brain.git /opt/second-brain
-cd /opt/second-brain
-pnpm install
-pnpm build
-exit
-```
-
-Use `/opt/second-brain` as `<INSTALL_DIR>` throughout this guide. Any path
-readable+writable by `<USER>` works.
-
-Create the runtime data directory (used for the SQLite DB and relay state):
-
-```bash
-sudo install -d -o secondbrain -g secondbrain /var/lib/second-brain
-sudo install -d -o secondbrain -g secondbrain /var/lib/second-brain/relay
+sudo git clone https://github.com/<your-org>/second-brain.git /opt/second-brain
+sudo chown -R secondbrain:secondbrain /opt/second-brain
+sudo -u secondbrain bash -c 'cd /opt/second-brain && pnpm install && pnpm build'
 ```
 
 ---
 
-## 2. Create env files
+## 3. Initialize the server
 
-systemd loads env files **before** `ExecStart`. Keep one file per service.
+`brain init server` writes:
 
-### `/etc/second-brain/server.env`
+- `/etc/second-brain/secrets.env` (mode 0640, `root:secondbrain`) — carries
+  `BRAIN_SERVER_SIGNING_KEY`, `BRAIN_INVITE_SIGNING_KEY`, `RELAY_AUTH_SECRET`.
+- `/etc/systemd/system/second-brain-server.service`
+- `/etc/systemd/system/second-brain-relay.service`
+- `/var/lib/second-brain/{brain.db,users.db,relay/,logs/}` (owned by the
+  service user).
+- `<root's $HOME>/.second-brain/server.json` — discoverable config that
+  `brain doctor` reads on this box.
 
-```bash
-sudo install -d -m 0750 -o root -g secondbrain /etc/second-brain
-sudo tee /etc/second-brain/server.env > /dev/null <<'EOF'
-NODE_ENV=production
-
-# Ports
-BRAIN_API_PORT=7430
-
-# Database
-BRAIN_DB_PATH=/var/lib/second-brain/personal.db
-
-# LLM provider — adjust for your environment
-BRAIN_LLM_PROVIDER=ollama
-BRAIN_LLM_BASE_URL=http://localhost:11434
-BRAIN_LLM_MODEL=llama3.2
-
-# Auth (optional but recommended for any non-loopback exposure)
-# BRAIN_AUTH_TOKEN=replace-me
-EOF
-sudo chmod 0640 /etc/second-brain/server.env
-sudo chown root:secondbrain /etc/second-brain/server.env
-```
-
-### `/etc/second-brain/relay.env`
+**Linux has exactly one supported invocation pattern.** The CLI refuses to
+proceed otherwise:
 
 ```bash
-sudo tee /etc/second-brain/relay.env > /dev/null <<'EOF'
-NODE_ENV=production
-RELAY_PORT=7421
-RELAY_PERSIST_DIR=/var/lib/second-brain/relay
-
-# REQUIRED — shared secret all sync clients must present.
-RELAY_AUTH_SECRET=replace-with-a-strong-shared-secret
-EOF
-sudo chmod 0640 /etc/second-brain/relay.env
-sudo chown root:secondbrain /etc/second-brain/relay.env
+sudo node /opt/second-brain/tools/cli/dist/index.mjs init server \
+  --service-user secondbrain \
+  --non-interactive \
+  --namespace acme \
+  --admin-email admin@example.com
 ```
 
-> **Note on `start` scripts.** The unit files invoke
-> `pnpm --filter @second-brain/server start` (and the same for the relay).
-> The `start` script lands in `apps/server/package.json` as part of a separate
-> stream. Until then, replace the `ExecStart=` line with a direct node
-> invocation (commented in the unit file):
->
-> ```
-> ExecStart=<NODE_BIN> <INSTALL_DIR>/apps/server/dist/index.mjs
-> ```
+Common preflight errors:
 
----
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `Linux: \`brain init server\` … requires root.` | Ran without `sudo`. | Re-run with `sudo`. |
+| `Linux: \`--service-user <name>\` is required …` | Ran as root but no `--service-user`. | Pass `--service-user secondbrain` (or your chosen account). |
 
-## 3. Install the unit files
+The bootstrap admin PAT is shown one-time only — copy it from the summary;
+it is not recoverable.
 
-```bash
-sudo cp /opt/second-brain/apps/server/systemd/second-brain-server.service \
-        /etc/systemd/system/second-brain-server.service
-sudo cp /opt/second-brain/apps/relay/systemd/second-brain-relay.service \
-        /etc/systemd/system/second-brain-relay.service
-```
-
-Open each file and replace the placeholders:
-
-| Placeholder | Example |
-|-------------|---------|
-| `<USER>` | `secondbrain` |
-| `<INSTALL_DIR>` | `/opt/second-brain` |
-| `<NODE_BIN>` | `/usr/bin/node` |
-| `<PNPM_BIN>` | `/usr/local/bin/pnpm` |
-
-A one-liner using `sed` (run as root):
-
-```bash
-sudo sed -i \
-  -e 's#<USER>#secondbrain#g' \
-  -e 's#<INSTALL_DIR>#/opt/second-brain#g' \
-  -e 's#<NODE_BIN>#/usr/bin/node#g' \
-  -e 's#<PNPM_BIN>#/usr/local/bin/pnpm#g' \
-  /etc/systemd/system/second-brain-server.service \
-  /etc/systemd/system/second-brain-relay.service
-```
-
-Verify the units are syntactically correct:
-
-```bash
-sudo systemd-analyze verify /etc/systemd/system/second-brain-server.service
-sudo systemd-analyze verify /etc/systemd/system/second-brain-relay.service
-```
+To **rotate** secrets later: re-run with `--force`. The DBs are preserved.
 
 ---
 
 ## 4. Enable and start
 
+`brain init server` prints the exact commands at the end of its summary:
+
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now second-brain-server.service
-sudo systemctl enable --now second-brain-relay.service
+sudo systemctl enable --now second-brain-server
+sudo systemctl enable --now second-brain-relay
+```
+
+Verify the units (optional):
+
+```bash
+sudo systemd-analyze verify /etc/systemd/system/second-brain-server.service
+sudo systemd-analyze verify /etc/systemd/system/second-brain-relay.service
 ```
 
 Confirm both are active:
@@ -165,21 +104,27 @@ sudo systemctl status second-brain-server
 sudo systemctl status second-brain-relay
 ```
 
+Quick smoke test:
+
+```bash
+sudo -i brain doctor                # reads /root/.second-brain/server.json
+# Expect: ✓ local server reachable; ✓ local relay reachable
+
+curl -fsS http://localhost:7430/health      # server
+curl -fsS http://localhost:7421/health      # relay
+```
+
 ---
 
-## 5. Inspect logs
+## 5. Logs
 
 systemd routes stdout/stderr to the journal:
 
 ```bash
-# Live tail
 sudo journalctl -u second-brain-server -f
 sudo journalctl -u second-brain-relay -f
 
-# Last hour, no follow
 sudo journalctl -u second-brain-server --since "1 hour ago"
-
-# Errors only
 sudo journalctl -u second-brain-server -p err
 ```
 
@@ -188,15 +133,12 @@ sudo journalctl -u second-brain-server -p err
 ## 6. Updating
 
 ```bash
-sudo -iu secondbrain
-cd /opt/second-brain
-git pull
-pnpm install
-pnpm build
-exit
-
+sudo -u secondbrain bash -c 'cd /opt/second-brain && git pull && pnpm install && pnpm build'
 sudo systemctl restart second-brain-server second-brain-relay
 ```
+
+If `brain init server --force` was run (secrets rotated), restart both
+services so they pick up the new keys.
 
 ---
 
@@ -208,10 +150,11 @@ sudo rm /etc/systemd/system/second-brain-server.service
 sudo rm /etc/systemd/system/second-brain-relay.service
 sudo systemctl daemon-reload
 
-# Optional: remove env files and data
+# Storage + secrets (root-owned)
 sudo rm -rf /etc/second-brain /var/lib/second-brain
 sudo rm -rf /opt/second-brain
-sudo userdel -r secondbrain
+sudo rm -rf /root/.second-brain          # server.json + per-root state
+sudo userdel secondbrain
 ```
 
 ---
@@ -220,8 +163,25 @@ sudo userdel -r secondbrain
 
 Either service can sit behind nginx/Caddy/Traefik for TLS termination.
 The server speaks HTTP+WebSocket on `BRAIN_API_PORT` (default `7430`); the
-relay speaks WebSocket on `RELAY_PORT` (default `7421`). Forward both `Upgrade`
-and `Connection` headers so WebSocket connections survive.
+relay speaks WebSocket on `RELAY_PORT` (default `7421`). Forward both
+`Upgrade` and `Connection` headers so WebSocket connections survive.
+
+---
+
+## Sync URL + secret distribution (manual today)
+
+Each client that runs `brain sync join` needs the relay URL and the shared
+secret:
+
+```bash
+# On the server box:
+sudo grep RELAY_AUTH_SECRET /etc/second-brain/secrets.env
+
+# On each client:
+brain sync join --namespace acme --relay ws://server.lan:7421 --secret <secret>
+```
+
+A future change will extend the team manifest to carry this automatically.
 
 ---
 
@@ -229,8 +189,9 @@ and `Connection` headers so WebSocket connections survive.
 
 | Symptom | Fix |
 |---------|-----|
-| `status=203/EXEC` | `<PNPM_BIN>` or `<NODE_BIN>` path is wrong; check `which pnpm`. |
+| `status=203/EXEC` | Node binary captured at init time is stale; re-run `sudo brain init server --service-user secondbrain --force`. |
 | `EADDRINUSE` on `7430`/`7421` | Another process holds the port — `sudo ss -lntp \| grep 7430`. |
-| Permission denied on DB | `<USER>` cannot write to `BRAIN_DB_PATH`; `sudo chown -R secondbrain /var/lib/second-brain`. |
-| Relay rejects clients | `RELAY_AUTH_SECRET` mismatch between server env file and clients. |
-| Service flapping | `journalctl -u <name> -n 200` and look for the error before each `Stopped`/`Started`. |
+| `Permission denied` on DB | `secondbrain` cannot write storage; `sudo chown -R secondbrain:secondbrain /var/lib/second-brain`. |
+| Relay rejects clients | `RELAY_AUTH_SECRET` mismatch — clients must use the value from `/etc/second-brain/secrets.env`. |
+| Service flapping | `sudo journalctl -u <name> -n 200` and look for the error before each `Stopped`/`Started`. |
+| `brain doctor` shows ✗ local server config (unreadable) | `~/.second-brain/server.json` is malformed; re-run `sudo brain init server --service-user secondbrain --force`. |
