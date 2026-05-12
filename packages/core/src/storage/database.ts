@@ -30,7 +30,19 @@ export class StorageDatabase {
   vectorDimensions: number | null = null;
 
   constructor(options: DatabaseOptions) {
-    this.sqlite = new Database(options.path);
+    try {
+      this.sqlite = new Database(options.path);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('NODE_MODULE_VERSION') || msg.includes('ERR_DLOPEN_FAILED')) {
+        throw new Error(
+          `better-sqlite3 native binding failed to load — likely a Node ABI mismatch (e.g., the binding was prebuilt for one Node version and the current process is on another). ` +
+            `Fix: run \`pnpm rebuild-native\` from the repo root with your current Node version active, or \`pnpm install --force\`. ` +
+            `Underlying error: ${msg}`,
+        );
+      }
+      throw err;
+    }
 
     // Enable foreign keys
     this.sqlite.pragma('foreign_keys = ON');
