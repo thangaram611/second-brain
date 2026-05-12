@@ -44,20 +44,23 @@ const WiredReposSchema = z.object({
 export type WiredReposEntry = z.infer<typeof WiredReposEntrySchema>;
 export type WiredRepos = z.infer<typeof WiredReposSchema>;
 
-// Resolved at call time (not module load) so tests can swap `$HOME`.
-function configDir(): string {
-  return path.join(os.homedir(), '.second-brain');
+// Resolved at call time (or via explicit `home` option) so callers and tests
+// can target a non-default location without env mutation. We avoid relying on
+// `process.env.HOME` swaps because Node + vitest worker threads occasionally
+// fail to propagate runtime HOME changes to `os.homedir()`.
+function configDir(home?: string): string {
+  return path.join(home ?? os.homedir(), '.second-brain');
 }
-function configPath(): string {
-  return path.join(configDir(), 'config.json');
+function configPath(home?: string): string {
+  return path.join(configDir(home), 'config.json');
 }
-function logPath(): string {
-  return path.join(configDir(), 'hook.log');
+function logPath(home?: string): string {
+  return path.join(configDir(home), 'hook.log');
 }
 
-export function loadWiredRepos(): WiredRepos {
+export function loadWiredRepos(home?: string): WiredRepos {
   try {
-    const raw = fs.readFileSync(configPath(), 'utf8');
+    const raw = fs.readFileSync(configPath(home), 'utf8');
     const parsed: unknown = JSON.parse(raw);
     const result = WiredReposSchema.safeParse(parsed);
     if (result.success) return result.data;
@@ -67,9 +70,9 @@ export function loadWiredRepos(): WiredRepos {
   return { version: 1, wiredRepos: {} };
 }
 
-export function saveWiredRepos(repos: WiredRepos): void {
-  fs.mkdirSync(configDir(), { recursive: true });
-  fs.writeFileSync(configPath(), JSON.stringify(repos, null, 2) + '\n', 'utf8');
+export function saveWiredRepos(repos: WiredRepos, home?: string): void {
+  fs.mkdirSync(configDir(home), { recursive: true });
+  fs.writeFileSync(configPath(home), JSON.stringify(repos, null, 2) + '\n', 'utf8');
 }
 
 export function computeRepoHash(repoRoot: string): string {

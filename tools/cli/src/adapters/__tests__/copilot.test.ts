@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { copilotAdapter, upsertSentinelBlock } from '../copilot.js';
 import { HOOK_SENTINEL } from '../types.js';
+import * as mcpResolve from '../mcp-resolve.js';
 
 let home: string;
 let cwd: string;
@@ -15,6 +16,7 @@ beforeEach(() => {
 afterEach(() => {
   fs.rmSync(home, { recursive: true, force: true });
   fs.rmSync(cwd, { recursive: true, force: true });
+  vi.restoreAllMocks();
 });
 
 describe('copilotAdapter — project scope', () => {
@@ -47,12 +49,35 @@ describe('copilotAdapter — project scope', () => {
     expect(content).toContain('<!-- begin:second-brain -->');
   });
 
-  it('writes mcp-config.json', () => {
+  // C10 — MCP config uses absolute command + absolute stdio.mjs path
+  it('writes mcp-config.json with absolute command and args', () => {
     copilotAdapter.install({ scope: 'project', home, cwd });
     const mcpPath = path.join(home, '.copilot', 'mcp-config.json');
     expect(fs.existsSync(mcpPath)).toBe(true);
     const mcp = JSON.parse(fs.readFileSync(mcpPath, 'utf8'));
-    expect(mcp.mcpServers['second-brain']).toBeDefined();
+    const entry = mcp.mcpServers['second-brain'];
+    expect(entry).toBeDefined();
+    expect(entry.command).toBe(process.execPath);
+    expect(Array.isArray(entry.args)).toBe(true);
+    expect(entry.args[0]).toMatch(/\.mjs$/);
+    expect(path.isAbsolute(entry.args[0])).toBe(true);
+    expect(fs.existsSync(entry.args[0])).toBe(true);
+  });
+
+  // C11 — resolve fallback: hooks still install, MCP block skipped + warning surfaced
+  it('hooks still install when mcp-resolve fails (no MCP entry, warning surfaced)', () => {
+    vi.spyOn(mcpResolve, 'resolveBrainMcpInvocation').mockReturnValue({
+      invocation: null,
+      warning: 'forced resolution miss (copilot)',
+    });
+    const result = copilotAdapter.install({ scope: 'project', home, cwd });
+    expect(fs.existsSync(result.configPath)).toBe(true);
+    expect(result.warnings).toContain('forced resolution miss (copilot)');
+    const mcpPath = path.join(home, '.copilot', 'mcp-config.json');
+    if (fs.existsSync(mcpPath)) {
+      const mcp = JSON.parse(fs.readFileSync(mcpPath, 'utf8'));
+      expect(mcp.mcpServers?.['second-brain']).toBeUndefined();
+    }
   });
 
   it('writes AGENTS.md only when missing', () => {

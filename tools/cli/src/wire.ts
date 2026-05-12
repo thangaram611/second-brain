@@ -527,6 +527,13 @@ export interface WireFromManifestOptions {
   bearerToken?: string;
   /** When true, skip provider webhook registration regardless of manifest setting. */
   skipProviderWebhook?: boolean;
+  /**
+   * Override home directory for all adapter installs and wiredRepos
+   * config writes. Defaults to `os.homedir()`. Pass explicitly from tests
+   * (and from `runInitClient` when an `homeDir` was provided) so writes
+   * land in the intended directory rather than the real `$HOME`.
+   */
+  home?: string;
 }
 
 export interface WireFromManifestResult {
@@ -571,7 +578,7 @@ export async function runWireFromManifest(
   const namespace = manifest.namespace;
   const serverUrl = manifest.server.url;
   const scope = manifest.hooks?.scope ?? 'user';
-  const home = os.homedir();
+  const home = options.home ?? os.homedir();
 
   // 1. Git hooks — only when listed in manifest.
   let installedGitHooks: InstallGitHooksResult | null = null;
@@ -617,14 +624,14 @@ export async function runWireFromManifest(
 
   // 3. Wired-repos snapshot for `brain doctor` drift detection.
   const repoHash = computeRepoHash(repoRoot);
-  const wired = loadWiredRepos();
+  const wired = loadWiredRepos(home);
   wired.wiredRepos[repoHash] = {
     repoHash,
     absPath: repoRoot,
     namespace,
     installedAt: new Date().toISOString(),
   };
-  saveWiredRepos(wired);
+  saveWiredRepos(wired, home);
 
   // 4. Provider webhook — admin-managed surfaces are NEVER touched here.
   let providerSkipped: WireFromManifestResult['providerSkipped'] = null;

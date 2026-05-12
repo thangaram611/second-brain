@@ -4,9 +4,10 @@
  * Per plan §C and verified against developers.openai.com/codex/hooks:
  *   - Same JSON shape as Claude: `~/.codex/hooks.json` (user) or
  *     `<repo>/.codex/hooks.json` (project), event names camelCase.
- *   - Codex requires `[features] codex_hooks = true` in `~/.codex/config.toml`
- *     to enable hooks. The adapter idempotently sets that flag and a
- *     `[mcp_servers.second-brain]` block.
+ *   - Codex 0.129+ requires `[features] hooks = true` in `~/.codex/config.toml`
+ *     to enable hooks (renamed from the deprecated `codex_hooks`). The adapter
+ *     idempotently sets that flag and a `[mcp_servers.second-brain]` block
+ *     wrapped in managed-region markers.
  */
 
 import * as fs from 'node:fs';
@@ -20,6 +21,7 @@ import type {
   AdapterDetectResult,
 } from './types.js';
 import { HOOK_SENTINEL } from './types.js';
+import { resolveBrainMcpInvocation, type BrainMcpInvocation } from './mcp-resolve.js';
 
 const CODEX_EVENTS = [
   'SessionStart',
@@ -68,7 +70,6 @@ function resolveHooksPath(scope: 'user' | 'project', home: string, cwd: string):
 }
 
 function resolveConfigTomlPath(home: string): string {
-  // Codex feature flag + MCP block live in the user-level config.
   return path.join(home, '.codex', 'config.toml');
 }
 
@@ -157,40 +158,169 @@ function upsert(file: CodexHooksFile, spec: UpsertSpec): boolean {
   return !matched || updated;
 }
 
-/**
- * Idempotent edit of `~/.codex/config.toml`:
- *   - Ensures `[features] codex_hooks = true`.
- *   - Ensures `[mcp_servers.second-brain]` block with `command` + `args`.
- *
- * We do simple line-oriented editing rather than pulling in a TOML parser —
- * the file is small and the structure is well-known.
- */
-export function upsertCodexConfigToml(currentContent: string): {
-  next: string;
-  changed: boolean;
-} {
-  let content = currentContent;
+// ─── config.toml editing ────────────────────────────────────────────────────
+
+const MANAGED_BEGIN =
+  '# >>> second-brain-mcp managed block — do not edit between markers; comment out the block to disable';
+const MANAGED_END = '# <<< second-brain-mcp managed block';
+
+function renderManagedBlock(inv: BrainMcpInvocation): string {
+  const lines: string[] = [
+    MANAGED_BEGIN,
+    '[mcp_servers.second-brain]',
+    `command = ${JSON.stringify(inv.command)}`,
+    `args = ${JSON.stringify(inv.args)}`,
+  ];
+  if (inv.env) {
+    lines.push('');
+    lines.push('[mcp_servers.second-brain.env]');
+    for (const [k, v] of Object.entries(inv.env)) {
+      lines.push(`${k} = ${JSON.stringify(v)}`);
+    }
+  }
+  lines.push(MANAGED_END);
+  return lines.join('\n');
+}
+
+function findManagedRegion(content: string): { startIdx: number; endIdx: number } | null {
+  const startIdx = content.indexOf(MANAGED_BEGIN);
+  if (startIdx === -1) return null;
+  const endMarkerIdx = content.indexOf(MANAGED_END, startIdx + MANAGED_BEGIN.length);
+  if (endMarkerIdx === -1) return null;
+  return { startIdx, endIdx: endMarkerIdx + MANAGED_END.length };
+}
+
+function stripLegacyMcpBlocks(content: string): { next: string; removed: boolean } {
+  const lines = content.split('\n');
+  const out: string[] = [];
+  let skipping = false;
+  let removed = false;
+  for (const line of lines) {
+    if (line.startsWith('[mcp_servers.second-brain')) {
+      skipping = true;
+      removed = true;
+      continue;
+    }
+    if (skipping) {
+      if (line.startsWith('[') && !line.startsWith('[mcp_servers.second-brain')) {
+        skipping = false;
+      } else {
+        // Skip body lines (key = value, blank, comments inside the block).
+        continue;
+      }
+    }
+    out.push(line);
+  }
+  // Collapse 3+ consecutive newlines (left over from removed blocks).
+  const next = out.join('\n').replace(/\n{3,}/g, '\n\n');
+  return { next, removed };
+}
+
+function upsertFeaturesBlock(content: string): { next: string; changed: boolean } {
+  let next = content;
   let changed = false;
 
-  // ── [features] block ───────────────────────────────────────────────────
-  if (!/^\[features\]/m.test(content)) {
-    if (content && !content.endsWith('\n')) content += '\n';
-    content += '\n[features]\ncodex_hooks = true\n';
-    changed = true;
-  } else if (!/^\s*codex_hooks\s*=\s*true\b/m.test(content)) {
-    // Insert after the [features] header line.
-    content = content.replace(/^(\[features\]\s*\n)/m, '$1codex_hooks = true\n');
+  // Migrate deprecated `codex_hooks = true` → drop the line (we'll add `hooks = true` below if needed).
+  // Leave `codex_hooks = false` alone (user-explicit opt-out — respect it).
+  const codexHooksTrue = /^[ \t]*codex_hooks[ \t]*=[ \t]*true[ \t]*\n?/m;
+  if (codexHooksTrue.test(next)) {
+    next = next.replace(codexHooksTrue, '');
     changed = true;
   }
 
-  // ── [mcp_servers.second-brain] block ───────────────────────────────────
-  if (!/^\[mcp_servers\.second-brain\]/m.test(content)) {
-    if (content && !content.endsWith('\n')) content += '\n';
-    content += '\n[mcp_servers.second-brain]\ncommand = "brain"\nargs = ["mcp"]\n';
+  if (!/^\[features\]/m.test(next)) {
+    if (next && !next.endsWith('\n')) next += '\n';
+    next += '\n[features]\nhooks = true\n';
+    changed = true;
+  } else if (!/^[ \t]*hooks[ \t]*=[ \t]*true\b/m.test(next)) {
+    next = next.replace(/^(\[features\][ \t]*\n)/m, '$1hooks = true\n');
     changed = true;
   }
 
-  return { next: content, changed };
+  return { next, changed };
+}
+
+function isManagedBlockCommentedOut(content: string, region: { startIdx: number; endIdx: number }): boolean {
+  const inner = content.slice(region.startIdx + MANAGED_BEGIN.length, region.endIdx - MANAGED_END.length);
+  const meaningfulLines = inner.split('\n').map((l) => l.trim()).filter((l) => l !== '');
+  if (meaningfulLines.length === 0) return false;
+  return meaningfulLines.every((l) => l.startsWith('#'));
+}
+
+/**
+ * Idempotent edit of `~/.codex/config.toml`:
+ *   - Ensures `[features] hooks = true`, migrating away from deprecated `codex_hooks`.
+ *   - Manages the `[mcp_servers.second-brain]` block inside a bracketed marker pair.
+ *
+ * Upsert state machine for the MCP region:
+ *   1. Managed region present, body NOT commented out → replace with fresh content
+ *      (no-op if invocation matches; updates if `command`/`args`/`env` differ).
+ *   2. Managed region present, body all `#`-commented → respect user intent;
+ *      do not rewrite. Caller receives a `warning` describing the state.
+ *   3. No managed region, legacy `[mcp_servers.second-brain]` block exists →
+ *      strip the legacy block and append a fresh managed region.
+ *   4. No managed region, no legacy block → append a fresh managed region.
+ *   5. Invocation is null (helper failed) → strip any managed/legacy block so
+ *      Codex doesn't try to spawn a stale/broken entry. Hooks still install.
+ */
+export function upsertCodexConfigToml(
+  currentContent: string,
+  invocation: BrainMcpInvocation | null,
+): { next: string; changed: boolean; warning?: string } {
+  // 1) Features-block normalization (independent of invocation).
+  const features = upsertFeaturesBlock(currentContent);
+  let working = features.next;
+  let changed = features.changed;
+
+  // 2) MCP region.
+  const region = findManagedRegion(working);
+
+  if (region) {
+    if (isManagedBlockCommentedOut(working, region)) {
+      // State 2 — respect user disable.
+      return {
+        next: working,
+        changed,
+        warning:
+          'second-brain MCP block in ~/.codex/config.toml is commented out under the managed markers; ' +
+          'leaving it disabled. Remove the markers (or uncomment the block) to re-enable.',
+      };
+    }
+    if (!invocation) {
+      // State 5 — strip the managed region so Codex stops trying to spawn it.
+      const before = working.slice(0, region.startIdx);
+      const after = working.slice(region.endIdx);
+      let removed = before + after;
+      removed = removed.replace(/\n{3,}/g, '\n\n');
+      if (removed.endsWith('\n\n')) removed = removed.slice(0, -1);
+      return { next: removed, changed: true };
+    }
+    // State 1 — replace block.
+    const replacement = renderManagedBlock(invocation);
+    const before = working.slice(0, region.startIdx);
+    const after = working.slice(region.endIdx);
+    const nextContent = before + replacement + after;
+    return { next: nextContent, changed: changed || nextContent !== working };
+  }
+
+  // No managed region; strip any legacy unmanaged block first.
+  const strip = stripLegacyMcpBlocks(working);
+  if (strip.removed) {
+    working = strip.next;
+    changed = true;
+  }
+
+  if (!invocation) {
+    // State 5 (no managed, possibly removed legacy) — done.
+    return { next: working, changed };
+  }
+
+  // State 3 or 4 — append fresh managed region.
+  const replacement = renderManagedBlock(invocation);
+  if (working && !working.endsWith('\n')) working += '\n';
+  if (!working.endsWith('\n\n')) working += '\n';
+  working += replacement + '\n';
+  return { next: working, changed: true };
 }
 
 function installImpl(opts: AdapterInstallOptions): AdapterInstallResult {
@@ -222,6 +352,9 @@ function installImpl(opts: AdapterInstallOptions): AdapterInstallResult {
   writeJson(hooksPath, file);
 
   // ── Update ~/.codex/config.toml ──────────────────────────────────────
+  const resolved = resolveBrainMcpInvocation();
+  if (resolved.warning) warnings.push(resolved.warning);
+
   const tomlPath = resolveConfigTomlPath(opts.home);
   let currentToml = '';
   if (fs.existsSync(tomlPath)) {
@@ -231,7 +364,8 @@ function installImpl(opts: AdapterInstallOptions): AdapterInstallResult {
       // ignore
     }
   }
-  const { next, changed } = upsertCodexConfigToml(currentToml);
+  const { next, changed, warning } = upsertCodexConfigToml(currentToml, resolved.invocation);
+  if (warning) warnings.push(warning);
   if (changed) {
     fs.mkdirSync(path.dirname(tomlPath), { recursive: true });
     fs.writeFileSync(tomlPath, next, 'utf8');

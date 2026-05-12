@@ -27,6 +27,7 @@ import type {
   AdapterDetectResult,
 } from './types.js';
 import { HOOK_SENTINEL } from './types.js';
+import { resolveBrainMcpInvocation } from './mcp-resolve.js';
 
 const COPILOT_EVENTS = [
   'sessionStart',
@@ -158,7 +159,7 @@ function installImpl(opts: AdapterInstallOptions): AdapterInstallResult {
     // We still wire MCP for user scope but never write to undocumented hook paths.
     warnings.push('user-scope Copilot CLI hooks are undocumented — installing MCP only');
     const mcpPath = resolveMcpPath(opts.home);
-    upsertMcp(mcpPath, auxFiles);
+    upsertMcp(mcpPath, auxFiles, warnings);
     return {
       configPath: mcpPath,
       addedEvents: added,
@@ -197,7 +198,7 @@ function installImpl(opts: AdapterInstallOptions): AdapterInstallResult {
 
   // MCP — user-scope only.
   const mcpPath = resolveMcpPath(opts.home);
-  upsertMcp(mcpPath, auxFiles);
+  upsertMcp(mcpPath, auxFiles, warnings);
 
   // Rules file: copilot-instructions.md.
   const instructionsPath = resolveInstructionsPath(opts.cwd);
@@ -242,7 +243,7 @@ function installImpl(opts: AdapterInstallOptions): AdapterInstallResult {
   };
 }
 
-function upsertMcp(mcpPath: string, auxFiles: string[]): void {
+function upsertMcp(mcpPath: string, auxFiles: string[], warnings: string[]): void {
   let mcp: { mcpServers: Record<string, unknown> } = { mcpServers: {} };
   if (fs.existsSync(mcpPath)) {
     try {
@@ -264,11 +265,17 @@ function upsertMcp(mcpPath: string, auxFiles: string[]): void {
       // fall through to defaults
     }
   }
-  if (!mcp.mcpServers['second-brain']) {
-    mcp.mcpServers['second-brain'] = {
-      command: 'brain',
-      args: ['mcp'],
-    };
+  const resolved = resolveBrainMcpInvocation();
+  if (resolved.warning) warnings.push(resolved.warning);
+  if (!resolved.invocation) return;
+  const desired: Record<string, unknown> = {
+    command: resolved.invocation.command,
+    args: resolved.invocation.args,
+  };
+  if (resolved.invocation.env) desired.env = resolved.invocation.env;
+  const existingEntry = mcp.mcpServers['second-brain'];
+  if (JSON.stringify(existingEntry) !== JSON.stringify(desired)) {
+    mcp.mcpServers['second-brain'] = desired;
     writeJson(mcpPath, mcp);
     auxFiles.push(mcpPath);
   }

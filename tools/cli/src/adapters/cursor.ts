@@ -26,6 +26,7 @@ import type {
   AdapterDetectResult,
 } from './types.js';
 import { HOOK_SENTINEL } from './types.js';
+import { resolveBrainMcpInvocation } from './mcp-resolve.js';
 
 interface CursorHookCommand {
   command: string;
@@ -200,13 +201,20 @@ function installImpl(opts: AdapterInstallOptions): AdapterInstallResult {
       // fall through to defaults
     }
   }
-  if (!mcp.mcpServers['second-brain']) {
-    mcp.mcpServers['second-brain'] = {
-      command: 'brain',
-      args: ['mcp'],
+  const resolved = resolveBrainMcpInvocation();
+  if (resolved.warning) warnings.push(resolved.warning);
+  if (resolved.invocation) {
+    const desired: Record<string, unknown> = {
+      command: resolved.invocation.command,
+      args: resolved.invocation.args,
     };
-    writeJson(mcpPath, mcp);
-    auxFiles.push(mcpPath);
+    if (resolved.invocation.env) desired.env = resolved.invocation.env;
+    const existingEntry = mcp.mcpServers['second-brain'];
+    if (JSON.stringify(existingEntry) !== JSON.stringify(desired)) {
+      mcp.mcpServers['second-brain'] = desired;
+      writeJson(mcpPath, mcp);
+      auxFiles.push(mcpPath);
+    }
   }
 
   return {

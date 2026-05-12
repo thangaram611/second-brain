@@ -36,6 +36,7 @@ import { runInitServer } from '../init-server.js';
 import { runInitClient } from '../init-client.js';
 import { runWireFromManifest } from '../wire.js';
 import { setKeychainTestOverride, resetKeychainCache } from '../keychain.js';
+import { setMacKeychainProbeForTest, resetMacKeychainProbeCache } from '../probe-mac-keychain.js';
 import { readCredentials } from '../credentials.js';
 import { UsersService, type Scope } from '@second-brain/server/services/users';
 import type { TeamManifest } from '../team-manifest.js';
@@ -49,6 +50,18 @@ let stdoutBuf: string;
 const sinkStdout = { write: (s: string): void => { stdoutBuf += s; } };
 
 let store: Map<string, string>;
+let savedHome: string | undefined;
+
+function swapHome(newHome: string): void {
+  savedHome = process.env.HOME;
+  process.env.HOME = newHome;
+}
+
+function restoreHome(): void {
+  if (savedHome === undefined) delete process.env.HOME;
+  else process.env.HOME = savedHome;
+  savedHome = undefined;
+}
 
 function installFakeKeychain(): void {
   store = new Map<string, string>();
@@ -70,15 +83,27 @@ beforeEach(() => {
   installFakeKeychain();
   process.env.BRAIN_API_URL = 'http://localhost:7430';
   delete process.env.BRAIN_AUTH_TOKEN;
+  // Redirect HOME so any code path that resolves `os.homedir()` (notably
+  // `runWireFromManifest` and adapter installers) writes inside tmpHome
+  // rather than the real `~`. With HOME swapped, the macOS `security`
+  // probe can no longer find the user's real login keychain, so we also
+  // inject a positive probe result — the fake keytar (set above) handles
+  // the actual store/get, so backend selection ends up at 'keychain'.
+  swapHome(tmpHome);
+  resetMacKeychainProbeCache();
+  setMacKeychainProbeForTest(true);
 });
 
 afterEach(() => {
+  restoreHome();
   fs.rmSync(tmpHome, { recursive: true, force: true });
   fs.rmSync(tmpServerHome, { recursive: true, force: true });
   fs.rmSync(repoRoot, { recursive: true, force: true });
   process.env = { ...ORIG_ENV };
   setKeychainTestOverride(null);
   resetKeychainCache();
+  setMacKeychainProbeForTest(null);
+  resetMacKeychainProbeCache();
 });
 
 // --- Invite signing helpers (mirrors apps/server/src/lib/invite.ts) --------

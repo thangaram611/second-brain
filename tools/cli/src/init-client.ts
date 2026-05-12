@@ -274,6 +274,7 @@ export async function runInitClient(opts: InitClientOptions): Promise<InitClient
             repoRoot,
             manifest: loaded.manifest,
             bearerToken: redeemed.pat,
+            home: homeOverride,
           });
           wiredRepoRoot = repoRoot;
         }
