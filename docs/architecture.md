@@ -3,7 +3,7 @@
 > **Shared source of truth** for the Second Brain developer knowledge graph.
 > Referenced by Cursor rules, Copilot instructions, MCP tool configs, and onboarding docs.
 >
-> Last verified against codebase: 2026-05
+> Last verified against codebase: 2026-06
 
 ---
 
@@ -271,7 +271,7 @@ Health check: `GET /health` (no auth required)
 `add_entity`, `add_relation`, `add_observation`, `update_entity`, `merge_entities`, `record_decision`, `record_fact`, `record_pattern`, `invalidate`, `flip_branch_status`, `dismiss_contradiction`, `resolve_contradiction`
 
 **Pipeline Tools (5):**
-`reindex`, `export_graph`, `import_graph`, `embed`, `rebuild_embeddings`
+`reindex`, `export_graph`, `import_graph`, `rebuild_embeddings`, `query_graph`
 
 ---
 
@@ -306,8 +306,7 @@ Health check: `GET /health` (no auth required)
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/search` | Hybrid search (`?q=...`) |
-| GET | `/api/query` | Graph query (GET) |
-| POST | `/api/query` | Graph query (POST) |
+| POST | `/api/query` | Natural-language query (LLM keyword extraction → FTS/vector; `requireAdmin`) |
 | GET | `/api/query/ownership` | Code ownership |
 | GET | `/api/query/ownership-tree` | Ownership tree |
 | GET | `/api/query/parallel-work` | Parallel work detection |
@@ -362,7 +361,7 @@ Health check: `GET /health` (no auth required)
 ## 8. UI — `apps/ui`
 
 - **React** 19.1.0 + **React Router** 7.6.0
-- **State:** Zustand 5.0.5 (store-per-feature pattern, 8 stores)
+- **State:** Zustand 5.0.5 (store-per-feature pattern, 9 stores)
 - **Graph:** Cytoscape.js with 4 layouts: `cose`, `grid`, `circle`, `breadthfirst`
 - **Components:** Radix UI primitives + Tailwind CSS (dark theme)
 
@@ -382,9 +381,9 @@ Health check: `GET /health` (no auth required)
 | `/wip-radar` | WIP Radar | Work-in-progress detection |
 | `/settings` | Settings | Configuration |
 
-### Zustand Stores (8)
+### Zustand Stores (9)
 
-`graph-store`, `search-store`, `timeline-store`, `ownership-store`, `contradictions-store`, `stats-store`, `sync-store`, `wip-store`
+`graph-store`, `search-store`, `timeline-store`, `ownership-store`, `contradictions-store`, `stats-store`, `sync-store`, `wip-store`, `auth-store`
 
 ### Features
 

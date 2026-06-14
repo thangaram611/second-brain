@@ -1,7 +1,7 @@
-# Manual verification — Section H residual checks (PR6 §6.6)
+# Manual verification — non-scriptable release checks
 
 The automated `tools/cli/src/__tests__/e2e-walkthrough.test.ts` covers most of
-the Section H walkthrough (init server → invite → init client → wire repo +
+the bootstrap walkthrough (init server → invite → init client → wire repo +
 sidecars + git hooks). The steps below cannot be scripted — they require a
 real IDE session, a real OS keychain, or `systemd` on Linux. Run them in
 order on a freshly-bootstrapped install.
@@ -31,7 +31,10 @@ brain init client --invite "$INVITE" --server http://localhost:7430 --no-wire
   (Linux) returns the PAT.
 - Stdout shows the credentials path but **does not** print the PAT (keychain
   success path).
-- `brain whoami` returns `userId`, `email`, `namespace=verify-team`.
+- `brain doctor` reports `whoami → 200` with a `userId` matching the stored
+  credentials (namespace `verify-team`). There is no `brain whoami` command —
+  the identity endpoint is `GET /api/auth/whoami`; for raw fields run
+  `curl -fsS -H "Authorization: Bearer <pat>" http://localhost:7430/api/auth/whoami | jq`.
 
 ---
 
@@ -118,15 +121,15 @@ A real-server check confirms the round-trip + keychain delete + credentials
 patch all work against the production code path.
 
 ```sh
-# 1. Note the current token id.
-brain whoami
+# 1. Note the current token id from the credentials file.
+cat ~/.second-brain/credentials/<host>.json | jq '{hookTokenId, defaultTokenId, cliTokenId}'
 
 # 2. Rotate.
 brain auth rotate
 
 # 3. The CLI prints the slot that fired (e.g. "rotating slot 'hook'") and the
-#    new token id. Verify with whoami:
-brain whoami     # tokenId should be the new one
+#    new token id. Confirm the credential still authenticates:
+brain doctor     # whoami → 200, userId unchanged; rotated slot's tokenId updated
 
 # 4. The OLD keychain entry is gone:
 security find-generic-password -s second-brain -a "pat:<host>:<oldTokenId>"

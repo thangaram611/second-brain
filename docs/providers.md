@@ -163,14 +163,19 @@ observation data from arbitrary webhook payloads.
 - **Webhook auto-removal:** not supported — you must remove the webhook
   manually.
 
-### Generating a Template
+### Creating a Mapping File
+
+There is no CLI generator. Create the file by hand, or start from the shipped
+Gitea template at `packages/collectors/src/providers/templates/gitea.json`:
 
 ```bash
-brain provider template --name gitea
+mkdir -p ~/.second-brain/providers
+cp packages/collectors/src/providers/templates/gitea.json \
+  ~/.second-brain/providers/gitea.json
 ```
 
-This creates `~/.second-brain/providers/gitea.json` with a skeleton mapping
-file ready for customization.
+Then edit `~/.second-brain/providers/gitea.json` for your forge. The file is
+validated against the `CustomProviderMapping` schema when loaded.
 
 ### Mapping File Format
 
