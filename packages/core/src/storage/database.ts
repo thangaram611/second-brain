@@ -39,6 +39,7 @@ export class StorageDatabase {
           `better-sqlite3 native binding failed to load — likely a Node ABI mismatch (e.g., the binding was prebuilt for one Node version and the current process is on another). ` +
             `Fix: run \`pnpm rebuild-native\` from the repo root with your current Node version active, or \`pnpm install --force\`. ` +
             `Underlying error: ${msg}`,
+          { cause: err },
         );
       }
       throw err;

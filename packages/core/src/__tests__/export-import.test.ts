@@ -4,7 +4,6 @@ import { exportJson } from '../io/export-json.js';
 import { exportJsonLd } from '../io/export-jsonld.js';
 import { exportDot } from '../io/export-dot.js';
 import { importGraph } from '../io/import.js';
-import type { CreateEntityInput, CreateRelationInput } from '@second-brain/types';
 
 function makeBrain(): Brain {
   return new Brain({ path: ':memory:', wal: false });
@@ -77,7 +76,7 @@ describe('Import/Export', () => {
 
   describe('JSON round-trip', () => {
     it('exports and imports entities and relations', () => {
-      const { alice, project, decision } = seedData(brain);
+      seedData(brain);
 
       const json = exportJson(brain, { format: 'json' });
       const parsed = JSON.parse(json);

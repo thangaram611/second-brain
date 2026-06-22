@@ -12,7 +12,6 @@ import type Database from 'better-sqlite3';
  */
 export function loadSqliteVec(db: Database.Database): void {
   const require = createRequire(import.meta.url);
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const sqliteVec: { load: (db: Database.Database) => void } = require('sqlite-vec');
   // sqlite-vec ships a `load(db)` helper that resolves the platform-specific
   // binary path and calls db.loadExtension() under the hood.

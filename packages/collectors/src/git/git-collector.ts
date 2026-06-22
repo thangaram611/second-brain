@@ -1,5 +1,5 @@
 import { simpleGit } from 'simple-git';
-import type { SimpleGit, DefaultLogFields, ListLogLine } from 'simple-git';
+import type { SimpleGit } from 'simple-git';
 import type { CreateEntityInput, EntitySource } from '@second-brain/types';
 import type { Collector, ExtractionResult, PipelineConfig, PendingRelation } from '@second-brain/ingestion';
 import { CoChangeTracker } from './co-change-tracker.js';

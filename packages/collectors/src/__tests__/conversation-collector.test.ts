@@ -115,11 +115,6 @@ describe('conversationToText', () => {
 });
 
 describe('ConversationCollector', () => {
-  function fileWithBody(body: string): string {
-    const filePath = path.join(tmp, 'session.jsonl');
-    return filePath;
-  }
-
   it('emits a conversation entity + LLM-extracted decisions linked back', async () => {
     const filePath = path.join(tmp, 'session.jsonl');
     await fs.writeFile(

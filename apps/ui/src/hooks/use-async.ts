@@ -5,7 +5,7 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[] = []) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Deps are intentionally caller-managed via the `deps` argument below.
   const execute = useCallback(async () => {
     setLoading(true);
     setError(null);

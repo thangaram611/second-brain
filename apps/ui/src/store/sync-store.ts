@@ -36,7 +36,7 @@ interface SyncState {
   handlePeerLeft: (namespace: string, peerId: number) => void;
 }
 
-export const useSyncStore = create<SyncState>((set, get) => ({
+export const useSyncStore = create<SyncState>((set) => ({
   statuses: [],
   peers: {},
   loading: false,

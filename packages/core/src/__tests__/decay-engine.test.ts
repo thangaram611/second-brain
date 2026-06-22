@@ -126,8 +126,8 @@ describe('DecayEngine', () => {
     });
 
     it('respects type filter', () => {
-      const fact = brain.entities.create(makeEntity('F1', { type: 'fact' }));
-      const convo = brain.entities.create(makeEntity('C1', { type: 'conversation' }));
+      brain.entities.create(makeEntity('F1', { type: 'fact' }));
+      brain.entities.create(makeEntity('C1', { type: 'conversation' }));
 
       const longAgo = new Date(Date.now() - 300 * 86_400_000).toISOString();
       brain.storage.sqlite.exec(

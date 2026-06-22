@@ -20,6 +20,7 @@
     "dev": "tsx --watch src/index.ts",
     "start": "node dist/index.mjs",
     "test": "vitest run",
+    "lint": "eslint .",
     "test:watch": "vitest",
     "check-types": "tsc --noEmit",
     "clean": "rm -rf dist"

@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import * as os from 'node:os';
 import { buildRequestBody, buildEnvelope, runHook } from '../hook-binary.js';
 
 describe('buildRequestBody', () => {

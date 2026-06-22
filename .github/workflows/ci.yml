@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A newer push to the same branch/PR cancels an in-flight run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: lint · types · test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # keytar links against libsecret; it is not present on ubuntu runners.
+      - name: Install libsecret
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev
+
+      # Reads the pnpm version from the `packageManager` field in package.json.
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      # Pin matches .nvmrc / .npmrc `use-node-version` so native bindings
+      # (better-sqlite3, keytar, argon2) build and run on the same Node ABI.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.21.1
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Type-check
+        run: pnpm check-types
+
+      - name: Test
+        run: pnpm test

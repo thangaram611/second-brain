@@ -7,7 +7,7 @@ import { Card } from '../ui/card.js';
 import { EmptyState } from '../ui/empty-state.js';
 import { LoadingState } from '../ui/loading.js';
 import { ENTITY_COLORS } from '../../lib/colors.js';
-import type { EntityType, TimelineEntry } from '../../lib/types.js';
+import type { TimelineEntry } from '../../lib/types.js';
 import { ENTITY_TYPES } from '../../lib/types.js';
 
 function toDateInputValue(iso: string): string {

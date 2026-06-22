@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as Y from 'yjs';
 import { Brain } from '@second-brain/core';
-import type { Entity, Relation, SyncConflict, CreateEntityInput, CreateRelationInput } from '@second-brain/types';
+import type { SyncConflict, CreateEntityInput, CreateRelationInput } from '@second-brain/types';
 import { createBrainDoc, yMapToEntity, yMapToRelation } from '../crdt/schema.js';
 import { hydrateDocFromDatabase } from '../crdt/hydrate.js';
 import { SyncBridge } from '../crdt/bridge.js';
@@ -41,7 +41,7 @@ function makeRelationInput(sourceId: string, targetId: string, namespace = 'team
 describe('hydrateDocFromDatabase', () => {
   it('hydrates entities from SQLite into a Y.Doc', () => {
     const e1 = brain.entities.create(makeEntityInput('Entity A'));
-    const e2 = brain.entities.create(makeEntityInput('Entity B'));
+    brain.entities.create(makeEntityInput('Entity B'));
 
     const doc = createBrainDoc();
     hydrateDocFromDatabase(doc, brain.entities, brain.relations, 'team-a');
@@ -198,7 +198,7 @@ describe('SyncBridge', () => {
     });
 
     it('does NOT process hydrate-origin changes', () => {
-      const entity = brain.entities.create(makeEntityInput('Hydrated'));
+      brain.entities.create(makeEntityInput('Hydrated'));
 
       const doc = createBrainDoc();
       const bridge = new SyncBridge({

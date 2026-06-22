@@ -304,8 +304,6 @@ export interface SessionRecord {
 
 // --- Helpers ---------------------------------------------------------------
 
-const SCOPE_VALUES: readonly Scope[] = ['hook:read', 'read', 'write', 'admin'];
-
 function isScope(value: string): value is Scope {
   return value === 'hook:read' || value === 'read' || value === 'write' || value === 'admin';
 }
@@ -660,7 +658,7 @@ export class UsersService {
     // therefore parse the hash prefix and reject anything weaker than the
     // mint policy (or non-argon2id) before we even attempt verification.
     if (!hashMatchesPolicy(hash)) return null;
-    let ok = false;
+    let ok: boolean;
     try {
       ok = await argon2.verify(hash, parsed.secret);
     } catch {

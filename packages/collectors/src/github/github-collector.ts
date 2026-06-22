@@ -1,5 +1,5 @@
 import { Octokit } from '@octokit/rest';
-import type { CreateEntityInput, EntitySource } from '@second-brain/types';
+import type { CreateEntityInput } from '@second-brain/types';
 import type { Collector, ExtractionResult, PendingRelation, PipelineConfig, LLMExtractor } from '@second-brain/ingestion';
 import { withRetry } from '@second-brain/ingestion';
 import { GitHubPRSchema, GitHubIssueSchema } from './github-types.js';
@@ -52,7 +52,6 @@ export class GitHubCollector implements Collector {
     const seenPersons = new Set<string>();
 
     const repoSlug = this.options.repo;
-    const source: EntitySource = { type: 'github', ref: repoSlug, actor: 'github' };
 
     const addPerson = (login: string): void => {
       if (seenPersons.has(login)) return;

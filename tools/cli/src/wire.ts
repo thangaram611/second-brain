@@ -167,7 +167,7 @@ export async function runWire(options: WireOptions = {}): Promise<WireResult> {
   // Ensure the lock file exists so `proper-lockfile` can acquire an
   // exclusive lock on it without failing.
   if (!fs.existsSync(lockPath)) fs.writeFileSync(lockPath, '', 'utf8');
-  let release: (() => Promise<void>) | null = null;
+  let release: () => Promise<void>;
   try {
     release = await lockfile.lock(lockPath, {
       realpath: false,
@@ -177,6 +177,7 @@ export async function runWire(options: WireOptions = {}): Promise<WireResult> {
   } catch (err) {
     throw new Error(
       `another wire operation is in progress (${err instanceof Error ? err.message : String(err)})`,
+      { cause: err },
     );
   }
 

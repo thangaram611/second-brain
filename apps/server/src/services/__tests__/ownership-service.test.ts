@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Brain } from '@second-brain/core';
 import { OwnershipService, type SimpleGitFactory } from '../ownership-service.js';
 
