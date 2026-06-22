@@ -5,6 +5,16 @@ import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { startFileChangeCollector, type FileChangeCollectorHandle } from '../git-context/file-change-collector.js';
 
+// Force chokidar into polling mode for this suite. Native fs events are
+// unreliable under the heavy parallel load of a full `pnpm test`: delivery can
+// lag several seconds and the first event after `ready` can race the watch
+// arming, which made these tests intermittently time out. Polling re-stats on a
+// fixed interval, so detection is deterministic regardless of load. chokidar 4
+// reads these env vars at watch() time; Vitest's default `forks` pool runs each
+// test file in its own process, so this stays scoped to this file.
+process.env.CHOKIDAR_USEPOLLING = 'true';
+process.env.CHOKIDAR_INTERVAL ??= '25';
+
 let tmpDir: string;
 let handle: FileChangeCollectorHandle | null = null;
 
@@ -50,7 +60,9 @@ afterEach(async () => {
 
 async function waitUntil<T>(
   predicate: () => T | undefined,
-  timeoutMs = 5000,
+  // Stay under the package's 15s Vitest testTimeout while leaving margin for
+  // assertions + teardown. The old 5s default fired prematurely under load.
+  timeoutMs = 12_000,
   pollMs = 50,
 ): Promise<T> {
   const start = Date.now();
