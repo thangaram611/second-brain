@@ -35,6 +35,8 @@ export interface UnwireOptions {
 export interface UnwireResult {
   repoRoot: string;
   repoHash: string;
+  /** Namespace recorded for this repo, captured before the wiredRepos entry is removed. Null if the repo was not wired. Lets the caller run `--purge` against the right namespace. */
+  namespace: string | null;
   gitHooks: UninstallGitHooksResult;
   configEntryRemoved: boolean;
   claudeRemoved: string[] | null;
@@ -78,6 +80,9 @@ async function runUnwireInternal(options: UnwireOptions): Promise<UnwireResult> 
   const repoHash = computeRepoHash(repoRoot);
   const wired = loadWiredRepos();
   const entry = wired.wiredRepos[repoHash];
+  // Capture the namespace now — the wiredRepos entry is deleted below, so the
+  // caller (`brain unwire --purge`) can't look it up afterwards.
+  const namespace = entry?.namespace ?? null;
 
   // ── Phase 10.3: unregister provider webhook ──────────────────────────
   let providerUnregistered = false;
@@ -195,6 +200,7 @@ async function runUnwireInternal(options: UnwireOptions): Promise<UnwireResult> 
   return {
     repoRoot,
     repoHash,
+    namespace,
     gitHooks,
     configEntryRemoved,
     claudeRemoved,

@@ -1490,7 +1490,8 @@ brain unwire [options]
 |------|-------------|
 | `--repo <path>` | Repo root |
 | `--remove-claude-hooks` | Also remove Claude hooks (affects all repos) |
-| `--purge` | Signal project observations for purge |
+| `--purge` | Delete **all** entities and relations in this repo's namespace (irreversible; refuses the `personal` namespace) |
+| `-y, --yes` | Skip the `--purge` confirmation prompt (required to purge non-interactively) |
 | `--force` | Proceed past provider API failures |
 
 ---

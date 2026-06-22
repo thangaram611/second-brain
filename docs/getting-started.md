@@ -450,7 +450,8 @@ Runs a persistent daemon that monitors file changes and branch switches, posting
 
 ```bash
 brain unwire --repo /path/to/project
-brain unwire --repo . --purge             # Signal a DB purge (purge itself ships in 10.4; currently a no-op)
+brain unwire --repo . --purge             # Also delete all data in the repo's namespace (prompts; refuses 'personal')
+brain unwire --repo . --purge --yes       # ...without the confirmation prompt (for scripts/CI)
 brain unwire --repo . --remove-claude-hooks  # Also remove Claude Code hooks
 ```
 
