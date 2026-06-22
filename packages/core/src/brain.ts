@@ -27,6 +27,11 @@ export interface FlipBranchStatusResult {
   updatedRelations: number;
 }
 
+export interface PurgeNamespaceResult {
+  entitiesDeleted: number;
+  relationsDeleted: number;
+}
+
 export interface ParallelWorkQuery {
   /** Restrict to entities whose relations carry this branch. */
   branch?: string;
@@ -212,6 +217,30 @@ export class Brain {
       return {
         updatedEntities: Number(eRes.changes),
         updatedRelations: Number(rRes.changes),
+      };
+    })();
+  }
+
+  /**
+   * Delete every entity and relation in `namespace`. Relations in the
+   * namespace are removed first; deleting the entities then cascades to any
+   * relations still referencing them (FK `ON DELETE CASCADE`) and to their
+   * embeddings. Single transaction.
+   *
+   * Mechanism only — callers own the policy (e.g. `brain unwire --purge`
+   * refuses to purge the `personal` namespace).
+   */
+  purgeNamespace(namespace: string): PurgeNamespaceResult {
+    if (typeof namespace !== 'string' || namespace.length === 0) {
+      throw new Error('purgeNamespace: namespace must be a non-empty string');
+    }
+    const sqlite = this.storage.sqlite;
+    return sqlite.transaction(() => {
+      const rRes = sqlite.prepare('DELETE FROM relations WHERE namespace = ?').run(namespace);
+      const eRes = sqlite.prepare('DELETE FROM entities WHERE namespace = ?').run(namespace);
+      return {
+        relationsDeleted: Number(rRes.changes),
+        entitiesDeleted: Number(eRes.changes),
       };
     })();
   }
