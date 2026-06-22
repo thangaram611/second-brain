@@ -96,12 +96,12 @@ pnpm clean            # Clean build artifacts
 brain init             # Initialize a new knowledge graph
 brain index            # Index a repository (git, AST, docs)
 brain search <query>   # Search entities and relations
-brain query <cypher>   # Run a graph query
+brain query <question>  # Natural-language query (LLM keyword extraction + FTS/vector)
 brain add              # Add an entity manually
-brain decide           # Resolve contradictions
+brain decide           # Record a decision
 brain embed            # Generate embeddings for vector search
 brain watch            # Watch for file changes and auto-index
-brain wire             # Auto-detect and create relations
+brain wire             # Wire a repo: git hooks + claude hooks + wiredRepos entry
 brain sync             # Sync with a team relay
 brain export           # Export graph (JSON, JSON-LD, DOT)
 brain import           # Import graph data
@@ -167,12 +167,12 @@ Copy `.env.example` to `.env` and configure:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LLM_PROVIDER` | `ollama` | LLM provider (`ollama`, `anthropic`, `openai`, `groq`) |
-| `LLM_MODEL` | `llama3.2` | Model for entity extraction |
-| `LLM_EMBEDDING_MODEL` | `nomic-embed-text` | Model for vector embeddings |
-| `SERVER_PORT` | `7420` | REST API server port |
+| `BRAIN_LLM_PROVIDER` | `ollama` | LLM provider (`ollama`, `anthropic`, `openai`, `groq`) |
+| `BRAIN_LLM_MODEL` | `llama3.2` | Model for entity extraction |
+| `BRAIN_EMBEDDING_MODEL` | `nomic-embed-text` | Model for vector embeddings |
+| `BRAIN_API_PORT` | `7430` | REST API server port |
+| `BRAIN_MCP_PORT` | `7420` | MCP HTTP server port |
 | `RELAY_PORT` | `7421` | Yjs relay server port |
-| `UI_PORT` | `7422` | Web UI dev server port |
 | `GITHUB_TOKEN` | — | GitHub PAT for PR/issue indexing |
 
 See [Getting Started](docs/getting-started.md) for the full configuration reference.

@@ -1507,7 +1507,7 @@ brain flip-branch <branch> --status <status> [options]
 
 | Flag | Description |
 |------|-------------|
-| `--status <s>` | `open` \| `in-review` \| `merged` \| `abandoned` (**required**) |
+| `--status <s>` | `wip` \| `merged` \| `abandoned` (**required**) |
 | `--mr <iid>` | MR/PR iid |
 | `--merged-at <iso>` | ISO timestamp (when `--status=merged`) |
 

@@ -381,7 +381,7 @@ This starts all services via Turborepo:
 |---------|-----|-------------|-------------|
 | **API Server** | `http://localhost:7430` | `7430` | REST API + WebSocket |
 | **UI** | `http://localhost:5173` | `5173` | React web app (Vite dev server) |
-| **Relay** | `ws://localhost:7421` | `7421` | y-websocket CRDT relay |
+| **Relay** | `ws://localhost:7421` | `7421` | Hocuspocus CRDT relay |
 
 The UI dev server proxies `/api` and `/ws` to the API server automatically.
 
@@ -450,7 +450,7 @@ Runs a persistent daemon that monitors file changes and branch switches, posting
 
 ```bash
 brain unwire --repo /path/to/project
-brain unwire --repo . --purge             # Also mark project entities for deletion
+brain unwire --repo . --purge             # Signal a DB purge (purge itself ships in 10.4; currently a no-op)
 brain unwire --repo . --remove-claude-hooks  # Also remove Claude Code hooks
 ```
 
@@ -559,7 +559,7 @@ Second Brain exposes a Model Context Protocol (MCP) server with **32 tools** tha
 brain init --wire-claude
 ```
 
-This patches `~/.claude.json` to register the `second-brain-mcp` server.
+This patches `~/.claude.json` to register the `second-brain` MCP server.
 
 ### Manual setup
 
@@ -570,7 +570,7 @@ Add to your MCP configuration (e.g., `~/.claude.json` or VS Code MCP settings):
   "mcpServers": {
     "second-brain": {
       "command": "node",
-      "args": ["/path/to/second-brain/packages/mcp-server/dist/index.mjs"],
+      "args": ["/path/to/second-brain/packages/mcp-server/dist/stdio.mjs"],
       "env": {
         "BRAIN_DB_PATH": "~/.second-brain/personal.db"
       }
@@ -646,10 +646,10 @@ All environment variables with their defaults and descriptions.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BRAIN_LLM_PROVIDER` | `ollama` | LLM provider: `ollama`, `anthropic`, `openai`, `groq` |
-| `BRAIN_LLM_MODEL` | — | Chat model name (e.g., `llama3.2`) |
-| `BRAIN_LLM_BASE_URL` | `http://localhost:11434` | LLM API base URL |
+| `BRAIN_LLM_MODEL` | `llama3.2` | Chat model name |
+| `BRAIN_LLM_BASE_URL` | — | LLM API base URL (unset; Ollama clients default to `http://localhost:11434`) |
 | `BRAIN_LLM_API_KEY` | — | API key for cloud LLM providers |
-| `BRAIN_EMBEDDING_MODEL` | — | Embedding model (e.g., `nomic-embed-text`) |
+| `BRAIN_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model |
 | `BRAIN_EMBEDDING_PROVIDER` | — | Embedding provider (defaults to LLM provider) |
 | `BRAIN_EMBEDDING_BASE_URL` | — | Embedding API base URL |
 | `BRAIN_EMBEDDING_API_KEY` | — | API key for embedding provider |

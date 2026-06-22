@@ -17,7 +17,7 @@ Knowledge graph engine. SQLite + Drizzle ORM + FTS5 + sqlite-vec.
 | `SearchEngine` | `src/search/` | FTS5 full-text + sqlite-vec vector search |
 | `BitemporalQueries` | `src/temporal/` | Point-in-time and history queries |
 | `DecayEngine` | `src/temporal/` | Confidence decay (read-side only) |
-| `ContradictionDetector` | `src/search/` | Finds contradicting observations |
+| `ContradictionDetector` | `src/temporal/` | Finds contradicting observations |
 | `EmbeddingStore` | `src/embeddings/` | Optional vector storage |
 
 ## Schema
