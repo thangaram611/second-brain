@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { Brain } from '@second-brain/core';
-import { loadCodeowners, type CodeownersResult } from './codeowners.js';
+import { loadCodeowners } from './codeowners.js';
 
 const execFileAsync = promisify(execFile);
 

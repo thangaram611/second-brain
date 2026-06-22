@@ -39,7 +39,7 @@ export interface MarkdownExtraction {
 const FRONTMATTER_RE = /^---\s*\n([\s\S]*?)\n---\s*(?:\n|$)/;
 const HEADING_RE = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
 const LINK_RE = /\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
-const FENCE_RE = /^```\s*([a-zA-Z0-9_+\-]*)\s*$/;
+const FENCE_RE = /^```\s*([a-zA-Z0-9_+-]*)\s*$/;
 
 export function parseMarkdown(input: string): MarkdownExtraction {
   let content = input;

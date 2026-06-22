@@ -37,6 +37,7 @@
   "scripts": {
     "build": "tsdown src/index.ts src/stdio.ts src/http.ts --format esm --dts",
     "test": "vitest run",
+    "lint": "eslint .",
     "test:watch": "vitest",
     "check-types": "tsc --noEmit",
     "clean": "rm -rf dist"

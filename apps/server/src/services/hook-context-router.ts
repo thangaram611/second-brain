@@ -133,7 +133,7 @@ export class HookContextRouter {
    * `cacheKey` is always populated so callers can correlate.
    */
   async routeContext(input: RouteContextInput): Promise<RouteContextResult> {
-    const { toolName, sessionId, namespace } = input;
+    const { toolName, sessionId } = input;
 
     // Always-quiet: model is calling our own MCP server.
     if (toolName.startsWith('mcp__second-brain__')) {

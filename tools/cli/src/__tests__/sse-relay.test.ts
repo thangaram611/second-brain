@@ -58,16 +58,13 @@ const origEventSource = globalThis.EventSource;
 
 beforeEach(() => {
   FakeEventSource.instance = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (globalThis as any).EventSource = FakeEventSource;
 });
 
 afterEach(() => {
   if (origEventSource !== undefined) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (globalThis as any).EventSource = origEventSource;
   } else {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     delete (globalThis as any).EventSource;
   }
 });

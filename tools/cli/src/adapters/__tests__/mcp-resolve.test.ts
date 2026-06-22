@@ -16,7 +16,7 @@ describe('resolveBrainMcpInvocation', () => {
     expect(fs.existsSync(result.invocation.args[0])).toBe(true);
     // Validates that the resolved file is actually @second-brain/mcp-server's stdio entry,
     // regardless of whether resolution goes through the workspace symlink or node_modules root.
-    expect(result.invocation.args[0]).toMatch(/mcp-server[\/\\]dist[\/\\]stdio\.mjs$/);
+    expect(result.invocation.args[0]).toMatch(/mcp-server[/\\]dist[/\\]stdio\.mjs$/);
   });
 
   it('omits env block when brainDbPath not provided', () => {

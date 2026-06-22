@@ -148,6 +148,7 @@ export function patchCredentials(
   } catch (err) {
     throw new Error(
       `failed to read credentials for host ${host}: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
     );
   }
   if (!raw.trim()) {
@@ -159,6 +160,7 @@ export function patchCredentials(
   } catch (err) {
     throw new Error(
       `credentials file for host ${host} is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
     );
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {

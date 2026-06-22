@@ -3,7 +3,6 @@ import { Brain } from '@second-brain/core';
 import {
   PersonalityExtractor,
   type PersonalityStream,
-  type PersonalityContext,
 } from '../personality-extractor.js';
 
 describe('PersonalityExtractor', () => {

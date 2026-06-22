@@ -53,7 +53,7 @@ export function parseCodeowners(content: string): CodeownersResult {
 
 /**
  * Normalize a CODEOWNERS pattern to a picomatch-compatible glob.
- * - Patterns without `/` match anywhere in the tree (prepend `**​/`).
+ * - Patterns without `/` match anywhere in the tree (a leading `**` globstar is prepended).
  * - Patterns ending with `/` match all files under that directory.
  * - Leading `/` means repo-root-relative (strip it).
  */

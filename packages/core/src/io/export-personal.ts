@@ -9,7 +9,6 @@ function collectPersonalEntities(brain: Brain): Entity[] {
   const all: Entity[] = [];
   const limit = 500;
   let offset = 0;
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
     const page = brain.entities.list({ namespace: 'personal', limit, offset });
     if (page.length === 0) break;

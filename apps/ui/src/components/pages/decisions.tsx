@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Scale, ChevronRight, Network, ExternalLink } from 'lucide-react';
-import type { Entity, NeighborResult } from '../../lib/types.js';
+import type { NeighborResult } from '../../lib/types.js';
 import { api } from '../../lib/api.js';
 import { useAsync } from '../../hooks/use-async.js';
 import { TypeBadge } from '../ui/badge.js';

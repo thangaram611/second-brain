@@ -14,10 +14,14 @@
     "rebuild-native": "pnpm rebuild -r better-sqlite3 keytar argon2"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^25.6.0",
+    "eslint": "^10.5.0",
+    "globals": "^17.6.0",
     "tsdown": "^0.21.0",
     "turbo": "^2.5.0",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.2",
+    "typescript-eslint": "^8.61.1"
   },
   "packageManager": "pnpm@10.8.0",
   "engines": {

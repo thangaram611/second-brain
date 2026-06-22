@@ -100,6 +100,7 @@ async function runUnwireInternal(options: UnwireOptions): Promise<UnwireResult> 
         if (!options.force) {
           throw new Error(
             `failed to unregister GitLab webhook (${errMsg(err)}). Pass --force to proceed and remove the webhook manually in the GitLab UI.`,
+            { cause: err },
           );
         }
         warnings.push(
@@ -126,7 +127,9 @@ async function runUnwireInternal(options: UnwireOptions): Promise<UnwireResult> 
         providerUnregistered = true;
       } catch (err) {
         if (!options.force) {
-          throw new Error(`failed to unregister GitHub webhook (${errMsg(err)}). Pass --force to proceed.`);
+          throw new Error(`failed to unregister GitHub webhook (${errMsg(err)}). Pass --force to proceed.`, {
+            cause: err,
+          });
         }
         warnings.push(`GitHub webhook unregister failed (${errMsg(err)}). Delete it manually.`);
       }

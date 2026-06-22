@@ -1,11 +1,9 @@
 import { z } from 'zod';
 import type { Brain } from '../brain.js';
 import type {
-  Entity,
   CreateEntityInput,
   CreateRelationInput,
   EntityType,
-  RelationType,
 } from '@second-brain/types';
 import { ENTITY_TYPES, RELATION_TYPES } from '@second-brain/types';
 import type { ImportOptions, ImportResult, ImportConflict } from './types.js';

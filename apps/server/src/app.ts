@@ -5,7 +5,7 @@ import { cors } from './middleware/cors.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { registerRoutes, type RegisterRoutesOptions } from './routes/index.js';
 
-export interface CreateAppOptions extends RegisterRoutesOptions {}
+export type CreateAppOptions = RegisterRoutesOptions;
 
 export function createApp(
   brain: Brain,

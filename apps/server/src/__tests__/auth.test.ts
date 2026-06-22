@@ -7,7 +7,6 @@ import { UsersService, generateUserId } from '../services/users.js';
 import { newJti, signInvite } from '../lib/invite.js';
 
 const INVITE_KEY = 'invite-key-test-123456';
-const SERVER_KEY = 'server-key-test-123456';
 
 let brain: Brain;
 let users: UsersService;

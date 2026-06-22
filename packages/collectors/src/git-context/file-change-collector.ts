@@ -73,7 +73,7 @@ export async function startFileChangeCollector(
     stabilityWaitMs: options.stabilityWaitMs,
   };
 
-  let pendingByBranch: Map<string, WatchChange[]> = new Map();
+  const pendingByBranch: Map<string, WatchChange[]> = new Map();
 
   const postBatch = async (branch: string, changes: WatchChange[]): Promise<void> => {
     if (changes.length === 0) return;

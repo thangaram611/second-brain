@@ -30,6 +30,7 @@
     "build": "tsdown src/index.ts src/hook-binary.ts --format esm --dts",
     "dev": "tsx src/index.ts",
     "test": "vitest run",
+    "lint": "eslint .",
     "test:watch": "vitest",
     "check-types": "tsc --noEmit",
     "clean": "rm -rf dist"

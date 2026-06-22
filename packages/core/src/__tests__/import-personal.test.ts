@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { createHash } from 'node:crypto';
 import { Brain } from '../brain.js';
 import { exportPersonal } from '../io/export-personal.js';
 import { importPersonal } from '../io/import-personal.js';

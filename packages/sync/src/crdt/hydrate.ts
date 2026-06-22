@@ -20,7 +20,6 @@ export function hydrateDocFromDatabase(
   doc.transact(() => {
     // Paginate through entities
     let offset = 0;
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       const entities = entityManager.list({ namespace, limit: PAGE_SIZE, offset });
       if (entities.length === 0) break;

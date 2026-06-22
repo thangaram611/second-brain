@@ -110,6 +110,7 @@ function decodeInvite(token: string): DecodedInvite {
   } catch (e) {
     throw new Error(
       `invite payload is not valid base64url: ${e instanceof Error ? e.message : String(e)}`,
+      { cause: e },
     );
   }
   let parsedUnknown: unknown;
