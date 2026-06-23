@@ -117,8 +117,10 @@ function parseJsonLd(
 }
 
 function deleteNamespace(brain: Brain, namespace: string): void {
-  brain.storage.sqlite.exec(`DELETE FROM relations WHERE namespace = '${namespace.replace(/'/g, "''")}'`);
-  brain.storage.sqlite.exec(`DELETE FROM entities WHERE namespace = '${namespace.replace(/'/g, "''")}'`);
+  // Bound parameters, not string interpolation — the namespace value never
+  // becomes SQL text, so a quote in the name can't alter the query.
+  brain.storage.sqlite.prepare('DELETE FROM relations WHERE namespace = ?').run(namespace);
+  brain.storage.sqlite.prepare('DELETE FROM entities WHERE namespace = ?').run(namespace);
 }
 
 function buildEntityInput(

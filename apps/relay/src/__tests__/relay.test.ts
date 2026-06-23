@@ -52,6 +52,20 @@ describe('Auth endpoint', () => {
     expect(res.body.error).toBe('Invalid secret');
   });
 
+  it('rejects a wrong secret of identical length with 401 (constant-time compare)', async () => {
+    // Same length as TEST_SECRET — exercises the timingSafeEqual path without
+    // tripping its equal-length requirement and proves it isn't a length check.
+    const sameLengthWrong = 'x'.repeat(TEST_SECRET.length);
+    expect(sameLengthWrong).toHaveLength(TEST_SECRET.length);
+
+    const res = await request(app)
+      .post('/auth/token')
+      .send({ namespace: 'project-x', userName: 'alice', secret: sameLengthWrong })
+      .expect(401);
+
+    expect(res.body.error).toBe('Invalid secret');
+  });
+
   it('rejects missing fields with 400', async () => {
     const res = await request(app)
       .post('/auth/token')

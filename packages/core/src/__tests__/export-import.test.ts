@@ -267,6 +267,71 @@ describe('Import/Export', () => {
       expect(entities[0].name).toBe('Alice');
     });
 
+    it('replace only deletes the target namespace, leaving others intact', () => {
+      seedData(brain); // 3 entities in 'personal'
+      brain.entities.batchUpsert([
+        {
+          type: 'concept',
+          name: 'Other Namespace Entity',
+          namespace: 'work',
+          observations: [],
+          source: { type: 'manual' },
+          tags: [],
+        },
+      ]);
+      expect(brain.entities.count('work')).toBe(1);
+
+      const json = exportJson(brain, { format: 'json', namespace: 'personal', types: ['person'] });
+      const result = importGraph(brain, json, {
+        format: 'json',
+        strategy: 'replace',
+        namespace: 'personal',
+      });
+
+      expect(result.entitiesImported).toBe(1);
+      expect(brain.entities.count('personal')).toBe(1);
+      // The replace must be scoped — the 'work' namespace is untouched.
+      expect(brain.entities.count('work')).toBe(1);
+    });
+
+    it('replace handles a namespace containing a single quote (bound param, no SQLi)', () => {
+      const ns = "o'brien";
+      brain.entities.batchUpsert([
+        {
+          type: 'person',
+          name: 'Old Quoted',
+          namespace: ns,
+          observations: [],
+          source: { type: 'manual' },
+          tags: [],
+        },
+      ]);
+      brain.entities.batchUpsert([
+        {
+          type: 'person',
+          name: 'Keep Me',
+          namespace: 'personal',
+          observations: [],
+          source: { type: 'manual' },
+          tags: [],
+        },
+      ]);
+      expect(brain.entities.count(ns)).toBe(1);
+
+      // Export the quoted-namespace entity, then re-import it with replace.
+      const json = exportJson(brain, { format: 'json', namespace: ns });
+      const result = importGraph(brain, json, {
+        format: 'json',
+        strategy: 'replace',
+        namespace: ns,
+      });
+
+      expect(result.entitiesImported).toBe(1);
+      expect(brain.entities.count(ns)).toBe(1);
+      // The quoted-namespace DELETE must not have nuked anything else.
+      expect(brain.entities.count('personal')).toBe(1);
+    });
+
     it('upsert with namespace override', () => {
       seedData(brain);
       const json = exportJson(brain, { format: 'json' });

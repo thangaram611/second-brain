@@ -113,3 +113,17 @@ function shutdown() {
 
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+
+// --- Last-resort crash handlers ---
+// An uncaught exception or unhandled rejection leaves the process in an
+// undefined state. Log it (so the failure isn't silent) and exit non-zero so
+// the supervisor (systemd Restart=on-failure / launchd KeepAlive) restarts a
+// clean process instead of leaving a half-broken server accepting requests.
+process.on('uncaughtException', (err) => {
+  console.error('[second-brain] uncaughtException — exiting for supervised restart:', err);
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[second-brain] unhandledRejection — exiting for supervised restart:', reason);
+  process.exit(1);
+});
