@@ -168,20 +168,23 @@ relay speaks WebSocket on `RELAY_PORT` (default `7421`). Forward both
 
 ---
 
-## Sync URL + secret distribution (manual today)
+## Sync URL + secret distribution
 
-Each client that runs `brain sync join` needs the relay URL and the shared
-secret:
+The relay URL can be committed to the team repo as `server.relayUrl` in
+`.second-brain/team.json`, so clients no longer need to pass `--relay` (or
+`--namespace`). The shared `RELAY_AUTH_SECRET` is still distributed
+out-of-band — it never belongs in the manifest.
 
 ```bash
-# On the server box:
+# On the server box — read the secret to share out-of-band:
 sudo grep RELAY_AUTH_SECRET /etc/second-brain/secrets.env
 
-# On each client:
+# On each client, inside a repo whose team.json includes server.relayUrl:
+RELAY_AUTH_SECRET=<secret> brain sync join
+
+# Or pass everything explicitly (explicit flags override the manifest):
 brain sync join --namespace acme --relay ws://server.lan:7421 --secret <secret>
 ```
-
-A future change will extend the team manifest to carry this automatically.
 
 ---
 

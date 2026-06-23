@@ -471,6 +471,17 @@ RELAY_AUTH_SECRET=my-shared-secret pnpm --filter @second-brain/relay dev
 
 ### 2. Join a sync room
 
+If the repo has a `.second-brain/team.json` manifest (written by team wiring),
+`brain sync join` reads the namespace and relay URL from it — just supply the
+shared secret:
+
+```bash
+RELAY_AUTH_SECRET=my-shared-secret brain sync join
+```
+
+For solo repos or scripts, pass everything explicitly. Explicit flags also
+override the manifest values:
+
 ```bash
 brain sync join \
   --namespace my-team-project \
@@ -478,7 +489,7 @@ brain sync join \
   --secret my-shared-secret
 ```
 
-> **Note:** The `personal` namespace cannot be synced — it is reserved for local-only data.
+> **Note:** The `personal` namespace cannot be synced — it is reserved for local-only data. The relay secret is never stored in the manifest; it always comes from `--secret` or `RELAY_AUTH_SECRET`.
 
 ### 3. Check sync status
 

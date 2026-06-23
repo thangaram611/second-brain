@@ -1536,14 +1536,18 @@ brain ownership <path> [options]
 #### `brain sync join`
 
 ```bash
-brain sync join --namespace <ns> --relay <url> [--secret <s>]
+brain sync join [--namespace <ns>] [--relay <url>] [--secret <s>]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--namespace <ns>` | Project namespace (**required**) |
-| `--relay <url>` | Relay WebSocket URL (**required**) |
-| `--secret <s>` | Shared secret (or `RELAY_AUTH_SECRET` env) |
+| `--namespace <ns>` | Project namespace. Defaults to `.second-brain/team.json` `namespace` when present. |
+| `--relay <url>` | Relay WebSocket URL (`ws://` or `wss://`). Defaults to `.second-brain/team.json` `server.relayUrl` when present. |
+| `--secret <s>` | Shared relay secret. Defaults to `RELAY_AUTH_SECRET`. |
+
+Run inside a repo with a `.second-brain/team.json` to omit `--namespace` and
+`--relay`; explicit flags override the manifest values. The relay secret is
+never read from the manifest. The `personal` namespace cannot be synced.
 
 #### `brain sync status`
 
