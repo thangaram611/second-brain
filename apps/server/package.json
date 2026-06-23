@@ -13,6 +13,18 @@
     "./services/users": {
       "types": "./src/services/users.ts",
       "import": "./src/services/users.ts"
+    },
+    "./app": {
+      "types": "./src/app.ts",
+      "import": "./src/app.ts"
+    },
+    "./services/observation-service": {
+      "types": "./src/services/observation-service.ts",
+      "import": "./src/services/observation-service.ts"
+    },
+    "./services/promotion-service": {
+      "types": "./src/services/promotion-service.ts",
+      "import": "./src/services/promotion-service.ts"
     }
   },
   "scripts": {

@@ -1,10 +1,22 @@
-# Manual verification — non-scriptable release checks
+# Manual verification — release checks
 
-The automated `tools/cli/src/__tests__/e2e-walkthrough.test.ts` covers most of
-the bootstrap walkthrough (init server → invite → init client → wire repo +
-sidecars + git hooks). The steps below cannot be scripted — they require a
-real IDE session, a real OS keychain, or `systemd` on Linux. Run them in
-order on a freshly-bootstrapped install.
+Two automated suites cover most of the release surface:
+
+- `tools/cli/src/__tests__/e2e-walkthrough.test.ts` — the bootstrap walkthrough
+  (init server → invite → init client → wire repo + sidecars + git hooks).
+- `tools/cli/src/__tests__/hook-injection-budget.test.ts` — the assistant
+  context-injection path (checks #2/#3/#4 below). It stands up a real
+  in-process `apps/server` (createApp + ObservationService + the real
+  `HookContextRouter`) on a loopback port, seeds a temp brain, and drives the
+  **real `runHook` binary** (stdin → redact → HTTP → server → stdout envelope)
+  end to end. No IDE and no keychain required.
+
+The remaining steps below are genuinely human/OS-specific — they require a real
+IDE session, a real OS keychain, `systemd` on Linux, or a live server with a
+real PAT. Run them on a freshly-bootstrapped install. The operator helper
+`scripts/verify-release.sh` runs the read-only OS/server checks (#1 keychain,
+whoami, hook.log health, `systemd-analyze`) with PASS/FAIL/SKIP output; it
+never mints, rotates, or deletes a credential.
 
 ---
 
@@ -36,12 +48,27 @@ brain init client --invite "$INVITE" --server http://localhost:7430 --no-wire
   the identity endpoint is `GET /api/auth/whoami`; for raw fields run
   `curl -fsS -H "Authorization: Bearer <pat>" http://localhost:7430/api/auth/whoami | jq`.
 
+The credentials-mode, keychain-lookup, and whoami assertions are checked
+read-only by `scripts/verify-release.sh` once `init client` has run:
+
+```sh
+scripts/verify-release.sh --host localhost:7430 --server http://localhost:7430
+```
+
 ---
 
 ## 2. Real Claude Code / Cursor / Codex / Copilot context injection
 
-**Why manual.** Hook context injection happens inside the IDE process; we'd
-need to drive each IDE programmatically to observe `additionalContext`.
+**Injection *logic* is now automated** in
+`tools/cli/src/__tests__/hook-injection-budget.test.ts`: it drives the real
+`runHook` against a real in-process server and asserts that a `session-start`
+hook (with prior context in the brain) and a `pre`-phase `Read` of a
+brain-known file each emit a non-empty `additionalContext` envelope. That
+covers the server router + the per-adapter envelope shaping.
+
+**What stays manual: the IDE wiring itself** — that each IDE actually *invokes*
+the hook on the documented lifecycle events and *consumes* the envelope. That
+happens inside the IDE process and can't be observed without driving each IDE.
 
 For each adapter installed via `brain wire-assistant <name>`:
 
@@ -56,44 +83,42 @@ For each adapter installed via `brain wire-assistant <name>`:
 
 ---
 
-## 3. p95 hook latency in `~/.second-brain/hook.log`
+## 3. p95 hook latency — AUTOMATED
 
-**Why manual.** The hook log only accumulates after real hook firings; the
-e2e test fires zero real hooks.
+**Now automated** in `hook-injection-budget.test.ts` (`#3 p95 ... latency`).
+It fires 40 `pre`-tool-use hooks through the full stdin→HTTP→server→stdout path
+and asserts wall-clock **p95 ≤ 250ms** (the `pre`-tool budget in
+`tools/cli/src/hook-binary.ts` `timeoutFor()`).
 
-After 10–20 minutes of normal IDE usage in a wired repo:
-
-```sh
-# Each line of hook.log is a JSON record with a `latencyMs` field.
-jq -s '
-  map(select(.latencyMs != null) | .latencyMs) |
-  sort | .[((length * 0.95) | floor)]
-' ~/.second-brain/hook.log
-```
-
-**Expected.** p95 ≤ 250ms (hook budget per `tools/cli/src/hook-binary.ts`).
-If higher: inspect the slowest entries (`jq -s 'sort_by(.latencyMs) | .[-5:]'`)
-to see which adapter / event is slow.
+> **Important — hook.log carries no `latencyMs` field.** The previous
+> `jq '.latencyMs'` recipe here described a log format the code never produced;
+> `hook.log` only holds diagnostic lines (`fetch failed`, `server <code>`,
+> `[stderr] …`). Latency is therefore asserted *directly* by the test, not
+> derived from the log. `scripts/verify-release.sh` instead reports hook.log
+> *health* (error-line count). The in-process loopback is faster than a real
+> cross-process socket, so a green test is a conservative lower bound — confirm
+> the real-IDE feel with check #2's manual IDE pass.
 
 ---
 
-## 4. Cap behavior at 9 vs 10 large injections in one session
+## 4. Cumulative-injection cap in one session — AUTOMATED
 
-**Why manual.** Requires forcing 10+ context-eligible tool calls in one
-session, which is hard to script outside the IDE.
+**Now automated** in `hook-injection-budget.test.ts` (`#4 cumulative-injection
+cap`).
 
-In Claude Code, inside a wired repo:
+> **Correction.** There is no "9 vs 10 injection" count. The real cap is a
+> **32KB cumulative-byte budget per session** (`PER_SESSION_BYTE_CAP` in
+> `apps/server/src/services/hook-context-cache.ts`). The router checks
+> `getSessionBytes(sessionId) >= 32KB` before building a block and returns
+> `null` (no injection) once the budget is reached. The old "9-injection /
+> `cap=` / `reason=cap-reached`" wording predated the byte-cap implementation
+> and matched no field in the code.
 
-1. Open 10 different files in quick succession (`Read tool`).
-2. Tail `~/.second-brain/hook.log` and grep for `cap=`:
-   ```sh
-   tail -f ~/.second-brain/hook.log | grep -E '"cap":(9|10|11)'
-   ```
-
-**Expected.**
-- Injections 1–9: `cap=9` (or similar) — context injected.
-- Injection 10+: `injected=false reason=cap-reached` — hook still returns
-  within budget but contributes no `additionalContext`.
+The test seeds enough large brain-known files that one session's reads cross
+32KB, then asserts: early reads inject substantive blocks; injection dries up
+**monotonically** once cumulative bytes ≥ 32KB; total injected bytes ≥ the cap;
+and every call still returns within the 250ms budget (the hook never blocks the
+session).
 
 ---
 

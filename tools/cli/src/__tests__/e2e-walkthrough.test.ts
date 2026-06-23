@@ -18,12 +18,18 @@
  *      - git hooks exist in `.git/hooks/` and carry the second-brain wire
  *        fingerprint + the team server URL
  *
- * Steps that can't be scripted are listed in `docs/manual-verification.md`:
- *   - Real Claude Code / Cursor / Codex / Copilot session opens that observe
- *     additionalContext injection
- *   - p95 latency in `~/.second-brain/hook.log`
- *   - Cap behavior at 9 vs 10 large injections in one session
+ * The assistant context-injection path (additionalContext on session-start /
+ * pre-tool-use, the 250ms latency budget, and the 32KB cumulative-injection
+ * cap) is covered separately by `hook-injection-budget.test.ts`, which drives
+ * the real `runHook` against a real in-process server.
+ *
+ * Steps that genuinely can't be scripted are listed in
+ * `docs/manual-verification.md`:
+ *   - Real Claude Code / Cursor / Codex / Copilot IDE sessions actually
+ *     invoking the hook and consuming the envelope
+ *   - keychain round-trip via a real `node dist/index.mjs init client`
  *   - `systemd-analyze security` against a rendered Linux unit
+ *   - `brain auth rotate` end-to-end against a live server
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
