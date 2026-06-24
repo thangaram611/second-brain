@@ -1,13 +1,15 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
+import { useQuery } from '@tanstack/react-query';
 import { Scale, ChevronRight, Network, ExternalLink } from 'lucide-react';
 import type { NeighborResult } from '../../lib/types.js';
 import { api } from '../../lib/api.js';
-import { useAsync } from '../../hooks/use-async.js';
+import { queryKeys } from '../../lib/query-keys.js';
 import { TypeBadge } from '../ui/badge.js';
 import { Card } from '../ui/card.js';
 import { EmptyState } from '../ui/empty-state.js';
 import { LoadingState } from '../ui/loading.js';
+import { ErrorState } from '../ui/error-state.js';
 import { Button } from '../ui/button.js';
 
 export function DecisionsPage() {
@@ -17,10 +19,13 @@ export function DecisionsPage() {
   const [neighbors, setNeighbors] = useState<NeighborResult | null>(null);
   const navigate = useNavigate();
 
-  const { data: decisions, loading, error } = useAsync(
-    () => api.decisions({ sort: sortOrder, limit: 200 }),
-    [sortOrder],
-  );
+  const decisionsQuery = useQuery({
+    queryKey: queryKeys.decisions(sortOrder),
+    queryFn: () => api.decisions({ sort: sortOrder, limit: 200 }),
+  });
+  const decisions = decisionsQuery.data;
+  const loading = decisionsQuery.isLoading;
+  const error = decisionsQuery.error instanceof Error ? decisionsQuery.error.message : null;
 
   // Filter client-side by search query
   const filtered = searchQuery
@@ -84,7 +89,7 @@ export function DecisionsPage() {
 
       {/* Content */}
       {loading && <LoadingState message="Loading decisions..." />}
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <ErrorState message={error} onRetry={() => void decisionsQuery.refetch()} />}
 
       {!loading && !error && filtered.length === 0 && (
         <EmptyState

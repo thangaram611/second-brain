@@ -3,20 +3,16 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
-export const DEFAULT_DB_DIR = path.join(os.homedir(), '.second-brain');
-export const DEFAULT_DB_PATH = path.join(DEFAULT_DB_DIR, 'personal.db');
+// Re-export the URL helpers from their dependency-leaf module so existing
+// importers (`from './config.js'`) keep working while `resolve-token.ts` can
+// import the same functions without forming a runtime cycle with this module
+// (config dynamically imports resolve-token in `buildAuthHeadersAsync`).
+export { getServerUrl, hostFromUrl } from './server-url.js';
+
+const DEFAULT_DB_DIR = path.join(os.homedir(), '.second-brain');
+const DEFAULT_DB_PATH = path.join(DEFAULT_DB_DIR, 'personal.db');
 
 export const cliLogger = createLogger('cli');
-
-export function getServerUrl(override?: string): string {
-  return (
-    override ??
-    process.env.BRAIN_API_URL ??
-    process.env.BRAIN_SERVER_URL ??
-    process.env.SECOND_BRAIN_SERVER_URL ??
-    'http://localhost:7430'
-  );
-}
 
 export function buildAuthHeaders(token?: string): Record<string, string> {
   const resolved = token ?? process.env.BRAIN_AUTH_TOKEN;

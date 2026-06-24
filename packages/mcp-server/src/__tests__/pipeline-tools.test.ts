@@ -124,13 +124,19 @@ describe('Pipeline MCP tools', () => {
     expect(brain.entities.count()).toBe(2);
   });
 
-  it('rebuild_embeddings reports a clear error when vector search not enabled and no dimensions arg', async () => {
+  it('rebuild_embeddings bootstraps vector search from an explicit dimensions arg', async () => {
+    // Empty brain → the pipeline makes no embedding calls, so this exercises the
+    // bootstrap (enableVectorSearch) path without needing a reachable model.
+    // When `dimensions` is omitted the tool auto-probes the model instead — that
+    // path is covered by live end-to-end testing since it requires a real model.
+    expect(brain.embeddings).toBeNull();
     const result = await client.callTool({
       name: 'rebuild_embeddings',
-      arguments: {},
+      arguments: { dimensions: 8 },
     });
     const text = textFromCall(result);
-    expect(text).toContain('dimensions');
+    expect(text).toContain('Embedded 0');
+    expect(brain.embeddings).not.toBeNull();
   });
 
   it('query_graph falls back to fulltext when no LLM is reachable', async () => {

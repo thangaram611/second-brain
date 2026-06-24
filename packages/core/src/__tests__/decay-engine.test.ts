@@ -169,6 +169,45 @@ describe('DecayEngine', () => {
       expect(result.runDurationMs).toBeGreaterThanOrEqual(0);
       expect(typeof result.staleCount).toBe('number');
     });
+
+    it('counts every stale entity, not just the first page', () => {
+      const stale: string[] = [];
+      for (let i = 0; i < 3; i++) {
+        stale.push(brain.entities.create(makeEntity(`Stale ${i}`, { type: 'fact' })).id);
+      }
+      // Keep one fresh entity that should not count as stale.
+      brain.entities.create(makeEntity('Fresh Concept', { type: 'concept' }));
+
+      const longAgo = new Date(Date.now() - 300 * 86_400_000).toISOString();
+      const placeholders = stale.map(() => '?').join(', ');
+      brain.storage.sqlite
+        .prepare(`UPDATE entities SET last_accessed_at = ? WHERE id IN (${placeholders})`)
+        .run(longAgo, ...stale);
+
+      const result = brain.decay.runOnce();
+      expect(result.staleCount).toBe(3);
+    });
+
+    it('reports zero stale entities when all are fresh', () => {
+      brain.entities.create(makeEntity('Fresh A', { type: 'fact' }));
+      brain.entities.create(makeEntity('Fresh B', { type: 'concept' }));
+
+      const result = brain.decay.runOnce();
+      expect(result.staleCount).toBe(0);
+    });
+
+    it('counts beyond the default page size of 50', () => {
+      const stale: string[] = [];
+      for (let i = 0; i < 60; i++) {
+        stale.push(brain.entities.create(makeEntity(`Bulk ${i}`, { type: 'fact' })).id);
+      }
+
+      const longAgo = new Date(Date.now() - 300 * 86_400_000).toISOString();
+      brain.storage.sqlite.exec(`UPDATE entities SET last_accessed_at = '${longAgo}'`);
+
+      const result = brain.decay.runOnce();
+      expect(result.staleCount).toBe(60);
+    });
   });
 
   describe('start/stop', () => {

@@ -1,9 +1,6 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Octokit } from '@octokit/rest';
 import {
-  canonicalizeEmail,
   githubNoreplyEmail,
-  type Author,
   type BranchStatusPatch,
 } from '@second-brain/types';
 import {
@@ -21,6 +18,8 @@ import {
   type WebhookSecret,
   type TouchesFilePath,
 } from './git-provider.js';
+import { BaseGitProvider } from './base-git-provider.js';
+import { pickHeader, verifyHmac, httpError, statusOf } from './webhook-crypto.js';
 import {
   GitHubPRWebhookSchema,
   GitHubPRReviewWebhookSchema,
@@ -48,11 +47,6 @@ export interface GitHubProviderOptions {
   now?: () => number;
 }
 
-interface CachedUser {
-  email: string;
-  at: number;
-}
-
 const WEBHOOK_EVENTS = [
   'pull_request',
   'pull_request_review',
@@ -60,22 +54,18 @@ const WEBHOOK_EVENTS = [
   'check_suite',
 ] as const;
 
-export class GitHubProvider implements GitProvider {
+export class GitHubProvider extends BaseGitProvider implements GitProvider {
   readonly name = 'github' as const;
 
   private baseUrl: string;
   private pat: string | undefined;
   private readonly fetchImpl: typeof fetch;
-  private readonly userCache = new Map<string, CachedUser>();
-  private readonly userCacheTtlMs: number;
-  private readonly now: () => number;
 
   constructor(opts: GitHubProviderOptions = {}) {
+    super({ userCacheTtlMs: opts.userCacheTtlMs, now: opts.now });
     this.baseUrl = (opts.baseUrl ?? 'https://api.github.com').replace(/\/+$/, '');
     this.pat = opts.pat ?? process.env.GITHUB_TOKEN;
     this.fetchImpl = opts.fetchImpl ?? fetch;
-    this.userCacheTtlMs = opts.userCacheTtlMs ?? 60 * 60 * 1000;
-    this.now = opts.now ?? Date.now;
   }
 
   // ─── Auth ────────────────────────────────────────────────────────────────
@@ -129,7 +119,7 @@ export class GitHubProvider implements GitProvider {
       await octokit.repos.deleteWebhook({ owner, repo, hook_id: input.webhookId });
     } catch (err: unknown) {
       // 404 is idempotent success (already gone).
-      if (isOctokitNotFound(err)) return;
+      if (statusOf(err) === 404) return;
       throw err;
     }
   }
@@ -154,7 +144,7 @@ export class GitHubProvider implements GitProvider {
     const res = await this.fetchImpl(url, { headers });
 
     if (res.status === 304) return { events: [], nextEtag: input.etag, cursor: input.since };
-    if (!res.ok) throw this.httpError(res, url);
+    if (!res.ok) throw httpError(res, url, 'GitHub');
 
     const nextEtag = res.headers.get('etag') ?? undefined;
     const rawList: unknown = await res.json();
@@ -164,8 +154,8 @@ export class GitHubProvider implements GitProvider {
     let cursor = input.since;
 
     for (const raw of rawList) {
-      if (typeof raw !== 'object' || raw === null) continue;
-      const obj = raw as Record<string, unknown>;
+      if (!isRecord(raw)) continue;
+      const obj = raw;
       const updatedAt = typeof obj.updated_at === 'string' ? obj.updated_at : input.since;
       if (updatedAt <= input.since) continue;
       if (updatedAt > cursor) cursor = updatedAt;
@@ -369,38 +359,18 @@ export class GitHubProvider implements GitProvider {
     if (typeof headerValue !== 'string' || headerValue.length === 0) {
       return { ok: false, reason: 'missing-header' };
     }
-    const expected =
-      'sha256=' +
-      createHmac('sha256', input.expectedSecret.key)
-        .update(input.request.rawBody)
-        .digest('hex');
-    // Length check first: `timingSafeEqual` throws on unequal length.
-    if (headerValue.length !== expected.length) return { ok: false, reason: 'mismatch' };
-    const a = Buffer.from(headerValue);
-    const b = Buffer.from(expected);
-    return timingSafeEqual(a, b) ? { ok: true } : { ok: false, reason: 'mismatch' };
+    return verifyHmac({
+      received: headerValue,
+      rawBody: input.request.rawBody,
+      secret: input.expectedSecret.key,
+      algorithm: 'sha256',
+      prefix: 'sha256=',
+    });
   }
 
   // ─── Author / user cache ─────────────────────────────────────────────────
 
-  private async resolveAuthor(username: string): Promise<Author> {
-    const cached = this.userCache.get(username);
-    const age = cached ? this.now() - cached.at : Infinity;
-    let email: string;
-    if (cached && age < this.userCacheTtlMs) {
-      email = cached.email;
-    } else {
-      email = await this.fetchUserEmail(username);
-      this.userCache.set(username, { email, at: this.now() });
-    }
-    return {
-      canonicalEmail: canonicalizeEmail(email),
-      displayName: username,
-      aliases: [],
-    };
-  }
-
-  private async fetchUserEmail(username: string): Promise<string> {
+  protected async fetchUserEmail(username: string): Promise<string> {
     try {
       if (!this.pat) return githubNoreplyEmail(0, username);
       const octokit = this.createOctokit();
@@ -438,12 +408,6 @@ export class GitHubProvider implements GitProvider {
     const m = url.match(/github\.com\/([^/]+\/[^/]+)/);
     return m ? m[1] : 'unknown/unknown';
   }
-
-  private httpError(res: Response, ctx: string): Error {
-    const err = new Error(`GitHub API ${res.status} ${res.statusText} for ${ctx}`);
-    (err as Error & { status: number }).status = res.status;
-    return err;
-  }
 }
 
 // ─── Module-level helpers ──────────────────────────────────────────────────
@@ -454,22 +418,6 @@ function splitOwnerRepo(projectId: string): [string, string] {
   return [projectId.slice(0, idx), projectId.slice(idx + 1)];
 }
 
-function pickHeader(
-  headers: Record<string, string | string[] | undefined>,
-  name: string,
-): string | undefined {
-  const needle = name.toLowerCase();
-  for (const [k, v] of Object.entries(headers)) {
-    if (k.toLowerCase() !== needle) continue;
-    if (Array.isArray(v)) return v[0];
-    if (typeof v === 'string') return v;
-  }
-  return undefined;
-}
-
-function isOctokitNotFound(err: unknown): boolean {
-  if (typeof err === 'object' && err !== null && 'status' in err) {
-    return (err as { status: number }).status === 404;
-  }
-  return false;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

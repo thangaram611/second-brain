@@ -1,4 +1,3 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
 import { canonicalizeEmail, type Author, type BranchStatusPatch } from '@second-brain/types';
 import type {
   GitProvider,
@@ -14,6 +13,7 @@ import type {
   IncomingWebhookRequest,
   WebhookSecret,
 } from './git-provider.js';
+import { pickHeader, verifyToken, verifyHmac } from './webhook-crypto.js';
 import {
   extractField,
   type CustomProviderMapping,
@@ -21,21 +21,6 @@ import {
   type ReviewEventMapping,
   type CommentEventMapping,
 } from './custom-provider-types.js';
-
-// ─── Helpers ──────────────────────────────────────────────────────────────
-
-function pickHeader(
-  headers: Record<string, string | string[] | undefined>,
-  name: string,
-): string | undefined {
-  const needle = name.toLowerCase();
-  for (const [k, v] of Object.entries(headers)) {
-    if (k.toLowerCase() !== needle) continue;
-    if (Array.isArray(v)) return v[0];
-    if (typeof v === 'string') return v;
-  }
-  return undefined;
-}
 
 // ─── CustomProvider ───────────────────────────────────────────────────────
 
@@ -86,13 +71,7 @@ export class CustomProvider implements GitProvider {
       if (typeof headerValue !== 'string' || headerValue.length === 0) {
         return { ok: false, reason: 'missing-header' };
       }
-      const expected = input.expectedSecret.value;
-      if (headerValue.length !== expected.length) {
-        return { ok: false, reason: 'mismatch' };
-      }
-      return timingSafeEqual(Buffer.from(headerValue), Buffer.from(expected))
-        ? { ok: true }
-        : { ok: false, reason: 'mismatch' };
+      return verifyToken(headerValue, input.expectedSecret.value);
     }
 
     // HMAC mode
@@ -103,20 +82,18 @@ export class CustomProvider implements GitProvider {
     if (typeof sigHeader !== 'string' || sigHeader.length === 0) {
       return { ok: false, reason: 'missing-header' };
     }
-    const computed = createHmac(verification.algorithm, input.expectedSecret.key)
-      .update(input.request.rawBody)
-      .digest('hex');
-
+    // Custom mode strips the prefix from the received header, then compares the
+    // bare digests — pass the stripped value with no prefix to verifyHmac.
     let received = sigHeader;
     if (verification.prefix && received.startsWith(verification.prefix)) {
       received = received.slice(verification.prefix.length);
     }
-    if (received.length !== computed.length) {
-      return { ok: false, reason: 'mismatch' };
-    }
-    return timingSafeEqual(Buffer.from(received), Buffer.from(computed))
-      ? { ok: true }
-      : { ok: false, reason: 'mismatch' };
+    return verifyHmac({
+      received,
+      rawBody: input.request.rawBody,
+      secret: input.expectedSecret.key,
+      algorithm: verification.algorithm,
+    });
   }
 
   // ─── pollEvents (webhook-only, no-op) ──────────────────────────────

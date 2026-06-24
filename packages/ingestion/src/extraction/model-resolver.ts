@@ -46,7 +46,7 @@ function chatModelFor(provider: LLMProvider, model: string, opts: ProviderOpts):
   switch (provider) {
     case 'openai':    return openaiLike(opts)(model);
     case 'anthropic': return createAnthropic({ baseURL: opts.baseURL, apiKey: opts.apiKey })(model);
-    case 'ollama':    return createOllama({ baseURL: opts.baseURL })(model);
+    case 'ollama':    return createOllama({ baseURL: opts.baseURL, apiKey: opts.apiKey })(model);
     case 'groq':      return openaiLike(opts, GROQ_BASE_URL)(model);
   }
 }
@@ -58,7 +58,7 @@ function embeddingModelFor(
 ): EmbeddingModel {
   switch (provider) {
     case 'openai': return openaiLike(opts).embedding(model);
-    case 'ollama': return createOllama({ baseURL: opts.baseURL }).textEmbedding(model);
+    case 'ollama': return createOllama({ baseURL: opts.baseURL, apiKey: opts.apiKey }).textEmbedding(model);
     case 'groq':   return openaiLike(opts, GROQ_BASE_URL).embedding(model);
   }
 }

@@ -1,11 +1,7 @@
 import type { Brain } from '@second-brain/core';
 import type { CreateRelationInput, Entity } from '@second-brain/types';
-import { RELATION_TYPES } from '@second-brain/types';
+import { isRelationType } from '@second-brain/types';
 import type { PendingRelation } from '@second-brain/ingestion';
-
-function isValidRelationType(value: string): value is CreateRelationInput['type'] {
-  return (RELATION_TYPES as ReadonlyArray<string>).includes(value);
-}
 
 export interface ResolveResult {
   resolved: CreateRelationInput[];
@@ -39,7 +35,7 @@ export function resolveRelations(
   }
 
   for (const rel of pending) {
-    if (!isValidRelationType(rel.type)) {
+    if (!isRelationType(rel.type)) {
       skipped++;
       continue;
     }

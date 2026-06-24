@@ -1,13 +1,11 @@
-import { z } from 'zod';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import picomatch from 'picomatch';
 
-export const CodeownersRuleSchema = z.object({
-  pattern: z.string(),
-  owners: z.array(z.string()),
-});
-export type CodeownersRule = z.infer<typeof CodeownersRuleSchema>;
+interface CodeownersRule {
+  pattern: string;
+  owners: string[];
+}
 
 export interface CodeownersResult {
   rules: CodeownersRule[];

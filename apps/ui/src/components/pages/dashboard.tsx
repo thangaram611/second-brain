@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router';
+import { useQuery } from '@tanstack/react-query';
 import {
   Box,
   GitBranch,
@@ -7,28 +8,36 @@ import {
   TrendingUp,
   Plus,
 } from 'lucide-react';
-import { useStatsStore } from '../../store/stats-store.js';
 import { Card } from '../ui/card.js';
 import { Button } from '../ui/button.js';
 import { TypeBadge } from '../ui/badge.js';
 import { LoadingState } from '../ui/loading.js';
 import { EmptyState } from '../ui/empty-state.js';
+import { ErrorState } from '../ui/error-state.js';
 import { CreateEntityDialog } from '../entity/create-entity-dialog.js';
-import type { Entity, EntityType } from '../../lib/types.js';
+import { isEntityType } from '../../lib/types.js';
 import { api } from '../../lib/api.js';
+import { queryKeys } from '../../lib/query-keys.js';
 
 export function Dashboard() {
-  const { stats, loading, fetchStats } = useStatsStore();
-  const [recentEntities, setRecentEntities] = useState<Entity[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const navigate = useNavigate();
 
-  useEffect(() => {
-    fetchStats();
-    api.entities.list({ limit: 10 }).then(setRecentEntities).catch(() => {});
-  }, [fetchStats]);
+  const statsQuery = useQuery({
+    queryKey: queryKeys.stats(),
+    queryFn: () => api.stats(),
+  });
+  const stats = statsQuery.data;
+  const statsError = statsQuery.error instanceof Error ? statsQuery.error.message : null;
 
-  if (loading && !stats) return <LoadingState message="Loading dashboard..." />;
+  const recentQuery = useQuery({
+    queryKey: queryKeys.entities.list(10),
+    queryFn: () => api.entities.list({ limit: 10 }),
+  });
+  const recentEntities = recentQuery.data ?? [];
+  const recentError = recentQuery.error instanceof Error ? recentQuery.error.message : null;
+
+  if (statsQuery.isLoading && !stats) return <LoadingState message="Loading dashboard..." />;
 
   return (
     <div className="mx-auto max-w-5xl p-6">
@@ -39,6 +48,12 @@ export function Dashboard() {
           New Entity
         </Button>
       </div>
+
+      {statsError && (
+        <div className="mb-6">
+          <ErrorState message={statsError} onRetry={() => void statsQuery.refetch()} />
+        </div>
+      )}
 
       {/* Stats cards */}
       <div className="mb-8 grid grid-cols-3 gap-4">
@@ -92,7 +107,13 @@ export function Dashboard() {
                 const pct = max > 0 ? (count / max) * 100 : 0;
                 return (
                   <div key={type} className="flex items-center gap-3">
-                    <TypeBadge type={type as EntityType} />
+                    {isEntityType(type) ? (
+                      <TypeBadge type={type} />
+                    ) : (
+                      <span className="inline-flex items-center rounded-full bg-zinc-700 px-2 py-0.5 text-xs font-medium text-zinc-300">
+                        {type}
+                      </span>
+                    )}
                     <div className="flex-1">
                       <div className="h-2 rounded-full bg-zinc-800">
                         <div
@@ -112,7 +133,12 @@ export function Dashboard() {
       {/* Recent entities */}
       <Card>
         <h2 className="mb-4 text-sm font-medium text-zinc-300">Recent Entities</h2>
-        {recentEntities.length === 0 ? (
+        {recentError ? (
+          <ErrorState
+            message={recentError}
+            onRetry={() => void recentQuery.refetch()}
+          />
+        ) : recentEntities.length === 0 ? (
           <EmptyState
             title="No entities yet"
             description="Create your first entity to get started"

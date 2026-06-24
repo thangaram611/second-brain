@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import type { Brain } from '@second-brain/core';
-import type { EntityType } from '@second-brain/types';
+import { isEntityType } from '@second-brain/types';
 import {
   TimelineQuerySchema,
   ContradictionsQuerySchema,
@@ -35,7 +35,7 @@ export function temporalRoutes(
     const ns = resolveScopedNamespace(req, res, params.namespace, users);
     if (ns === null) return;
     const types = params.types
-      ? (params.types.split(',').filter(Boolean) as EntityType[])
+      ? params.types.split(',').filter(isEntityType)
       : undefined;
 
     const entries = brain.temporal.getTimeline({
@@ -101,7 +101,7 @@ export function temporalRoutes(
     const ns = resolveScopedNamespace(req, res, params.namespace, users);
     if (ns === null) return;
     const types = params.types
-      ? (params.types.split(',').filter(Boolean) as EntityType[])
+      ? params.types.split(',').filter(isEntityType)
       : undefined;
 
     const stale = brain.decay.getStaleEntities({
@@ -147,7 +147,7 @@ export function temporalRoutes(
     const ns = resolveScopedNamespace(req, res, params.namespace, users);
     if (ns === null) return;
     const types = params.types
-      ? (params.types.split(',').filter(Boolean) as EntityType[])
+      ? params.types.split(',').filter(isEntityType)
       : undefined;
 
     const entities = brain.temporal.getEntitiesAsOf({

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Brain } from '@second-brain/core';
 import { ENTITY_TYPES, RELATION_TYPES, sessionNamespace } from '@second-brain/types';
-import type { EntityType, RelationType, TimelineEntry, SearchResult } from '@second-brain/types';
+import type { TimelineEntry, SearchResult } from '@second-brain/types';
 import {
   textResponse,
   errorResponse,
@@ -125,7 +125,7 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
     const results = brain.search.search({
       query: args.query,
       namespace: args.namespace,
-      types: args.types as EntityType[] | undefined,
+      types: args.types,
       limit: args.limit ?? 20,
       minConfidence: args.minConfidence,
     });
@@ -188,7 +188,7 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
     const { entities: neighbors, relations } = brain.traversal.getNeighbors(
       args.entityId,
       args.depth ?? 1,
-      args.relationTypes as RelationType[] | undefined,
+      args.relationTypes,
     );
 
     if (neighbors.length === 0) {
@@ -417,7 +417,7 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
       from: args.from,
       to: args.to,
       namespace: args.namespace,
-      types: args.types as EntityType[] | undefined,
+      types: args.types,
       limit: args.limit,
     });
 
@@ -556,7 +556,20 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
       return errorResponse(`Ownership query failed (${res.status}): ${text}`);
     }
 
-    const scores = (await res.json()) as Array<{ actor: string; score: number; signals: Record<string, unknown> }>;
+    const OwnershipScoreWireSchema = z.array(
+      z.object({
+        actor: z.string(),
+        score: z.number(),
+        signals: z.object({
+          commits: z.number(),
+          recencyWeightedBlameLines: z.number(),
+          reviews: z.number(),
+          testAuthorship: z.number(),
+          codeownerMatch: z.boolean(),
+        }),
+      }),
+    );
+    const scores = OwnershipScoreWireSchema.parse(await res.json());
 
     if (scores.length === 0) {
       return textResponse(`No ownership data found for ${args.path}`);
@@ -685,7 +698,7 @@ export function registerReadTools(mcp: McpServer, brain: Brain): void {
     const stale = brain.decay.getStaleEntities({
       threshold: args.threshold,
       namespace: args.namespace,
-      types: args.types as EntityType[] | undefined,
+      types: args.types,
       limit: args.limit,
     });
 

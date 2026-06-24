@@ -1,14 +1,22 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { z } from 'zod';
 
 export const GIT_HOOK_NAMES = ['post-commit', 'post-merge', 'post-checkout'] as const;
-export type GitHookName = (typeof GIT_HOOK_NAMES)[number];
+type GitHookName = (typeof GIT_HOOK_NAMES)[number];
 
-interface GitHookSidecar {
-  version: 1;
-  installedAt: string;
-  entries: Array<{ name: GitHookName; backupPath?: string }>;
-}
+const GitHookSidecarSchema = z.object({
+  version: z.literal(1),
+  installedAt: z.string(),
+  entries: z.array(
+    z.object({
+      name: z.enum(GIT_HOOK_NAMES),
+      backupPath: z.string().optional(),
+    }),
+  ),
+});
+
+type GitHookSidecar = z.infer<typeof GitHookSidecarSchema>;
 
 export interface InstallGitHooksOptions {
   /** Absolute repo root. The hooks land in <repoRoot>/.git/hooks/. */
@@ -142,13 +150,14 @@ function gitHookSidecarPath(repoRoot: string): string {
   return path.join(repoRoot, '.second-brain', 'git-hooks-sidecar.json');
 }
 
-function loadJson<T>(p: string, fallback: T): T {
+function loadSidecar(p: string): GitHookSidecar | null {
   try {
     const raw = fs.readFileSync(p, 'utf8');
-    if (!raw.trim()) return fallback;
-    return JSON.parse(raw) as T;
+    if (!raw.trim()) return null;
+    const parsed = GitHookSidecarSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : null;
   } catch {
-    return fallback;
+    return null;
   }
 }
 
@@ -197,7 +206,7 @@ export interface UninstallGitHooksResult {
 export function uninstallGitHooks(repoRoot: string): UninstallGitHooksResult {
   const hooksDir = gitHooksDir(repoRoot);
   const sidecarPath = gitHookSidecarPath(repoRoot);
-  const sidecar = loadJson<GitHookSidecar | null>(sidecarPath, null);
+  const sidecar = loadSidecar(sidecarPath);
   const removed: GitHookName[] = [];
   const restored: GitHookName[] = [];
 

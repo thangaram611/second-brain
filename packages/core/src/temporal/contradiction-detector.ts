@@ -2,7 +2,8 @@ import type { Entity, Contradiction } from '@second-brain/types';
 import type { StorageDatabase } from '../storage/index.js';
 import type { EntityManager } from '../graph/entity-manager.js';
 import type { RelationManager } from '../graph/relation-manager.js';
-import { rawRowToRelation, rawRowToEntity } from './row-mappers.js';
+import { rawRowToEntity } from './row-mappers.js';
+import { parseEntityRowSafe, RelationRowSchema } from './row-schemas.js';
 
 /**
  * Detects and manages contradictions between entities.
@@ -54,34 +55,41 @@ export class ContradictionDetector {
 
     // Duplicate namespace params for UNION ALL
     const allParams = namespace ? [...params, ...params] : [];
-    const rows = this.storage.sqlite.prepare(sql).all(...allParams) as Array<
-      Record<string, unknown>
-    >;
+    const rawRows = this.storage.sqlite.prepare(sql).all(...allParams);
 
-    if (rows.length === 0) return [];
+    if (rawRows.length === 0) return [];
+
+    // Parse the contradiction relations; skip any malformed row rather than
+    // aborting the whole scan.
+    const relations = rawRows
+      .map((row) => RelationRowSchema.safeParse(row))
+      .filter((p) => p.success)
+      .map((p) => p.data);
+
+    if (relations.length === 0) return [];
 
     // Batch-fetch all referenced entities to avoid N+1
     const entityIds = new Set<string>();
-    for (const row of rows) {
-      entityIds.add(row.source_id as string);
-      entityIds.add(row.target_id as string);
+    for (const relation of relations) {
+      entityIds.add(relation.sourceId);
+      entityIds.add(relation.targetId);
     }
 
     const placeholders = [...entityIds].map(() => '?').join(',');
     const entityRows = this.storage.sqlite
       .prepare(`SELECT * FROM entities WHERE id IN (${placeholders})`)
-      .all(...entityIds) as Array<Record<string, unknown>>;
+      .all(...entityIds);
 
     const entityMap = new Map<string, Entity>();
     for (const row of entityRows) {
-      const entity = rawRowToEntity(row);
+      const entity = parseEntityRowSafe(row);
+      if (entity === null) continue;
       entityMap.set(entity.id, entity);
     }
 
     // Build contradiction pairs
     const contradictions: Contradiction[] = [];
-    for (const row of rows) {
-      const relation = rawRowToRelation(row);
+    for (const relation of relations) {
       const entityA = entityMap.get(relation.sourceId);
       const entityB = entityMap.get(relation.targetId);
       if (entityA && entityB) {
@@ -147,9 +155,7 @@ export class ContradictionDetector {
       .prepare(
         `SELECT * FROM entities WHERE type = ? AND namespace = ? AND name = ? AND id != ?`,
       )
-      .all(entity.type, entity.namespace, entity.name, entity.id) as Array<
-      Record<string, unknown>
-    >;
+      .all(entity.type, entity.namespace, entity.name, entity.id);
     return rows.map(rawRowToEntity);
   }
 }

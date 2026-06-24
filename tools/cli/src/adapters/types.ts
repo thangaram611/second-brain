@@ -4,7 +4,7 @@
 
 export type AdapterName = 'claude' | 'cursor' | 'codex' | 'copilot';
 
-export type AdapterScope = 'user' | 'project';
+type AdapterScope = 'user' | 'project';
 
 export interface AdapterInstallOptions {
   scope: AdapterScope;

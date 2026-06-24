@@ -87,14 +87,15 @@ function parseJsonLd(
           weight: node['brain:weight'] ?? 1.0,
           bidirectional: node['brain:bidirectional'] ?? false,
           source: node['brain:entitySource'] ?? { type: 'manual' },
-          eventTime: node['brain:eventTime'] as string | undefined,
+          eventTime: node['brain:eventTime'],
         }),
       );
     } else {
       const rawId = z.string().parse(node['@id']).replace('urn:brain:entity:', '');
       const rawType = z.string().parse(nodeType);
-      const entityType: EntityType =
-        JSONLD_TYPE_REVERSE[rawType] ?? (rawType.replace('brain:', '') as EntityType);
+      // Resolve to a candidate string; ImportedEntitySchema's `z.enum(ENTITY_TYPES)`
+      // validates it at the boundary (throws on an unknown type).
+      const entityType: string = JSONLD_TYPE_REVERSE[rawType] ?? rawType.replace('brain:', '');
 
       entities.push(
         ImportedEntitySchema.parse({
@@ -105,7 +106,7 @@ function parseJsonLd(
           observations: node['brain:observations'] ?? [],
           properties: node['brain:properties'] ?? {},
           confidence: node['brain:confidence'] ?? 1.0,
-          eventTime: node['brain:eventTime'] as string | undefined,
+          eventTime: node['brain:eventTime'],
           source: node['brain:source'] ?? { type: 'manual' },
           tags: node['brain:tags'] ?? [],
         }),

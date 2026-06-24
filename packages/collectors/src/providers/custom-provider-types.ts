@@ -141,16 +141,6 @@ export type PREventMapping = z.infer<typeof PREventMappingSchema>;
 export type ReviewEventMapping = z.infer<typeof ReviewEventMappingSchema>;
 export type CommentEventMapping = z.infer<typeof CommentEventMappingSchema>;
 
-// Re-export sub-schemas for downstream use
-export {
-  VerificationConfigSchema,
-  FieldPathSchema,
-  PREventMappingSchema,
-  ReviewEventMappingSchema,
-  CommentEventMappingSchema,
-  ActionMapSchema,
-};
-
 /**
  * Extract a value from a nested object using dot-notation path.
  * Example: extractField({ a: { b: 'hello' } }, '$.a.b') → 'hello'

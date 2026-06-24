@@ -42,7 +42,7 @@ export function defaultShouldRetry(err: unknown): boolean {
 
 function extractStatus(err: unknown): number | null {
   if (err && typeof err === 'object' && 'status' in err) {
-    const s = (err as { status: unknown }).status;
+    const s = err.status;
     if (typeof s === 'number') return s;
   }
   return null;

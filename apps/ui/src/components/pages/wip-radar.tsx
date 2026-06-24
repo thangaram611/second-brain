@@ -1,10 +1,12 @@
-import { useEffect, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Radio, GitBranch, User, RefreshCw } from 'lucide-react';
-import { useWipStore } from '../../store/wip-store.js';
-import type { ParallelWorkConflict } from '../../store/wip-store.js';
+import { api } from '../../lib/api.js';
+import type { ParallelWorkConflict } from '../../lib/api.js';
+import { queryKeys } from '../../lib/query-keys.js';
 import { Card } from '../ui/card.js';
 import { EmptyState } from '../ui/empty-state.js';
 import { LoadingState } from '../ui/loading.js';
+import { ErrorState } from '../ui/error-state.js';
 import { Button } from '../ui/button.js';
 
 const AUTO_REFRESH_MS = 30_000;
@@ -90,18 +92,17 @@ function timeAgo(iso: string): string {
 }
 
 export function WipRadarPage() {
-  const { conflicts, loading, error, lastFetched, fetch } = useWipStore();
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  useEffect(() => {
-    fetch();
-    intervalRef.current = setInterval(() => {
-      fetch();
-    }, AUTO_REFRESH_MS);
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, [fetch]);
+  const wipQuery = useQuery({
+    queryKey: queryKeys.parallelWork(),
+    queryFn: async () => (await api.parallelWork.list()).conflicts,
+    refetchInterval: AUTO_REFRESH_MS,
+  });
+  const conflicts = wipQuery.data ?? [];
+  const loading = wipQuery.isFetching;
+  const error = wipQuery.error instanceof Error ? wipQuery.error.message : null;
+  const lastFetched = wipQuery.dataUpdatedAt
+    ? new Date(wipQuery.dataUpdatedAt).toISOString()
+    : null;
 
   return (
     <div className="mx-auto max-w-5xl p-6">
@@ -119,7 +120,7 @@ export function WipRadarPage() {
               Last updated: {timeAgo(lastFetched)}
             </span>
           )}
-          <Button variant="ghost" size="sm" onClick={fetch}>
+          <Button variant="ghost" size="sm" onClick={() => void wipQuery.refetch()}>
             <RefreshCw className="mr-1 h-3 w-3" /> Refresh
           </Button>
         </div>
@@ -128,7 +129,7 @@ export function WipRadarPage() {
       {loading && conflicts.length === 0 && (
         <LoadingState message="Scanning for parallel work..." />
       )}
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <ErrorState message={error} onRetry={() => void wipQuery.refetch()} />}
 
       {!loading && !error && conflicts.length === 0 && (
         <EmptyState

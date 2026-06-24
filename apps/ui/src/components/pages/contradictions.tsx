@@ -1,13 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Check, X, Network, RefreshCw } from 'lucide-react';
-import { useContradictionsStore } from '../../store/contradictions-store.js';
+import { api } from '../../lib/api.js';
+import { queryKeys } from '../../lib/query-keys.js';
+import { removeContradiction } from '../../lib/ws-cache.js';
 import { TypeBadge, RelationBadge } from '../ui/badge.js';
 import { Card } from '../ui/card.js';
 import { EmptyState } from '../ui/empty-state.js';
 import { LoadingState } from '../ui/loading.js';
+import { ErrorState } from '../ui/error-state.js';
+import { ConfirmDialog } from '../ui/confirm-dialog.js';
 import { Button } from '../ui/button.js';
-import type { Entity } from '../../lib/types.js';
+import type { Contradiction, Entity } from '../../lib/types.js';
 
 function ConfidenceBar({ value }: { value: number }) {
   return (
@@ -56,8 +61,7 @@ function EntityPanel({ entity, label }: { entity: Entity; label: string }) {
 }
 
 export function ContradictionsPage() {
-  const { contradictions, loading, error, resolving, fetch, resolve, dismiss } =
-    useContradictionsStore();
+  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [confirmAction, setConfirmAction] = useState<{
     relationId: string;
@@ -66,9 +70,44 @@ export function ContradictionsPage() {
     loserName: string;
   } | null>(null);
 
-  useEffect(() => {
-    fetch();
-  }, [fetch]);
+  const contradictionsQuery = useQuery({
+    queryKey: queryKeys.contradictions(),
+    queryFn: () => api.contradictions.list(),
+  });
+  const contradictions = contradictionsQuery.data ?? [];
+  const loading = contradictionsQuery.isFetching;
+
+  function dropContradiction(relationId: string) {
+    queryClient.setQueryData<Contradiction[]>(queryKeys.contradictions(), (prev) =>
+      removeContradiction(prev, relationId),
+    );
+  }
+
+  const resolveMutation = useMutation({
+    mutationFn: ({ relationId, winnerId }: { relationId: string; winnerId: string }) =>
+      api.contradictions.resolve(relationId, winnerId),
+    onSuccess: (_result, { relationId }) => dropContradiction(relationId),
+  });
+
+  const dismissMutation = useMutation({
+    mutationFn: (relationId: string) => api.contradictions.dismiss(relationId),
+    onSuccess: (_result, relationId) => dropContradiction(relationId),
+  });
+
+  const resolvingId = resolveMutation.isPending
+    ? resolveMutation.variables.relationId
+    : dismissMutation.isPending
+      ? dismissMutation.variables
+      : null;
+
+  const error =
+    contradictionsQuery.error instanceof Error
+      ? contradictionsQuery.error.message
+      : resolveMutation.error instanceof Error
+        ? resolveMutation.error.message
+        : dismissMutation.error instanceof Error
+          ? dismissMutation.error.message
+          : null;
 
   function handleResolve(relationId: string, winnerId: string, winnerName: string, loserName: string) {
     setConfirmAction({ relationId, winnerId, winnerName, loserName });
@@ -76,7 +115,10 @@ export function ContradictionsPage() {
 
   function confirmResolve() {
     if (confirmAction) {
-      resolve(confirmAction.relationId, confirmAction.winnerId);
+      resolveMutation.mutate({
+        relationId: confirmAction.relationId,
+        winnerId: confirmAction.winnerId,
+      });
       setConfirmAction(null);
     }
   }
@@ -90,13 +132,13 @@ export function ContradictionsPage() {
             {contradictions.length}
           </span>
         </div>
-        <Button variant="ghost" size="sm" onClick={fetch}>
+        <Button variant="ghost" size="sm" onClick={() => void contradictionsQuery.refetch()}>
           <RefreshCw className="mr-1 h-3 w-3" /> Refresh
         </Button>
       </div>
 
       {loading && <LoadingState message="Loading contradictions..." />}
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <ErrorState message={error} onRetry={() => void contradictionsQuery.refetch()} />}
 
       {!loading && !error && contradictions.length === 0 && (
         <EmptyState
@@ -124,7 +166,7 @@ export function ContradictionsPage() {
                   variant="secondary"
                   size="sm"
                   onClick={() => handleResolve(c.relation.id, c.entityA.id, c.entityA.name, c.entityB.name)}
-                  disabled={resolving === c.relation.id}
+                  disabled={resolvingId === c.relation.id}
                 >
                   <Check className="mr-1 h-3 w-3" /> Pick A
                 </Button>
@@ -132,15 +174,15 @@ export function ContradictionsPage() {
                   variant="secondary"
                   size="sm"
                   onClick={() => handleResolve(c.relation.id, c.entityB.id, c.entityB.name, c.entityA.name)}
-                  disabled={resolving === c.relation.id}
+                  disabled={resolvingId === c.relation.id}
                 >
                   <Check className="mr-1 h-3 w-3" /> Pick B
                 </Button>
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => dismiss(c.relation.id)}
-                  disabled={resolving === c.relation.id}
+                  onClick={() => dismissMutation.mutate(c.relation.id)}
+                  disabled={resolvingId === c.relation.id}
                 >
                   <X className="mr-1 h-3 w-3" /> Dismiss
                 </Button>
@@ -158,26 +200,23 @@ export function ContradictionsPage() {
       )}
 
       {/* Confirmation dialog */}
-      {confirmAction && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="w-full max-w-md rounded-lg border border-zinc-800 bg-zinc-900 p-6 shadow-xl">
-            <h3 className="mb-4 text-lg font-medium text-zinc-100">Resolve Contradiction</h3>
-            <p className="mb-6 text-sm text-zinc-400">
+      <ConfirmDialog
+        open={confirmAction !== null}
+        title="Resolve Contradiction"
+        description={
+          confirmAction && (
+            <>
               This will supersede &quot;{confirmAction.loserName}&quot; in favor of &quot;
-              {confirmAction.winnerName}&quot;. A <code className="text-zinc-300">supersedes</code>{' '}
-              relation will be created and the loser&apos;s confidence will be set to 0.
-            </p>
-            <div className="flex items-center justify-end gap-2">
-              <Button variant="ghost" size="sm" onClick={() => setConfirmAction(null)}>
-                Cancel
-              </Button>
-              <Button variant="primary" size="sm" onClick={confirmResolve}>
-                Confirm
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+              {confirmAction.winnerName}&quot;. A{' '}
+              <code className="text-zinc-300">supersedes</code> relation will be created and the
+              loser&apos;s confidence will be set to 0.
+            </>
+          )
+        }
+        busy={resolveMutation.isPending}
+        onConfirm={confirmResolve}
+        onCancel={() => setConfirmAction(null)}
+      />
     </div>
   );
 }

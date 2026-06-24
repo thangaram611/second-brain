@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { signRelayToken } from '@second-brain/sync';
 import type { SyncManager } from '@second-brain/sync';
 import { SyncJoinSchema, SyncLeaveSchema } from '../schemas.js';
 import { enforceNamespace, requireScope } from '../middleware/auth.js';
@@ -7,6 +8,13 @@ import { paramString } from './helpers.js';
 
 export interface SyncRoutesOptions {
   users?: UsersService | null;
+  /**
+   * Shared relay secret. The server mints the relay JWT itself so clients never
+   * handle it. Defaults to `process.env.RELAY_AUTH_SECRET`; a `brain init
+   * server` install loads it from the same EnvironmentFile as the relay. When
+   * absent (e.g. a server started without it), `/api/sync/join` returns 503.
+   */
+  relayAuthSecret?: string;
 }
 
 export function syncRoutes(
@@ -15,6 +23,9 @@ export function syncRoutes(
 ): Router {
   const router = Router();
   const users = options.users ?? null;
+  // Resolved once at boot — the deployment model sets RELAY_AUTH_SECRET in the
+  // server's environment before start (via the shared secrets EnvironmentFile).
+  const relayAuthSecret = options.relayAuthSecret ?? process.env.RELAY_AUTH_SECRET;
 
   // GET /api/sync/status — all sync statuses
   router.get('/api/sync/status', (_req, res) => {
@@ -32,15 +43,31 @@ export function syncRoutes(
     res.json(status);
   });
 
-  // POST /api/sync/join — join a sync room
+  // POST /api/sync/join — join a sync room. The server mints the relay JWT
+  // itself (it holds the shared secret), so the client only supplies the
+  // namespace + relay URL it discovered from the team manifest.
   router.post('/api/sync/join', requireScope('write', 'admin'), async (req, res) => {
     try {
       const input = SyncJoinSchema.parse(req.body);
       if (!enforceNamespace(req, res, input.namespace, users)) return;
+      if (!relayAuthSecret) {
+        res.status(503).json({
+          error:
+            'relay sync is not configured on this server (no RELAY_AUTH_SECRET in its environment)',
+        });
+        return;
+      }
+      // Subject identifies this client to the relay for peer awareness. Use the
+      // authenticated caller's email when available (PAT/session), else a
+      // generic server identity in open mode.
+      const token = signRelayToken(relayAuthSecret, {
+        sub: req.user?.email ?? 'second-brain-server',
+        namespace: input.namespace,
+      });
       const status = await syncManager.join({
         namespace: input.namespace,
         relayUrl: input.relayUrl,
-        token: input.token,
+        token,
         enabled: true,
       });
       res.json(status);

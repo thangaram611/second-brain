@@ -69,6 +69,41 @@ describe('Relation routes', () => {
     });
   });
 
+  describe('GET /api/relations', () => {
+    it('returns the relations induced by the given entity ids', async () => {
+      const { a, b } = await createTwo();
+      const created = (
+        await request(app).post('/api/relations').send({ type: 'depends_on', sourceId: a.id, targetId: b.id })
+      ).body;
+
+      const res = await request(app).get(`/api/relations?ids=${a.id},${b.id}`).expect(200);
+      expect(res.body).toHaveLength(1);
+      expect(res.body[0].id).toBe(created.id);
+    });
+
+    it('returns [] when only one endpoint is in the set', async () => {
+      const { a, b } = await createTwo();
+      await request(app).post('/api/relations').send({ type: 'depends_on', sourceId: a.id, targetId: b.id });
+
+      const res = await request(app).get(`/api/relations?ids=${a.id}`).expect(200);
+      expect(res.body).toEqual([]);
+    });
+
+    it('rejects a request with no ids', async () => {
+      await request(app).get('/api/relations').expect(400);
+    });
+
+    it('does not shadow GET /api/relations/:id', async () => {
+      const { a, b } = await createTwo();
+      const created = (
+        await request(app).post('/api/relations').send({ type: 'depends_on', sourceId: a.id, targetId: b.id })
+      ).body;
+
+      const res = await request(app).get(`/api/relations/${created.id}`).expect(200);
+      expect(res.body.id).toBe(created.id);
+    });
+  });
+
   describe('GET /api/relations/:id', () => {
     it('returns a relation', async () => {
       const { a, b } = await createTwo();

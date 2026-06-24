@@ -6,6 +6,7 @@ import { EntityManager } from './graph/entity-manager.js';
 import { RelationManager } from './graph/relation-manager.js';
 import { GraphTraversal } from './graph/graph-traversal.js';
 import { SearchEngine } from './search/search-engine.js';
+import { VectorSearchChannel, type QueryEmbedder } from './search/index.js';
 import { BitemporalQueries } from './temporal/bitemporal-queries.js';
 import { DecayEngine } from './temporal/decay-engine.js';
 import { ContradictionDetector } from './temporal/contradiction-detector.js';
@@ -111,6 +112,43 @@ export class Brain {
       this._embeddings = new EmbeddingStore(this.storage);
     }
     return this._embeddings;
+  }
+
+  /**
+   * Dimension of already-stored embedding vectors (read from the `embeddings`
+   * table), or null when none are stored. This is the authoritative dimension
+   * for an existing brain — prefer it over a configured default.
+   */
+  get storedVectorDimensions(): number | null {
+    return this.storage.detectStoredVectorDimensions();
+  }
+
+  /**
+   * Enable vector search using the dimension detected from already-stored
+   * embeddings. Returns the store, or null when nothing is stored yet (so the
+   * caller can fall back to full-text search instead of guessing a dimension).
+   */
+  enableVectorSearchFromStore(): EmbeddingStore | null {
+    const dims = this.storage.detectStoredVectorDimensions();
+    if (dims === null) return null;
+    return this.enableVectorSearch(dims);
+  }
+
+  /** Rebuild the FTS5 full-text index from the `entities` content table. */
+  reindex(): void {
+    this.storage.sqlite.exec("INSERT INTO entities_fts(entities_fts) VALUES('rebuild')");
+  }
+
+  /**
+   * Idempotently wire a vector search channel using this brain's embeddings +
+   * a query embedder. Returns true if a channel was attached, false if vector
+   * search is unavailable (embeddings not enabled) or a channel is already wired.
+   */
+  attachVectorChannel(embedQuery: QueryEmbedder): boolean {
+    if (this.search.hasVectorChannel()) return false;
+    if (this._embeddings === null) return false;
+    this.search.setVectorChannel(new VectorSearchChannel(this._embeddings, this.entities, embedQuery));
+    return true;
   }
 
   /**

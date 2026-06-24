@@ -71,6 +71,15 @@ export interface CreateEntityInput {
   tags?: string[];
 }
 
+/**
+ * Like {@link CreateEntityInput} but carries an explicit `id`. Used by CRDT
+ * writeback so the local row's id matches the authoritative Y.Doc id instead
+ * of minting a fresh ULID (which would diverge from remote deletes).
+ */
+export interface UpsertEntityInput extends CreateEntityInput {
+  id: string;
+}
+
 export interface UpdateEntityInput {
   name?: string;
   namespace?: string;

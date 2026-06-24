@@ -27,7 +27,7 @@ A practical end-to-end guide to setting up and using the Second Brain developer 
 
 | Requirement | Version | Notes |
 |-------------|---------|-------|
-| **Node.js** | 22+ | Required. Use [nvm](https://github.com/nvm-sh/nvm) or [fnm](https://github.com/Schniz/fnm) to manage versions |
+| **Node.js** | 24+ | Required. Use [nvm](https://github.com/nvm-sh/nvm) or [fnm](https://github.com/Schniz/fnm) to manage versions |
 | **pnpm** | 10+ | Install with `corepack enable && corepack prepare pnpm@latest --activate` |
 | **Git** | 2.x | For repository indexing and hooks |
 | **Ollama** | *(optional)* | Local LLM for natural-language queries and enrichment — [ollama.com](https://ollama.com) |
@@ -36,7 +36,7 @@ A practical end-to-end guide to setting up and using the Second Brain developer 
 Verify your environment:
 
 ```bash
-node -v   # v22.x.x
+node -v   # v24.x.x
 pnpm -v   # 10.x.x
 git -v    # git version 2.x
 ```
@@ -428,7 +428,8 @@ This installs:
 | `--server-url <url>` | Server URL for hook POST targets |
 | `--token <token>` | Bearer token embedded into local git hooks; `SECOND_BRAIN_TOKEN` or `BRAIN_AUTH_TOKEN` override it at runtime |
 | `--no-claude` | Skip Claude Code session hook install |
-| `--provider <name>` | Forge provider: `gitlab` or `github` |
+
+Forge webhook wiring is handled separately by `brain provider add <gitlab|github>` (see the [providers guide](./providers.md)).
 
 ### File-change daemon
 
@@ -463,7 +464,8 @@ Sync a project namespace across team members using the CRDT relay.
 
 ### 1. Start the relay
 
-The relay server must be running and accessible to all team members:
+The relay server must be running and accessible to all team members. Only the
+relay and the API server hold `RELAY_AUTH_SECRET` — clients never need it:
 
 ```bash
 RELAY_AUTH_SECRET=my-shared-secret pnpm --filter @second-brain/relay dev
@@ -471,25 +473,25 @@ RELAY_AUTH_SECRET=my-shared-secret pnpm --filter @second-brain/relay dev
 
 ### 2. Join a sync room
 
-If the repo has a `.second-brain/team.json` manifest (written by team wiring),
-`brain sync join` reads the namespace and relay URL from it — just supply the
-shared secret:
+`brain sync join` is a single authenticated call to your API server. The server
+mints the relay token itself (it holds `RELAY_AUTH_SECRET`), so clients only need
+their normal API credentials — no shared secret. If the repo has a
+`.second-brain/team.json` manifest, the namespace and relay URL come from it:
 
 ```bash
-RELAY_AUTH_SECRET=my-shared-secret brain sync join
+brain sync join
 ```
 
-For solo repos or scripts, pass everything explicitly. Explicit flags also
-override the manifest values:
+For solo repos or scripts, pass them explicitly. Explicit flags also override
+the manifest values:
 
 ```bash
 brain sync join \
   --namespace my-team-project \
-  --relay ws://relay.example.com:7421 \
-  --secret my-shared-secret
+  --relay ws://relay.example.com:7421
 ```
 
-> **Note:** The `personal` namespace cannot be synced — it is reserved for local-only data. The relay secret is never stored in the manifest; it always comes from `--secret` or `RELAY_AUTH_SECRET`.
+> **Note:** The `personal` namespace cannot be synced — it is reserved for local-only data. `RELAY_AUTH_SECRET` is never distributed to clients or stored in the manifest; it stays on the relay and API server, which run together.
 
 ### 3. Check sync status
 
@@ -689,13 +691,13 @@ All environment variables with their defaults and descriptions.
 |----------|---------|-------------|
 | `BRAIN_AUTH_MODE` | `open` | `open` for local development, `pat` for invite/PAT-protected team mode |
 | `BRAIN_AUTH_TOKEN` | — | Bearer token for API authentication |
-| `RELAY_AUTH_SECRET` | — | **Required for relay** — shared secret for sync authentication |
+| `RELAY_AUTH_SECRET` | — | **Required on the relay and API server** — JWT secret for sync auth. The server mints relay tokens with it; clients never need it. |
 | `GITHUB_TOKEN` | — | GitHub PAT for `brain index github`; fallback for GitHub provider wiring |
-| `SECOND_BRAIN_GITHUB_TOKEN` | — | GitHub PAT for `brain wire --provider github` |
-| `SECOND_BRAIN_GITLAB_TOKEN` / `GITLAB_TOKEN` | — | GitLab PAT for `brain wire --provider gitlab` |
+| `SECOND_BRAIN_GITHUB_TOKEN` | — | GitHub PAT for `brain provider add github` |
+| `SECOND_BRAIN_GITLAB_TOKEN` / `GITLAB_TOKEN` | — | GitLab PAT for `brain provider add gitlab` |
 | `SECOND_BRAIN_TOKEN` | — | Auth token for git hook daemon |
-| `SECOND_BRAIN_WEBHOOK_SECRET_HEX__<provider>__<hexProjectId>` | — | Token webhook verification secret printed by `brain wire --provider` |
-| `SECOND_BRAIN_WEBHOOK_HMAC_HEX__<provider>__<hexProjectId>` | — | HMAC webhook verification secret printed by `brain wire --provider` |
+| `SECOND_BRAIN_WEBHOOK_SECRET_HEX__<provider>__<hexProjectId>` | — | Token webhook verification secret printed by `brain provider add` |
+| `SECOND_BRAIN_WEBHOOK_HMAC_HEX__<provider>__<hexProjectId>` | — | HMAC webhook verification secret printed by `brain provider add` |
 
 ### Server Configuration
 
@@ -791,14 +793,17 @@ Only one write process should access the database at a time. Stop any running `b
 Error: Authentication failed
 ```
 
-Ensure `RELAY_AUTH_SECRET` matches between the relay server and all connecting clients:
+The relay and the API server must share the same `RELAY_AUTH_SECRET` (a `brain
+init server` install puts it in both via one secrets file). Clients don't use
+the secret — if `brain sync join` returns `503 ... no RELAY_AUTH_SECRET`, the
+API server is missing it from its environment:
 
 ```bash
-# Server
+# Relay AND API server (same value)
 RELAY_AUTH_SECRET=my-secret pnpm --filter @second-brain/relay dev
 
-# Client
-brain sync join --namespace proj --relay ws://localhost:7421 --secret my-secret
+# Client — no secret needed
+brain sync join --namespace proj --relay ws://localhost:7421
 ```
 
 ### GitHub indexing fails with 401

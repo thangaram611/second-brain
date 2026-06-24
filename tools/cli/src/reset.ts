@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as p from '@clack/prompts';
+import { isRecord } from './adapters/shared/json-file.js';
 
 const DEFAULT_DIR = path.join(os.homedir(), '.second-brain');
 const CLAUDE_CONFIG_PATH = path.join(os.homedir(), '.claude.json');
@@ -103,9 +104,9 @@ export function restoreOrClearClaudeConfig(configPath: string): RestoreResult {
   const raw = fs.readFileSync(configPath, 'utf-8');
   let doc: Record<string, unknown>;
   try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      doc = parsed as Record<string, unknown>;
+    const parsed: unknown = JSON.parse(raw);
+    if (isRecord(parsed)) {
+      doc = parsed;
     } else {
       return { action: 'missing', message: `${configPath} is not a JSON object; leaving untouched.` };
     }
@@ -114,11 +115,10 @@ export function restoreOrClearClaudeConfig(configPath: string): RestoreResult {
   }
 
   const servers = doc.mcpServers;
-  if (servers && typeof servers === 'object' && !Array.isArray(servers)) {
-    const asRecord = servers as Record<string, unknown>;
-    if ('second-brain' in asRecord) {
-      delete asRecord['second-brain'];
-      doc.mcpServers = asRecord;
+  if (isRecord(servers)) {
+    if ('second-brain' in servers) {
+      delete servers['second-brain'];
+      doc.mcpServers = servers;
       fs.writeFileSync(configPath, `${JSON.stringify(doc, null, 2)}\n`);
       return { action: 'cleared', message: `Removed second-brain entry from ${configPath} (no backup available).` };
     }

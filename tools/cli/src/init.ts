@@ -5,6 +5,7 @@ import * as p from '@clack/prompts';
 import { z } from 'zod';
 import { Brain } from '@second-brain/core';
 import { LLM_PROVIDERS, EMBEDDING_PROVIDERS } from '@second-brain/ingestion';
+import { isRecord } from './adapters/shared/json-file.js';
 
 const DEFAULT_DIR = path.join(os.homedir(), '.second-brain');
 const DEFAULT_DB_PATH = path.join(DEFAULT_DIR, 'personal.db');
@@ -27,7 +28,7 @@ const ConfigSchema = z.object({
     .optional(),
 });
 
-export type BrainConfig = z.infer<typeof ConfigSchema>;
+type BrainConfig = z.infer<typeof ConfigSchema>;
 
 export interface InitOptions {
   /** Non-interactive: skip all prompts and use defaults. */
@@ -259,7 +260,7 @@ export function patchClaudeConfig(configPath: string, entry: ClaudeMcpEntry): vo
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     fs.writeFileSync(`${configPath}.bak-${stamp}`, raw);
   }
-  const servers = (current.mcpServers as Record<string, unknown>) ?? {};
+  const servers = isRecord(current.mcpServers) ? current.mcpServers : {};
   servers['second-brain'] = entry;
   current.mcpServers = servers;
   fs.writeFileSync(configPath, `${JSON.stringify(current, null, 2)}\n`);

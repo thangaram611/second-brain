@@ -5,9 +5,7 @@ export {
   yMapToEntity,
   relationToYMap,
   yMapToRelation,
-  setObservations,
   getObservations,
-  setTags,
   getTags,
 } from './crdt/schema.js';
 
@@ -24,3 +22,7 @@ export type { SyncSession, SyncWsEvent } from './sync-manager.js';
 // Provider
 export { createSyncProvider } from './provider/hocuspocus-client.js';
 export type { SyncProviderCallbacks } from './provider/hocuspocus-client.js';
+
+// Relay auth (server-side token minting)
+export { signRelayToken } from './relay-auth.js';
+export type { SignRelayTokenOptions } from './relay-auth.js';

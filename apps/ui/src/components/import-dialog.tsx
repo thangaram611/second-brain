@@ -2,8 +2,20 @@ import { useState } from 'react';
 import { X, Upload, FileCode } from 'lucide-react';
 import { api } from '../lib/api.js';
 
-type ImportFormat = 'json' | 'json-ld';
-type ImportStrategy = 'replace' | 'merge' | 'upsert';
+const IMPORT_FORMATS = ['json', 'json-ld'] as const;
+const IMPORT_STRATEGIES = ['replace', 'merge', 'upsert'] as const;
+type ImportFormat = (typeof IMPORT_FORMATS)[number];
+type ImportStrategy = (typeof IMPORT_STRATEGIES)[number];
+
+const IMPORT_FORMAT_SET = new Set<string>(IMPORT_FORMATS);
+const IMPORT_STRATEGY_SET = new Set<string>(IMPORT_STRATEGIES);
+
+function isImportFormat(value: string): value is ImportFormat {
+  return IMPORT_FORMAT_SET.has(value);
+}
+function isImportStrategy(value: string): value is ImportStrategy {
+  return IMPORT_STRATEGY_SET.has(value);
+}
 
 interface ImportResult {
   entitiesImported: number;
@@ -114,7 +126,9 @@ export function ImportDialog({ open, onClose }: Props) {
               <label className="mb-1 block text-xs text-zinc-500">Format</label>
               <select
                 value={format}
-                onChange={(e) => setFormat(e.target.value as ImportFormat)}
+                onChange={(e) => {
+                  if (isImportFormat(e.target.value)) setFormat(e.target.value);
+                }}
                 className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-zinc-200"
               >
                 <option value="json">json</option>
@@ -125,7 +139,9 @@ export function ImportDialog({ open, onClose }: Props) {
               <label className="mb-1 block text-xs text-zinc-500">Strategy</label>
               <select
                 value={strategy}
-                onChange={(e) => setStrategy(e.target.value as ImportStrategy)}
+                onChange={(e) => {
+                  if (isImportStrategy(e.target.value)) setStrategy(e.target.value);
+                }}
                 className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-zinc-200"
               >
                 <option value="upsert">upsert</option>

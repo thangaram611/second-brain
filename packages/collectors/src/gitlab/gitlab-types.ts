@@ -44,8 +44,3 @@ export const GitLabIssueSchema = z
 
 export type GitLabMergeRequest = z.infer<typeof GitLabMergeRequestSchema>;
 export type GitLabIssue = z.infer<typeof GitLabIssueSchema>;
-
-/** Normalise a label (which GitLab returns as either a string or an object). */
-export function labelName(label: string | { name: string }): string {
-  return typeof label === 'string' ? label : label.name;
-}

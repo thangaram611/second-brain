@@ -25,8 +25,11 @@ import type {
   AdapterUninstallResult,
   AdapterDetectResult,
 } from './types.js';
-import { HOOK_SENTINEL } from './types.js';
 import { resolveBrainMcpInvocation } from './mcp-resolve.js';
+import { isRecord, writeJson } from './shared/json-file.js';
+import { brainHookCommand as renderHookCommand, type HookVerb, type Phase } from './shared/hook-events.js';
+import { upsertSentinelDedup, removeSentinelEntries } from './shared/sentinel.js';
+import { upsertMcpServersJson } from './shared/mcp-merge.js';
 
 interface CursorHookCommand {
   command: string;
@@ -47,23 +50,23 @@ const CURSOR_EVENTS = [
 ] as const;
 type CursorEvent = (typeof CURSOR_EVENTS)[number];
 
+/**
+ * Host event → brain verb+phase mapping for Cursor. Note the deliberate
+ * host-specific differences: `postToolUse` uses the `post-inject` phase (the
+ * gated injection path), and `stop` maps to `session-end`.
+ */
+const CURSOR_EVENT_MAP: Record<CursorEvent, { verb: HookVerb; phase?: Phase }> = {
+  sessionStart: { verb: 'session-start' },
+  beforeReadFile: { verb: 'tool-use', phase: 'pre' },
+  beforeShellExecution: { verb: 'tool-use', phase: 'pre' },
+  postToolUse: { verb: 'tool-use', phase: 'post-inject' },
+  afterFileEdit: { verb: 'tool-use', phase: 'post' },
+  stop: { verb: 'session-end' },
+};
+
 function brainHookCommand(event: CursorEvent, override?: string): string {
-  const bin = override ?? 'brain-hook';
-  const flag = '--adapter cursor';
-  switch (event) {
-    case 'sessionStart':
-      return `${bin} session-start ${flag} ${HOOK_SENTINEL}`;
-    case 'beforeReadFile':
-      return `${bin} tool-use --phase pre ${flag} ${HOOK_SENTINEL}`;
-    case 'beforeShellExecution':
-      return `${bin} tool-use --phase pre ${flag} ${HOOK_SENTINEL}`;
-    case 'postToolUse':
-      return `${bin} tool-use --phase post-inject ${flag} ${HOOK_SENTINEL}`;
-    case 'afterFileEdit':
-      return `${bin} tool-use --phase post ${flag} ${HOOK_SENTINEL}`;
-    case 'stop':
-      return `${bin} session-end ${flag} ${HOOK_SENTINEL}`;
-  }
+  const { verb, phase } = CURSOR_EVENT_MAP[event];
+  return renderHookCommand({ verb, phase, adapter: 'cursor', bin: override });
 }
 
 function resolveHooksPath(scope: 'user' | 'project', home: string, cwd: string): string {
@@ -77,10 +80,6 @@ function resolveRulesPath(cwd: string): string {
 
 function resolveMcpPath(cwd: string): string {
   return path.join(cwd, '.cursor', 'mcp.json');
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
 function loadHooksFile(p: string): CursorHooksFile | null {
@@ -107,11 +106,6 @@ function loadHooksFile(p: string): CursorHooksFile | null {
   } catch {
     return null;
   }
-}
-
-function writeJson(p: string, value: unknown): void {
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, JSON.stringify(value, null, 2) + '\n', 'utf8');
 }
 
 function defaultRulesContent(): string {
@@ -147,24 +141,8 @@ function installImpl(opts: AdapterInstallOptions): AdapterInstallResult {
   for (const event of CURSOR_EVENTS) {
     const cmd = brainHookCommand(event, opts.hookCommand);
     const list = existing.hooks[event] ?? [];
-    let matched = false;
-    let mutated = false;
-    for (const item of list) {
-      if (item.command === cmd) {
-        matched = true;
-      } else if (item.command.includes(HOOK_SENTINEL)) {
-        item.command = cmd;
-        matched = true;
-        mutated = true;
-      }
-    }
-    if (!matched) {
-      list.push({ command: cmd });
-      added.push(event);
-    } else if (mutated) {
-      // Replaced an outdated brain entry — count as updated.
-      added.push(event);
-    }
+    const { changed } = upsertSentinelDedup(list, cmd, (command) => ({ command }));
+    if (changed) added.push(event);
     existing.hooks[event] = list;
   }
   writeJson(hooksPath, existing);
@@ -179,42 +157,11 @@ function installImpl(opts: AdapterInstallOptions): AdapterInstallResult {
   }
 
   // ── 3. mcp.json — idempotent merge ─────────────────────────────────────
-  let mcp: { mcpServers: Record<string, unknown> } = { mcpServers: {} };
-  if (fs.existsSync(mcpPath)) {
-    try {
-      const raw = fs.readFileSync(mcpPath, 'utf8');
-      if (raw.trim()) {
-        const parsed: unknown = JSON.parse(raw);
-        if (isRecord(parsed)) {
-          const servers = parsed.mcpServers;
-          mcp = { mcpServers: isRecord(servers) ? { ...servers } : {} };
-          // Preserve unrelated top-level keys.
-          for (const [k, v] of Object.entries(parsed)) {
-            if (k !== 'mcpServers') {
-              const obj: Record<string, unknown> = mcp;
-              obj[k] = v;
-            }
-          }
-        }
-      }
-    } catch {
-      // fall through to defaults
-    }
-  }
   const resolved = resolveBrainMcpInvocation();
   if (resolved.warning) warnings.push(resolved.warning);
   if (resolved.invocation) {
-    const desired: Record<string, unknown> = {
-      command: resolved.invocation.command,
-      args: resolved.invocation.args,
-    };
-    if (resolved.invocation.env) desired.env = resolved.invocation.env;
-    const existingEntry = mcp.mcpServers['second-brain'];
-    if (JSON.stringify(existingEntry) !== JSON.stringify(desired)) {
-      mcp.mcpServers['second-brain'] = desired;
-      writeJson(mcpPath, mcp);
-      auxFiles.push(mcpPath);
-    }
+    const { written } = upsertMcpServersJson(mcpPath, resolved.invocation);
+    if (written) auxFiles.push(mcpPath);
   }
 
   return {
@@ -232,8 +179,8 @@ function uninstallImpl(opts: AdapterUninstallOptions): AdapterUninstallResult {
   const existing = loadHooksFile(hooksPath);
   if (!existing) return { configPath: hooksPath, removed, warnings };
   for (const [event, cmds] of Object.entries(existing.hooks)) {
-    const filtered = cmds.filter((c) => !c.command.includes(HOOK_SENTINEL));
-    if (filtered.length !== cmds.length) removed.push(event);
+    const { list: filtered, removed: didRemove } = removeSentinelEntries(cmds);
+    if (didRemove) removed.push(event);
     if (filtered.length > 0) existing.hooks[event] = filtered;
     else delete existing.hooks[event];
   }

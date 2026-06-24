@@ -5,7 +5,6 @@ import * as path from 'node:path';
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import { createRelayServer } from './server.js';
-import { createAuthRouter } from './auth.js';
 
 // --- Configuration from environment ---
 
@@ -24,7 +23,9 @@ const PERSIST_DIR = process.env.RELAY_PERSIST_DIR
 
 const app = express();
 app.use(express.json());
-app.use(createAuthRouter(AUTH_SECRET));
+// Token minting lives on the API server now (it holds RELAY_AUTH_SECRET and
+// mints relay JWTs for already-authenticated clients). The relay only verifies
+// tokens on the WebSocket upgrade — see verifyRelayToken in ./server.ts.
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });

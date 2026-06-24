@@ -10,9 +10,9 @@ import type {
   StaleEntity,
   SyncStatus,
   PeerInfo,
+  OwnershipNode,
 } from './types.js';
 
-import type { OwnershipNode } from '../store/ownership-store.js';
 import { useAuthStore } from '../store/auth-store.js';
 
 export interface ParallelWorkConflict {
@@ -59,7 +59,11 @@ function redirectToLogin(): void {
   window.location.hash = '#/login';
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+/**
+ * Perform the fetch with shared header/CSRF/auth-redirect handling. Returns the
+ * raw Response; callers decide whether to parse a body.
+ */
+async function sendRequest(path: string, init?: RequestInit): Promise<Response> {
   // Build headers — start from any caller-supplied headers and layer in
   // Content-Type + the CSRF token (only on mutating verbs, only if we have one).
   const incomingHeaders = new Headers(init?.headers);
@@ -87,12 +91,34 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
   }
 
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText }));
-    throw new ApiError(res.status, body.error ?? res.statusText);
-  }
-  if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
+  return res;
+}
+
+/** Throw an ApiError for any non-2xx response, reading the error body if present. */
+async function assertOk(res: Response): Promise<void> {
+  if (res.ok) return;
+  const body = await res.json().catch(() => ({ error: res.statusText }));
+  const message = typeof body?.error === 'string' ? body.error : res.statusText;
+  throw new ApiError(res.status, message);
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await sendRequest(path, init);
+  await assertOk(res);
+  // Response.json() is typed Promise<any> by the DOM lib, so it is assignable to
+  // Promise<T> without a cast. Each endpoint declares its own typed shape via the
+  // T it requests; bodyless endpoints (204) go through requestVoid() instead.
+  return res.json();
+}
+
+/**
+ * Like request() but for endpoints that return no body (204 No Content), e.g.
+ * DELETE routes. Runs the same auth/CSRF/error handling, then returns without
+ * parsing a body — so there is no untyped value to produce or cast.
+ */
+async function requestVoid(path: string, init?: RequestInit): Promise<void> {
+  const res = await sendRequest(path, init);
+  await assertOk(res);
 }
 
 export const api = {
@@ -139,7 +165,7 @@ export const api = {
     },
 
     delete(id: string) {
-      return request<void>(`/entities/${id}`, { method: 'DELETE' });
+      return requestVoid(`/entities/${id}`, { method: 'DELETE' });
     },
 
     addObservation(id: string, observation: string) {
@@ -165,6 +191,10 @@ export const api = {
   },
 
   relations: {
+    list(ids: string[]) {
+      return request<Relation[]>(`/relations${buildQuery({ ids: ids.join(',') })}`);
+    },
+
     create(input: {
       type: string;
       sourceId: string;
@@ -182,7 +212,7 @@ export const api = {
     },
 
     delete(id: string) {
-      return request<void>(`/relations/${id}`, { method: 'DELETE' });
+      return requestVoid(`/relations/${id}`, { method: 'DELETE' });
     },
   },
 
@@ -225,7 +255,7 @@ export const api = {
     },
 
     dismiss(relationId: string) {
-      return request<void>(`/contradictions/${relationId}`, { method: 'DELETE' });
+      return requestVoid(`/contradictions/${relationId}`, { method: 'DELETE' });
     },
   },
 

@@ -1,8 +1,7 @@
 import { Router } from 'express';
 import type { Brain } from '@second-brain/core';
 import type { SyncManager } from '@second-brain/sync';
-import type { RelationType } from '@second-brain/types';
-import { CreateRelationSchema } from '../schemas.js';
+import { CreateRelationSchema, RelationsListQuerySchema } from '../schemas.js';
 import { broadcast } from '../ws/ws-server.js';
 import { requireRelation, deleteRelationWithSync, paramString } from './helpers.js';
 import { enforceNamespace, requireScope } from '../middleware/auth.js';
@@ -19,6 +18,16 @@ export function relationRoutes(
 ): Router {
   const router = Router();
   const users = options.users ?? null;
+
+  // List the relations induced by a set of entity ids (both endpoints in set).
+  // Read-only; the id set is already authz-scoped via the entities list route,
+  // so this matches the plain `/api/entities` list route's lack of per-row
+  // namespace enforcement.
+  router.get('/api/relations', (req, res) => {
+    const query = RelationsListQuerySchema.parse(req.query);
+    const ids = query.ids.split(',').filter((id) => id.length > 0);
+    res.json(brain.relations.listAmong(ids));
+  });
 
   // Create relation
   router.post('/api/relations', requireScope('write', 'admin'), (req, res) => {
@@ -45,7 +54,7 @@ export function relationRoutes(
     if (!enforceNamespace(req, res, targetNs, users)) return;
 
     const relation = brain.relations.create({
-      type: input.type as RelationType,
+      type: input.type,
       sourceId: input.sourceId,
       targetId: input.targetId,
       namespace: input.namespace,

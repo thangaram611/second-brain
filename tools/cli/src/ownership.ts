@@ -1,14 +1,20 @@
-export interface OwnershipScore {
-  actor: string;
-  score: number;
-  signals: {
-    commits: number;
-    recencyWeightedBlameLines: number;
-    reviews: number;
-    testAuthorship: number;
-    codeownerMatch: boolean;
-  };
-}
+import { z } from 'zod';
+
+const OwnershipScoreSchema = z.object({
+  actor: z.string(),
+  score: z.number(),
+  signals: z.object({
+    commits: z.number(),
+    recencyWeightedBlameLines: z.number(),
+    reviews: z.number(),
+    testAuthorship: z.number(),
+    codeownerMatch: z.boolean(),
+  }),
+});
+
+export type OwnershipScore = z.infer<typeof OwnershipScoreSchema>;
+
+const OwnershipScoresSchema = z.array(OwnershipScoreSchema);
 
 export async function runOwnership(options: {
   path: string;
@@ -44,7 +50,7 @@ export async function runOwnership(options: {
     process.exit(1);
   }
 
-  const scores: OwnershipScore[] = (await res.json()) as OwnershipScore[];
+  const scores = OwnershipScoresSchema.parse(await res.json());
 
   if (options.json) {
     console.log(JSON.stringify(scores, null, 2));

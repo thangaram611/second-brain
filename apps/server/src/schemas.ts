@@ -38,6 +38,10 @@ export const CreateRelationSchema = z.object({
   bidirectional: z.boolean().optional(),
 });
 
+export const RelationsListQuerySchema = z.object({
+  ids: z.string().min(1), // comma-separated entity IDs
+});
+
 export const SearchQuerySchema = z.object({
   q: z.string().min(1),
   namespace: z.string().optional(),
@@ -109,7 +113,8 @@ export const SyncJoinSchema = z.object({
     message: 'Cannot sync the personal namespace',
   }),
   relayUrl: websocketUrl,
-  token: z.string().min(1),
+  // No `token` — the server mints the relay JWT itself (it holds
+  // RELAY_AUTH_SECRET), so sync clients never handle the shared secret.
 });
 
 export const SyncLeaveSchema = z.object({

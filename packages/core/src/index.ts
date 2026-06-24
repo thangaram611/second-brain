@@ -11,6 +11,13 @@ export { reciprocalRankFusion } from './search/fusion.js';
 export type { RankedResult } from './search/fusion.js';
 export { BitemporalQueries, DecayEngine, ContradictionDetector } from './temporal/index.js';
 export { rawRowToEntity, rawRowToRelation } from './temporal/index.js';
+export {
+  EntityRowSchema,
+  RelationRowSchema,
+  parseEntityRow,
+  parseRelationRow,
+  parseEntityRowSafe,
+} from './temporal/index.js';
 export { EmbeddingStore } from './embeddings/index.js';
 export type { EmbeddingMeta, KnnHit, KnnSearchOptions } from './embeddings/index.js';
 export { loadSqliteVec, createVecTable, recreateVecTable } from './storage/index.js';

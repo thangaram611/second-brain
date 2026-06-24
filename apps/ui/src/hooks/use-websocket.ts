@@ -1,41 +1,70 @@
 import { useEffect } from 'react';
 import { subscribe } from '../lib/ws.js';
 import type { WsEvent } from '../lib/ws.js';
-import { useGraphStore } from '../store/graph-store.js';
-import { useContradictionsStore } from '../store/contradictions-store.js';
-import { useSyncStore } from '../store/sync-store.js';
+import { queryClient, invalidateDerivedViews } from '../lib/query-client.js';
+import { queryKeys } from '../lib/query-keys.js';
+import { graphKey } from './use-graph.js';
+import type { GraphData } from '../lib/ws-cache.js';
+import {
+  upsertEntity,
+  deleteEntity,
+  addRelation,
+  deleteRelation,
+  removeContradiction,
+  patchSyncStatus,
+} from '../lib/ws-cache.js';
+import type { Contradiction, SyncStatus } from '../lib/types.js';
 
-type EventHandler = (event: Extract<WsEvent, { type: string }>) => void;
-
-const handlers: Record<string, EventHandler> = {
-  'entity:created': (e) => useGraphStore.getState().handleEntityCreated((e as Extract<WsEvent, { type: 'entity:created' }>).entity),
-  'entity:updated': (e) => useGraphStore.getState().handleEntityUpdated((e as Extract<WsEvent, { type: 'entity:updated' }>).entity),
-  'entity:deleted': (e) => useGraphStore.getState().handleEntityDeleted((e as Extract<WsEvent, { type: 'entity:deleted' }>).id),
-  'relation:created': (e) => useGraphStore.getState().handleRelationCreated((e as Extract<WsEvent, { type: 'relation:created' }>).relation),
-  'relation:deleted': (e) => useGraphStore.getState().handleRelationDeleted((e as Extract<WsEvent, { type: 'relation:deleted' }>).id),
-  'contradiction:resolved': (e) => useContradictionsStore.getState().handleContradictionResolved((e as Extract<WsEvent, { type: 'contradiction:resolved' }>).relationId),
-  'contradiction:dismissed': (e) => useContradictionsStore.getState().handleContradictionDismissed((e as Extract<WsEvent, { type: 'contradiction:dismissed' }>).relationId),
-  'sync:connected': (e) => {
-    const ev = e as Extract<WsEvent, { type: 'sync:connected' }>;
-    useSyncStore.getState().handleSyncConnected(ev.namespace, ev.peers);
-  },
-  'sync:disconnected': (e) => useSyncStore.getState().handleSyncDisconnected((e as Extract<WsEvent, { type: 'sync:disconnected' }>).namespace),
-  'sync:peer-joined': (e) => {
-    const ev = e as Extract<WsEvent, { type: 'sync:peer-joined' }>;
-    useSyncStore.getState().handlePeerJoined(ev.namespace, ev.peer);
-  },
-  'sync:peer-left': (e) => {
-    const ev = e as Extract<WsEvent, { type: 'sync:peer-left' }>;
-    useSyncStore.getState().handlePeerLeft(ev.namespace, ev.peerId);
-  },
-};
+/**
+ * Live-update handlers patch the relevant TanStack Query caches via
+ * setQueryData. The discriminated WsEvent union (parsed by Zod in ws.ts)
+ * makes this map exhaustively typed without `as` casts — each branch narrows
+ * `event` to its variant. Events we don't materialise into a cache (connected,
+ * sync:conflict) are intentionally no-ops here.
+ */
+function dispatch(event: WsEvent): void {
+  switch (event.type) {
+    case 'entity:created':
+    case 'entity:updated':
+      queryClient.setQueryData<GraphData>(graphKey, (prev) => upsertEntity(prev, event.entity));
+      invalidateDerivedViews();
+      return;
+    case 'entity:deleted':
+      queryClient.setQueryData<GraphData>(graphKey, (prev) => deleteEntity(prev, event.id));
+      invalidateDerivedViews();
+      return;
+    case 'relation:created':
+      queryClient.setQueryData<GraphData>(graphKey, (prev) => addRelation(prev, event.relation));
+      invalidateDerivedViews();
+      return;
+    case 'relation:deleted':
+      queryClient.setQueryData<GraphData>(graphKey, (prev) => deleteRelation(prev, event.id));
+      invalidateDerivedViews();
+      return;
+    case 'contradiction:resolved':
+    case 'contradiction:dismissed':
+      queryClient.setQueryData<Contradiction[]>(queryKeys.contradictions(), (prev) =>
+        removeContradiction(prev, event.relationId),
+      );
+      return;
+    case 'sync:connected':
+      queryClient.setQueryData<SyncStatus[]>(queryKeys.sync.status(), (prev) =>
+        patchSyncStatus(prev, event.namespace, { state: 'connected', connectedPeers: event.peers }),
+      );
+      return;
+    case 'sync:disconnected':
+      queryClient.setQueryData<SyncStatus[]>(queryKeys.sync.status(), (prev) =>
+        patchSyncStatus(prev, event.namespace, { state: 'disconnected', connectedPeers: 0 }),
+      );
+      return;
+    case 'connected':
+    case 'sync:conflict':
+      return;
+  }
+}
 
 export function useWebSocket(): void {
   useEffect(() => {
-    const unsubscribe = subscribe((event) => {
-      const handler = handlers[event.type];
-      if (handler) handler(event);
-    });
-    return unsubscribe;
+    return subscribe(dispatch);
   }, []);
 }

@@ -76,7 +76,7 @@ const BranchChangeSchema = z.object({
 /**
  * Phase 10.3 — MR event envelope. `namespace` is intentionally absent;
  * the server derives it from (provider, projectId) via
- * `observations.resolveWiredNamespace` so a malicious payload cannot
+ * `observations.mrEvents.resolveWiredNamespace` so a malicious payload cannot
  * spoof a wiring.
  */
 const MREventSchema = z.object({
@@ -286,7 +286,7 @@ export function observeRoutes(
         deliveryId: payload.deliveryId,
       });
 
-      const result = observations.handleMREvent({
+      const result = observations.mrEvents.handleMREvent({
         provider: payload.provider,
         projectId: payload.projectId,
         deliveryId: payload.deliveryId,

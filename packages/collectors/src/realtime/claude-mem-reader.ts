@@ -2,7 +2,17 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import Database from 'better-sqlite3';
+import { z } from 'zod';
 import { PostClient } from './post-client.js';
+
+/** sqlite_master / PRAGMA table_info rows expose a `name` column. */
+const NamedRowSchema = z.array(z.object({ name: z.string() }).passthrough());
+/** Foreign data rows are intentionally loose — validate only that each is an object. */
+const ForeignRowsSchema = z.array(z.record(z.string(), z.unknown()));
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 export interface ClaudeMemReaderOptions {
   /** Override claude-mem DB path. Default: ~/.claude-mem/claude-mem.db */
@@ -55,9 +65,11 @@ export async function ingestClaudeMemOnce(
       tool: 'claude-mem',
     });
 
-    const tables = db
-      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`)
-      .all() as { name: string }[];
+    const tables = NamedRowSchema.parse(
+      db
+        .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`)
+        .all(),
+    );
 
     const seen: string[] = [];
     let imported = 0;
@@ -65,11 +77,11 @@ export async function ingestClaudeMemOnce(
     for (const { name: table } of tables) {
       let columns: string[];
       try {
-        columns = (db
-          .prepare(`PRAGMA table_info(${table})`)
-          .all() as { name: string }[]).map((c) => c.name);
+        columns = NamedRowSchema.parse(
+          db.prepare(`PRAGMA table_info(${table})`).all(),
+        ).map((c) => c.name);
       } catch (err) {
-        onWarn(`skip ${table}: ${(err as Error).message}`);
+        onWarn(`skip ${table}: ${errorMessage(err)}`);
         continue;
       }
       const contentCol = CONTENT_COLUMNS.find((c) => columns.includes(c));
@@ -78,11 +90,11 @@ export async function ingestClaudeMemOnce(
 
       let rows: Array<Record<string, unknown>>;
       try {
-        rows = db.prepare(`SELECT rowid as __rid, * FROM ${table} LIMIT ${perTable}`).all() as Array<
-          Record<string, unknown>
-        >;
+        rows = ForeignRowsSchema.parse(
+          db.prepare(`SELECT rowid as __rid, * FROM ${table} LIMIT ${perTable}`).all(),
+        );
       } catch (err) {
-        onWarn(`skip ${table}: ${(err as Error).message}`);
+        onWarn(`skip ${table}: ${errorMessage(err)}`);
         continue;
       }
 
@@ -105,7 +117,7 @@ export async function ingestClaudeMemOnce(
           });
           imported++;
         } catch (err) {
-          onWarn(`post failed for ${table} rid=${rid}: ${(err as Error).message}`);
+          onWarn(`post failed for ${table} rid=${rid}: ${errorMessage(err)}`);
         }
       }
     }

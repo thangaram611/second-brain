@@ -1,8 +1,5 @@
-import { timingSafeEqual } from 'node:crypto';
 import {
-  canonicalizeEmail,
   gitlabNoreplyEmail,
-  type Author,
   type BranchStatusPatch,
 } from '@second-brain/types';
 import {
@@ -20,6 +17,8 @@ import {
   type WebhookSecret,
   type TouchesFilePath,
 } from './git-provider.js';
+import { BaseGitProvider } from './base-git-provider.js';
+import { pickHeader, verifyToken, httpError, HttpError } from './webhook-crypto.js';
 import {
   GitLabWebhookEventSchema,
   GitLabMREventSchema,
@@ -48,24 +47,18 @@ export interface GitLabProviderOptions {
   now?: () => number;
 }
 
-interface CachedUser { email: string; at: number }
-
-export class GitLabProvider implements GitProvider {
+export class GitLabProvider extends BaseGitProvider implements GitProvider {
   readonly name = 'gitlab' as const;
 
   private baseUrl: string;
   private pat: string | undefined;
   private readonly fetchImpl: typeof fetch;
-  private readonly userCache = new Map<string, CachedUser>();
-  private readonly userCacheTtlMs: number;
-  private readonly now: () => number;
 
   constructor(opts: GitLabProviderOptions = {}) {
+    super({ userCacheTtlMs: opts.userCacheTtlMs, now: opts.now });
     this.baseUrl = normalizeBaseUrl(opts.baseUrl ?? 'https://gitlab.com/api/v4');
     this.pat = opts.pat ?? process.env.GITLAB_TOKEN;
     this.fetchImpl = opts.fetchImpl ?? fetch;
-    this.userCacheTtlMs = opts.userCacheTtlMs ?? 60 * 60 * 1000;
-    this.now = opts.now ?? Date.now;
   }
 
   // ─── Auth ────────────────────────────────────────────────────────────────
@@ -122,7 +115,7 @@ export class GitLabProvider implements GitProvider {
     const res = await this.req(url, { method: 'DELETE' });
     // 404 is idempotent success (already gone) — let callers treat it that way.
     if (res.status === 404) return;
-    if (!res.ok) throw this.httpError(res, `unregisterWebhook ${url}`);
+    if (!res.ok) throw httpError(res, `unregisterWebhook ${url}`, 'GitLab');
   }
 
   // ─── pollEvents (ETag-cached) ────────────────────────────────────────────
@@ -145,7 +138,7 @@ export class GitLabProvider implements GitProvider {
     if (input.etag) headers['if-none-match'] = input.etag;
     const res = await this.fetchImpl(this.buildUrl(url), { headers });
     if (res.status === 304) return { events: [], nextEtag: input.etag, cursor: input.since };
-    if (!res.ok) throw this.httpError(res, url);
+    if (!res.ok) throw httpError(res, url, 'GitLab');
     const nextEtag = res.headers.get('etag') ?? undefined;
     const rawList: unknown = await res.json();
     if (!Array.isArray(rawList)) throw new Error('GitLab MR list did not return an array');
@@ -155,8 +148,8 @@ export class GitLabProvider implements GitProvider {
     for (const raw of rawList) {
       // Synthesize a webhook-shaped envelope for each MR so mapEvent can
       // drive backfill through the exact same dispatch as live events.
-      if (typeof raw !== 'object' || raw === null) continue;
-      const obj = raw as Record<string, unknown>;
+      if (!isRecord(raw)) continue;
+      const obj = raw;
       const updatedAt = typeof obj.updated_at === 'string' ? obj.updated_at : input.since;
       if (updatedAt > cursor) cursor = updatedAt;
       const iid = typeof obj.iid === 'number' ? obj.iid : null;
@@ -325,24 +318,7 @@ export class GitLabProvider implements GitProvider {
 
   // ─── Author / user cache ─────────────────────────────────────────────────
 
-  private async resolveAuthor(username: string): Promise<Author> {
-    const cached = this.userCache.get(username);
-    const age = cached ? this.now() - cached.at : Infinity;
-    let email: string;
-    if (cached && age < this.userCacheTtlMs) {
-      email = cached.email;
-    } else {
-      email = await this.fetchUserEmail(username);
-      this.userCache.set(username, { email, at: this.now() });
-    }
-    return {
-      canonicalEmail: canonicalizeEmail(email),
-      displayName: username,
-      aliases: [],
-    };
-  }
-
-  private async fetchUserEmail(username: string): Promise<string> {
+  protected async fetchUserEmail(username: string): Promise<string> {
     try {
       if (!this.pat) return gitlabNoreplyEmail(username);
       const url = `/users?username=${encodeURIComponent(username)}`;
@@ -371,14 +347,7 @@ export class GitLabProvider implements GitProvider {
     if (typeof headerValue !== 'string' || headerValue.length === 0) {
       return { ok: false, reason: 'missing-header' };
     }
-    const expected = input.expectedSecret.value;
-    // Length check first: `timingSafeEqual` throws on unequal length.
-    // Leaking length is acceptable here — expected length is a public
-    // constant (32-byte hex = 64 chars) so no secret is revealed.
-    if (headerValue.length !== expected.length) return { ok: false, reason: 'mismatch' };
-    const a = Buffer.from(headerValue);
-    const b = Buffer.from(expected);
-    return timingSafeEqual(a, b) ? { ok: true } : { ok: false, reason: 'mismatch' };
+    return verifyToken(headerValue, input.expectedSecret.value);
   }
 
   // ─── HTTP plumbing ───────────────────────────────────────────────────────
@@ -398,7 +367,7 @@ export class GitLabProvider implements GitProvider {
 
   private async fetchJson<T extends z.ZodTypeAny>(path: string, schema: T): Promise<z.infer<T>> {
     const res = await this.req(path, { method: 'GET' });
-    if (!res.ok) throw this.httpError(res, path);
+    if (!res.ok) throw httpError(res, path, 'GitLab');
     const json: unknown = await res.json();
     return schema.parse(json);
   }
@@ -410,12 +379,6 @@ export class GitLabProvider implements GitProvider {
   private authHeaders(): Record<string, string> {
     return this.pat ? { 'PRIVATE-TOKEN': this.pat } : {};
   }
-
-  private httpError(res: Response, ctx: string): Error {
-    const err = new Error(`GitLab API ${res.status} ${res.statusText} for ${ctx}`);
-    (err as Error & { status: number }).status = res.status;
-    return err;
-  }
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -425,17 +388,8 @@ function normalizeBaseUrl(url: string): string {
   return trimmed.endsWith('/api/v4') ? trimmed : `${trimmed}/api/v4`;
 }
 
-function pickHeader(
-  headers: Record<string, string | string[] | undefined>,
-  name: string,
-): string | undefined {
-  const needle = name.toLowerCase();
-  for (const [k, v] of Object.entries(headers)) {
-    if (k.toLowerCase() !== needle) continue;
-    if (Array.isArray(v)) return v[0];
-    if (typeof v === 'string') return v;
-  }
-  return undefined;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 const TokenSelfSchema = z
@@ -462,9 +416,7 @@ export async function resolveGitLabProject(opts: {
     { headers: { 'PRIVATE-TOKEN': opts.pat, accept: 'application/json' } },
   );
   if (!res.ok) {
-    const err = new Error(`GitLab project lookup ${res.status}: ${opts.path}`);
-    (err as Error & { status: number }).status = res.status;
-    throw err;
+    throw new HttpError(`GitLab project lookup ${res.status}: ${opts.path}`, res.status);
   }
   const parsed = GitLabProjectRestSchema.parse(await res.json());
   return {

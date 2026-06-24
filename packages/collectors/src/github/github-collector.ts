@@ -265,7 +265,7 @@ function isRequestError(err: unknown): err is { status: number; message: string 
   return (
     err instanceof Error &&
     'status' in err &&
-    typeof (err as Record<string, unknown>).status === 'number'
+    typeof err.status === 'number'
   );
 }
 

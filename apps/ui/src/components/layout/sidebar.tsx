@@ -13,7 +13,9 @@ import {
   Users,
   Radio,
 } from 'lucide-react';
-import { useSyncStore } from '../../store/sync-store.js';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../../lib/api.js';
+import { queryKeys } from '../../lib/query-keys.js';
 import { ImportDialog } from '../import-dialog.js';
 
 const mainNavItems = [
@@ -38,7 +40,13 @@ const bottomNavItems = [
 ];
 
 export function Sidebar() {
-  const totalPeers = useSyncStore(s => s.statuses.reduce((sum, st) => sum + st.connectedPeers, 0));
+  // Sidebar mounts on every authed route, so this becomes the canonical
+  // fetcher for sync status; other pages reuse the cached value.
+  const { data: statuses } = useQuery({
+    queryKey: queryKeys.sync.status(),
+    queryFn: () => api.sync.status(),
+  });
+  const totalPeers = (statuses ?? []).reduce((sum, st) => sum + st.connectedPeers, 0);
   const [importOpen, setImportOpen] = useState(false);
 
   return (

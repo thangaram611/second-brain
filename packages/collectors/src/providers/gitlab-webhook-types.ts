@@ -11,7 +11,7 @@ import { z } from 'zod';
 
 // ─── Shared sub-schemas ────────────────────────────────────────────────────
 
-export const GitLabWebhookUserSchema = z
+const GitLabWebhookUserSchema = z
   .object({
     id: z.number().int().optional(),
     username: z.string(),
@@ -20,7 +20,7 @@ export const GitLabWebhookUserSchema = z
   })
   .passthrough();
 
-export const GitLabWebhookProjectSchema = z
+const GitLabWebhookProjectSchema = z
   .object({
     id: z.number().int(),
     path_with_namespace: z.string(),
@@ -42,7 +42,7 @@ const WebhookLabelSchema = z
 export const MR_ACTIONS = ['open', 'reopen', 'update', 'approved', 'unapproved', 'merge', 'close'] as const;
 export type MrAction = (typeof MR_ACTIONS)[number];
 
-export const GitLabMRObjectAttrsSchema = z
+const GitLabMRObjectAttrsSchema = z
   .object({
     id: z.number().int(),
     iid: z.number().int(),
@@ -82,7 +82,7 @@ export type GitLabMREvent = z.infer<typeof GitLabMREventSchema>;
 
 // ─── note events (MR comments) ────────────────────────────────────────────
 
-export const GitLabNoteObjectAttrsSchema = z
+const GitLabNoteObjectAttrsSchema = z
   .object({
     id: z.number().int(),
     note: z.string(),
@@ -96,7 +96,7 @@ export const GitLabNoteObjectAttrsSchema = z
 
 /** The nested `merge_request` object inside a note event — a condensed
     shape. We validate only the fields we read back. */
-export const GitLabNoteMergeRequestSchema = z
+const GitLabNoteMergeRequestSchema = z
   .object({
     iid: z.number().int(),
     title: z.string().optional(),
@@ -123,7 +123,7 @@ export type GitLabMRNoteEvent = z.infer<typeof GitLabMRNoteEventSchema>;
 
 // ─── pipeline events ──────────────────────────────────────────────────────
 
-export const GitLabPipelineObjectAttrsSchema = z
+const GitLabPipelineObjectAttrsSchema = z
   .object({
     id: z.number().int(),
     status: z.string(),
@@ -132,7 +132,7 @@ export const GitLabPipelineObjectAttrsSchema = z
   })
   .passthrough();
 
-export const GitLabPipelineMRSchema = z
+const GitLabPipelineMRSchema = z
   .object({
     iid: z.number().int(),
     url: z.string().optional(),
@@ -174,8 +174,6 @@ export const GitLabWebhookEventSchema = z
   })
   .passthrough();
 
-export type GitLabWebhookEnvelope = z.infer<typeof GitLabWebhookEventSchema>;
-
 // ─── REST-side schemas consumed by backfill + user-email cache ───────────
 
 export const GitLabUserRestSchema = z
@@ -215,7 +213,7 @@ export const GitLabHookRestSchema = z
 
 export type GitLabHookRest = z.infer<typeof GitLabHookRestSchema>;
 
-export const GitLabMRChangeFileSchema = z
+const GitLabMRChangeFileSchema = z
   .object({
     new_path: z.string(),
     old_path: z.string().optional(),

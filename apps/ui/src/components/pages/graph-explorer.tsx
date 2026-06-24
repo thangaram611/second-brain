@@ -1,7 +1,7 @@
-import { useEffect, useCallback, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useParams } from 'react-router';
 import { Plus } from 'lucide-react';
-import { useGraphStore } from '../../store/graph-store.js';
+import { useGraph } from '../../hooks/use-graph.js';
 import { GraphCanvas } from '../graph/graph-canvas.js';
 import { GraphControls } from '../graph/graph-controls.js';
 import { EntityDetail } from '../entity/entity-detail.js';
@@ -9,47 +9,27 @@ import { CreateEntityDialog } from '../entity/create-entity-dialog.js';
 import { Button } from '../ui/button.js';
 import { LoadingState } from '../ui/loading.js';
 import { EmptyState } from '../ui/empty-state.js';
+import { ErrorState } from '../ui/error-state.js';
 
 export type LayoutName = 'cose' | 'grid' | 'circle' | 'breadthfirst';
 
 export function GraphExplorer() {
   const { id } = useParams<{ id: string }>();
-  const {
-    entities,
-    relations,
-    selectedEntityId,
-    loading,
-    selectEntity,
-    fetchNeighbors,
-    loadRecent,
-  } = useGraphStore();
+  const { entities: entityArray, relations, loading, error, expand, refetch } = useGraph(id);
+  const [selectedEntityId, setSelectedEntityId] = useState<string | null>(id ?? null);
   const [layout, setLayout] = useState<LayoutName>('cose');
   const [showCreate, setShowCreate] = useState(false);
 
-  useEffect(() => {
-    if (id) {
-      selectEntity(id);
-      fetchNeighbors(id, 2);
-    } else {
-      loadRecent(50);
-    }
-  }, [id, selectEntity, fetchNeighbors, loadRecent]);
-
-  const handleNodeSelect = useCallback(
-    (entityId: string) => {
-      selectEntity(entityId);
-    },
-    [selectEntity],
-  );
+  const handleNodeSelect = useCallback((entityId: string) => {
+    setSelectedEntityId(entityId);
+  }, []);
 
   const handleNodeExpand = useCallback(
     (entityId: string) => {
-      fetchNeighbors(entityId, 1);
+      expand(entityId);
     },
-    [fetchNeighbors],
+    [expand],
   );
-
-  const entityArray = Array.from(entities.values());
 
   if (loading && entityArray.length === 0) {
     return <LoadingState message="Loading graph..." />;
@@ -66,7 +46,9 @@ export function GraphExplorer() {
         </Button>
       </div>
 
-      {entityArray.length === 0 ? (
+      {error && entityArray.length === 0 ? (
+        <ErrorState message={error} onRetry={refetch} />
+      ) : entityArray.length === 0 ? (
         <EmptyState
           title="No entities in graph"
           description="Create some entities to visualize them here"

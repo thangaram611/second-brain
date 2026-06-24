@@ -13,9 +13,9 @@ import { z } from 'zod';
  * token returned alongside is added to the X-CSRF-Token header on writes.
  */
 
-export type AuthMode = 'open' | 'pat' | 'unknown';
+type AuthMode = 'open' | 'pat' | 'unknown';
 
-export interface AuthUser {
+interface AuthUser {
   id: string;
   email: string;
   namespace: string;
@@ -43,9 +43,6 @@ const LoginResponseSchema = z.object({
 const ErrorResponseSchema = z.object({
   error: z.string(),
 });
-
-export type WhoamiResponse = z.infer<typeof WhoamiSchema>;
-export type LoginResponse = z.infer<typeof LoginResponseSchema>;
 
 interface AuthState {
   csrfToken: string | null;

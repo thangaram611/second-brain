@@ -18,7 +18,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
 /** Path the manifest lives at, relative to the repo root. */
-export const TEAM_MANIFEST_REL_PATH = path.join('.second-brain', 'team.json');
+const TEAM_MANIFEST_REL_PATH = path.join('.second-brain', 'team.json');
 
 const HttpUrl = z.url({ protocol: /^https?$/ });
 const WebSocketUrl = z.url({ protocol: /^wss?$/ });
@@ -158,7 +158,7 @@ export function hashTeamManifest(manifest: TeamManifest): string {
   return createHash('sha256').update(json).digest('hex');
 }
 
-export interface CompiledDenyPattern {
+interface CompiledDenyPattern {
   source: string;
   regex: RegExp;
 }

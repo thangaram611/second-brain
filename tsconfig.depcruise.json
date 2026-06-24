@@ -1,0 +1,17 @@
+{
+  "//": "Resolution-only tsconfig used solely by dependency-cruiser (see .dependency-cruiser.cjs). It maps every @second-brain/* import to TypeScript SOURCE so architecture-boundary rules evaluate the real cross-package graph instead of the built dist/*.mjs the package exports point at. Not part of any build or type-check.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@second-brain/types": ["packages/types/src/index.ts"],
+      "@second-brain/core": ["packages/core/src/index.ts"],
+      "@second-brain/collectors": ["packages/collectors/src/index.ts"],
+      "@second-brain/ingestion": ["packages/ingestion/src/index.ts"],
+      "@second-brain/sync": ["packages/sync/src/index.ts"],
+      "@second-brain/mcp-server": ["packages/mcp-server/src/index.ts"],
+      "@second-brain/server": ["apps/server/src/index.ts"],
+      "@second-brain/server/*": ["apps/server/src/*"]
+    }
+  }
+}

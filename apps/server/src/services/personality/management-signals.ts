@@ -18,7 +18,7 @@ export class ManagementSignalsStream implements PersonalityStream {
          WHERE source_actor = ?
            AND type IN ('reviewed_by', 'authored_by')`,
       )
-      .all(actor) as Record<string, unknown>[];
+      .all(actor);
 
     if (rows.length === 0) {
       logger.info(`[management-signals] no review/author relations for actor=${actor}`);
@@ -117,5 +117,3 @@ function upsertPersonalityFact(
   });
   return 'created';
 }
-
-export default ManagementSignalsStream;

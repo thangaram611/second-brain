@@ -65,11 +65,14 @@ describe('Query routes', () => {
         .expect(400);
     });
 
-    it('returns 400 when namespace is missing (open mode)', async () => {
-      await request(app)
+    it('defaults to the personal namespace when namespace is omitted (open mode)', async () => {
+      // Open mode has no multi-tenancy, so an omitted namespace falls back to
+      // `personal` (consistent with the rest of the API) rather than erroring.
+      const res = await request(app)
         .get('/api/query/ownership')
         .query({ path: 'foo.ts' })
-        .expect(400);
+        .expect(200);
+      expect(Array.isArray(res.body)).toBe(true);
     });
 
     it('rejects unauthenticated request when bearer token is set', async () => {

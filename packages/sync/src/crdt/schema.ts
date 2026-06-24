@@ -37,7 +37,6 @@ export function createBrainDoc(): Y.Doc {
   doc.getMap('entities');
   doc.getMap('relations');
   const meta = doc.getMap('meta');
-  meta.set('version', 1);
   meta.set('lastModified', new Date().toISOString());
   return doc;
 }
@@ -208,17 +207,6 @@ export function yMapToRelation(yMap: Y.Map<unknown>): Relation {
 
 // ---- Observation helpers (set pattern) ----
 
-export function setObservations(entityYMap: Y.Map<unknown>, observations: string[]): void {
-  const obsMap = getOrCreateNestedMap(entityYMap, 'observations');
-  // Clear existing keys
-  for (const key of Array.from(obsMap.keys())) {
-    obsMap.delete(key);
-  }
-  for (const obs of observations) {
-    obsMap.set(obs, true);
-  }
-}
-
 export function getObservations(entityYMap: Y.Map<unknown>): string[] {
   const obsMap = entityYMap.get('observations');
   if (!(obsMap instanceof Y.Map)) return [];
@@ -227,17 +215,6 @@ export function getObservations(entityYMap: Y.Map<unknown>): string[] {
 
 // ---- Tag helpers (set pattern) ----
 
-export function setTags(entityYMap: Y.Map<unknown>, tags: string[]): void {
-  const tagsMap = getOrCreateNestedMap(entityYMap, 'tags');
-  // Clear existing keys
-  for (const key of Array.from(tagsMap.keys())) {
-    tagsMap.delete(key);
-  }
-  for (const tag of tags) {
-    tagsMap.set(tag, true);
-  }
-}
-
 export function getTags(entityYMap: Y.Map<unknown>): string[] {
   const tagsMap = entityYMap.get('tags');
   if (!(tagsMap instanceof Y.Map)) return [];
@@ -245,16 +222,6 @@ export function getTags(entityYMap: Y.Map<unknown>): string[] {
 }
 
 // ---- Private helpers ----
-
-function getOrCreateNestedMap(parent: Y.Map<unknown>, key: string): Y.Map<unknown> {
-  const existing = parent.get(key);
-  if (existing instanceof Y.Map) {
-    return existing;
-  }
-  const created = new Y.Map<unknown>();
-  parent.set(key, created);
-  return created;
-}
 
 function getPropertiesRecord(yMap: Y.Map<unknown>): Record<string, unknown> {
   const propsMap = yMap.get('properties');

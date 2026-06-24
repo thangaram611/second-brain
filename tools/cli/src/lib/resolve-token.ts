@@ -17,6 +17,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { z } from 'zod';
 import { readSecret } from '../keychain.js';
+import { getServerUrl, hostFromUrl } from './server-url.js';
 
 export interface ResolveTokenOptions {
   /** Override host (defaults to URL parsed from env or 'localhost'). */
@@ -75,17 +76,8 @@ export function patAccount(host: string, tokenId: string): string {
 
 function resolveHost(explicit: string | undefined): string {
   if (explicit && explicit.length > 0) return explicit;
-  // Try server URL envs in priority order.
-  const candidate =
-    process.env.BRAIN_API_URL ??
-    process.env.BRAIN_SERVER_URL ??
-    process.env.SECOND_BRAIN_SERVER_URL ??
-    'http://localhost:7430';
-  try {
-    return new URL(candidate).host;
-  } catch {
-    return 'localhost';
-  }
+  // Server-URL env chain + localhost default are owned by `getServerUrl()`.
+  return hostFromUrl(getServerUrl(), 'localhost');
 }
 
 /** Read the credentials pointer file (non-secret). Returns null when absent or invalid. */

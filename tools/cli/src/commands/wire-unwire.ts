@@ -4,7 +4,7 @@ export function registerWireUnwireCommands(program: Command): void {
   // --- brain wire ---
   program
     .command('wire')
-    .description('One-shot wire-up: git hooks + claude hooks + wiredRepos entry (+ optional forge provider)')
+    .description('One-shot wire-up: git hooks + claude hooks + wiredRepos entry')
     .option('--repo <path>', 'Repo root (defaults to `git rev-parse --show-toplevel`)')
     .option('-n, --namespace <ns>', 'Namespace (overrides project config)')
     .option('--server-url <url>', 'Server URL')
@@ -12,14 +12,6 @@ export function registerWireUnwireCommands(program: Command): void {
     .option('--require-project', 'Fail if no project namespace is set (for CI/team setups)')
     .option('--no-claude', 'Skip Claude Code session hook install')
     .option('--skip-if-claude-mem', 'Abort if claude-mem hooks are present')
-    .option('--provider <name>', 'Forge provider to wire (gitlab|github)')
-    .option('--gitlab-url <url>', 'GitLab base URL (auto-detected from origin when omitted)')
-    .option('--gitlab-token <pat>', 'GitLab PAT (falls back to SECOND_BRAIN_GITLAB_TOKEN env)')
-    .option('--gitlab-project-path <path>', 'group/subgroup/project (auto-detected when omitted)')
-    .option('--github-token <pat>', 'GitHub PAT (falls back to SECOND_BRAIN_GITHUB_TOKEN or GITHUB_TOKEN env)')
-    .option('--github-base-url <url>', 'GitHub API base URL (auto-detected for enterprise remotes when omitted)')
-    .option('--github-owner <owner>', 'GitHub owner/org (auto-detected from origin when omitted)')
-    .option('--github-repo <repo>', 'GitHub repo name (auto-detected from origin when omitted)')
     .action(async (options: {
       repo?: string;
       namespace?: string;
@@ -28,24 +20,9 @@ export function registerWireUnwireCommands(program: Command): void {
       requireProject?: boolean;
       claude?: boolean;
       skipIfClaudeMem?: boolean;
-      provider?: string;
-      gitlabUrl?: string;
-      gitlabToken?: string;
-      gitlabProjectPath?: string;
-      githubToken?: string;
-      githubBaseUrl?: string;
-      githubOwner?: string;
-      githubRepo?: string;
     }) => {
       const { runWire } = await import('../wire.js');
       try {
-        let provider: 'gitlab' | 'github' | undefined;
-        if (options.provider !== undefined) {
-          if (options.provider !== 'gitlab' && options.provider !== 'github') {
-            throw new Error(`--provider must be gitlab or github (got ${JSON.stringify(options.provider)})`);
-          }
-          provider = options.provider;
-        }
         const result = await runWire({
           repo: options.repo,
           namespace: options.namespace,
@@ -54,14 +31,6 @@ export function registerWireUnwireCommands(program: Command): void {
           requireProject: options.requireProject,
           installAssistants: options.claude === false ? [] : undefined,
           skipIfClaudeMem: options.skipIfClaudeMem,
-          provider,
-          gitlabBaseUrl: options.gitlabUrl,
-          gitlabToken: options.gitlabToken,
-          gitlabProjectPath: options.gitlabProjectPath,
-          githubToken: options.githubToken,
-          githubBaseUrl: options.githubBaseUrl,
-          githubOwner: options.githubOwner,
-          githubRepo: options.githubRepo,
         });
         console.log(`Wired: ${result.repoRoot}`);
         console.log(`  namespace: ${result.namespace}`);
@@ -76,14 +45,6 @@ export function registerWireUnwireCommands(program: Command): void {
           console.log(
             `  claude hooks: ${result.claudeHooks.addedHooks.length ? result.claudeHooks.addedHooks.join(', ') : '(already present)'}`,
           );
-        }
-        if (result.providerResult) {
-          const p = result.providerResult;
-          console.log(
-            `  provider:  ${p.provider} projectId=${p.projectId} hook=${p.webhookId}${p.webhookAlreadyExisted ? ' (reused)' : ''}`,
-          );
-          console.log(`  relay:     ${p.relayUrl}`);
-          console.log(`  server env: export ${p.serverSecretEnv.name}=${p.serverSecretEnv.value}`);
         }
         console.log(`  config:    ${result.configPath}`);
         for (const w of result.warnings) {

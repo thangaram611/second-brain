@@ -28,10 +28,46 @@ export class EmbeddingGenerator {
     this.model = resolveEmbeddingModel(config);
   }
 
-  /** Generate a single embedding (used for query-time vector lookup). */
+  /**
+   * qwen3-embedding is trained asymmetrically: search QUERIES get an instruction
+   * prefix, indexed DOCUMENTS do not. Without it, qwen3 query/document cosine
+   * sims cluster tightly (~0.016 here) — ranking is right but separation is poor.
+   * Other models embed the query verbatim.
+   */
+  private static readonly QWEN3_QUERY_INSTRUCTION =
+    'Instruct: Given a search query, retrieve relevant passages that answer the query\nQuery: ';
+
+  /** Generate a single embedding for indexed content (no query instruction). */
   async generateOne(text: string): Promise<Float32Array> {
     const { embedding } = await embed({ model: this.model, value: text });
     return Float32Array.from(embedding);
+  }
+
+  /**
+   * Generate a single QUERY embedding for vector-search lookup, applying any
+   * model-specific query instruction prefix. Documents must continue to use
+   * {@link generateOne}/{@link generateBatch} so the query/document asymmetry
+   * the model was trained on is preserved.
+   */
+  async generateQuery(text: string): Promise<Float32Array> {
+    return this.generateOne(this.applyQueryInstruction(text));
+  }
+
+  private applyQueryInstruction(text: string): string {
+    if (this.modelName.toLowerCase().includes('qwen3')) {
+      return `${EmbeddingGenerator.QWEN3_QUERY_INSTRUCTION}${text}`;
+    }
+    return text;
+  }
+
+  /**
+   * Probe the model's native embedding dimension by embedding a tiny sentinel
+   * string and measuring the result. Lets callers size the vec table to the
+   * model instead of hardcoding a default that only fits one model family.
+   */
+  async probeDimensions(): Promise<number> {
+    const v = await this.generateOne('dimension probe');
+    return v.length;
   }
 
   /**

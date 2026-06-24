@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
+import express from 'express';
 import { Brain } from '@second-brain/core';
 import { SyncManager } from '@second-brain/sync';
 import { createApp } from '../app.js';
+import { syncRoutes } from '../routes/sync.js';
 import type { Express } from 'express';
 
 let brain: Brain;
@@ -44,7 +46,6 @@ describe('Sync routes', () => {
         .send({
           namespace: 'personal',
           relayUrl: 'ws://localhost:7421',
-          token: 'some-token',
         })
         .expect(400);
 
@@ -66,7 +67,6 @@ describe('Sync routes', () => {
         .send({
           namespace: 'project-x',
           relayUrl: 'not-a-url',
-          token: 'some-token',
         })
         .expect(400);
 
@@ -79,11 +79,47 @@ describe('Sync routes', () => {
         .send({
           namespace: 'project-x',
           relayUrl: 'https://localhost:7421',
-          token: 'some-token',
         })
         .expect(400);
 
       expect(res.body).toBeDefined();
+    });
+
+    // The server mints the relay JWT itself — clients no longer send a token.
+    it('mints a token server-side and joins when a relay secret is configured', async () => {
+      const bareApp = express();
+      bareApp.use(express.json());
+      bareApp.use(syncRoutes(syncManager, { relayAuthSecret: 'test-relay-secret' }));
+
+      const res = await request(bareApp)
+        .post('/api/sync/join')
+        .send({ namespace: 'project-x', relayUrl: 'ws://localhost:7421' })
+        .expect(200);
+
+      // join() returns synchronously with a 'connecting' status; the background
+      // provider connection to the (absent) relay is torn down in afterEach.
+      expect(res.body.namespace).toBe('project-x');
+      expect(res.body.state).toBe('connecting');
+    });
+
+    it('returns 503 when no relay secret is configured', async () => {
+      const saved = process.env.RELAY_AUTH_SECRET;
+      delete process.env.RELAY_AUTH_SECRET;
+      try {
+        const bareApp = express();
+        bareApp.use(express.json());
+        bareApp.use(syncRoutes(syncManager, {}));
+
+        const res = await request(bareApp)
+          .post('/api/sync/join')
+          .send({ namespace: 'project-x', relayUrl: 'ws://localhost:7421' })
+          .expect(503);
+
+        expect(res.body.error).toMatch(/RELAY_AUTH_SECRET/);
+      } finally {
+        if (saved === undefined) delete process.env.RELAY_AUTH_SECRET;
+        else process.env.RELAY_AUTH_SECRET = saved;
+      }
     });
   });
 

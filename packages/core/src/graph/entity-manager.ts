@@ -1,13 +1,29 @@
-import { eq, and, like, sql } from 'drizzle-orm';
-import { ulid } from 'ulidx';
-import type { Entity, CreateEntityInput, UpdateEntityInput, EntityType } from '@second-brain/types';
+import { eq, and, like, sql, desc } from 'drizzle-orm';
+import { newId } from './id.js';
+import type {
+  Entity,
+  CreateEntityInput,
+  UpsertEntityInput,
+  UpdateEntityInput,
+  EntityType,
+} from '@second-brain/types';
+import { isEntityType, isSourceType } from '@second-brain/types';
 import { entities } from '../schema/index.js';
 import type { DrizzleDB } from '../storage/index.js';
 
 function rowToEntity(row: typeof entities.$inferSelect): Entity {
+  // The drizzle `text` columns are typed as plain `string`; validate the
+  // enum-constrained columns with the authoritative type guards. A row we
+  // wrote with an out-of-enum type/source is a real bug worth surfacing.
+  if (!isEntityType(row.type)) {
+    throw new Error(`rowToEntity: invalid entity type "${row.type}" for id ${row.id}`);
+  }
+  if (!isSourceType(row.sourceType)) {
+    throw new Error(`rowToEntity: invalid source type "${row.sourceType}" for id ${row.id}`);
+  }
   return {
     id: row.id,
-    type: row.type as EntityType,
+    type: row.type,
     name: row.name,
     namespace: row.namespace,
     observations: row.observations ?? [],
@@ -18,7 +34,7 @@ function rowToEntity(row: typeof entities.$inferSelect): Entity {
     lastAccessedAt: row.lastAccessedAt ?? row.createdAt,
     accessCount: row.accessCount,
     source: {
-      type: row.sourceType as Entity['source']['type'],
+      type: row.sourceType,
       ref: row.sourceRef ?? undefined,
       actor: row.sourceActor ?? undefined,
     },
@@ -31,11 +47,9 @@ function rowToEntity(row: typeof entities.$inferSelect): Entity {
 export class EntityManager {
   constructor(private db: DrizzleDB) {}
 
-  create(input: CreateEntityInput): Entity {
+  private buildRow(id: string, input: CreateEntityInput): typeof entities.$inferSelect {
     const now = new Date().toISOString();
-    const id = ulid();
-
-    const row = {
+    return {
       id,
       type: input.type,
       name: input.name,
@@ -54,7 +68,10 @@ export class EntityManager {
       createdAt: now,
       updatedAt: now,
     };
+  }
 
+  create(input: CreateEntityInput): Entity {
+    const row = this.buildRow(newId(), input);
     this.db.insert(entities).values(row).run();
     return rowToEntity(row);
   }
@@ -139,6 +156,39 @@ export class EntityManager {
     });
   }
 
+  /**
+   * Upsert keyed strictly on `input.id` (the authoritative CRDT id), NOT on
+   * name+namespace+type like {@link batchUpsert}. A remote rename or any
+   * remote-created row must keep the local row's id equal to the Y.Doc id so
+   * subsequent remote deletes (which key on that id) actually hit the row.
+   * On hit, merges observations/tags/properties like batchUpsert; on miss,
+   * inserts a row keyed to `input.id` directly (no fresh ULID).
+   */
+  upsertById(input: UpsertEntityInput): Entity {
+    const existing = this.db.select().from(entities).where(eq(entities.id, input.id)).get();
+
+    if (existing) {
+      const mergedObs = Array.from(
+        new Set([...(existing.observations ?? []), ...(input.observations ?? [])]),
+      );
+      const mergedTags = Array.from(
+        new Set([...(existing.tags ?? []), ...(input.tags ?? [])]),
+      );
+      return this.update(existing.id, {
+        name: input.name,
+        namespace: input.namespace ?? existing.namespace,
+        observations: mergedObs,
+        tags: mergedTags,
+        properties: { ...(existing.properties ?? {}), ...(input.properties ?? {}) },
+        confidence: input.confidence,
+      })!;
+    }
+
+    const row = this.buildRow(input.id, input);
+    this.db.insert(entities).values(row).run();
+    return rowToEntity(row);
+  }
+
   findByName(name: string, namespace?: string): Entity[] {
     const conditions = [like(entities.name, `%${name}%`)];
     if (namespace) conditions.push(eq(entities.namespace, namespace));
@@ -160,6 +210,7 @@ export class EntityManager {
       .select()
       .from(entities)
       .where(and(...conditions))
+      .orderBy(desc(entities.updatedAt), desc(entities.id))
       .all();
 
     return rows.map(rowToEntity);
@@ -218,7 +269,11 @@ export class EntityManager {
       query = query.where(eq(entities.namespace, options.namespace));
     }
 
+    // Newest first. `id` (a time-ordered ULID, unique) is the tiebreaker so
+    // pagination stays stable even when many rows share an `updatedAt`
+    // (e.g. a bulk AST import) — without it, LIMIT/OFFSET could skip or repeat.
     const rows = query
+      .orderBy(desc(entities.updatedAt), desc(entities.id))
       .limit(options?.limit ?? 100)
       .offset(options?.offset ?? 0)
       .all();

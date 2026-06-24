@@ -1,0 +1,35 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": { "ignoreDependencies": ["tsdown"] },
+    "packages/types": { "entry": ["src/index.ts"], "project": ["src/**/*.ts"] },
+    "packages/core": { "entry": ["src/index.ts"], "project": ["src/**/*.ts"] },
+    "packages/collectors": {
+      "entry": ["src/index.ts", "src/providers/index.ts"],
+      "project": ["src/**/*.ts"]
+    },
+    "packages/ingestion": { "entry": ["src/index.ts"], "project": ["src/**/*.ts"] },
+    "packages/sync": { "entry": ["src/index.ts"], "project": ["src/**/*.ts"] },
+    "packages/mcp-server": {
+      "entry": ["src/index.ts", "src/stdio.ts", "src/http.ts", "src/tools/{read,write,pipeline}-tools.ts", "src/resources/brain-resources.ts"],
+      "project": ["src/**/*.ts"]
+    },
+    "apps/server": {
+      "entry": ["src/index.ts", "src/app.ts", "src/services/{users,observation-service,promotion-service}.ts"],
+      "project": ["src/**/*.ts"]
+    },
+    "apps/relay": {
+      "entry": ["src/index.ts"],
+      "project": ["src/**/*.ts"]
+    },
+    "apps/ui": {
+      "entry": ["src/main.tsx", "index.html"],
+      "project": ["src/**/*.{ts,tsx}"],
+      "ignoreDependencies": ["tailwindcss"]
+    },
+    "tools/cli": {
+      "entry": ["src/index.ts", "src/hook-binary.ts", "src/commands/*.ts", "src/adapters/index.ts"],
+      "project": ["src/**/*.ts"]
+    }
+  }
+}

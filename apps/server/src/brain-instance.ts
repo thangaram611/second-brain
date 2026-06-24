@@ -2,7 +2,11 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { Brain } from '@second-brain/core';
 import { SyncManager } from '@second-brain/sync';
-import { resolveLLMConfig, tryCreateLLMExtractor } from '@second-brain/ingestion';
+import {
+  resolveLLMConfig,
+  tryCreateLLMExtractor,
+  tryCreateEmbeddingGenerator,
+} from '@second-brain/ingestion';
 import { ObservationService } from './services/observation-service.js';
 import { PromotionService } from './services/promotion-service.js';
 import { OwnershipService } from './services/ownership-service.js';
@@ -10,8 +14,6 @@ import { PersonalityExtractor } from './services/personality-extractor.js';
 import { LanguageFingerprintStream } from './services/personality/language-fingerprint.js';
 import { TechFamiliarityStream } from './services/personality/tech-familiarity.js';
 import { ManagementSignalsStream } from './services/personality/management-signals.js';
-import { decisionPatternsStream } from './services/personality/decision-patterns.js';
-import { communicationStyleStream } from './services/personality/communication-style.js';
 
 let brainInstance: Brain | null = null;
 let syncManagerInstance: SyncManager | null = null;
@@ -20,7 +22,7 @@ let promotionInstance: PromotionService | null = null;
 let ownershipInstance: OwnershipService | null = null;
 let personalityInstance: PersonalityExtractor | null = null;
 
-export function getBrain(): Brain {
+function getBrain(): Brain {
   if (brainInstance) return brainInstance;
 
   const dbPath =
@@ -28,6 +30,26 @@ export function getBrain(): Brain {
     join(homedir(), '.second-brain', 'personal.db');
 
   brainInstance = new Brain({ path: dbPath });
+
+  // If embeddings already exist on disk, wire the vector search channel now so
+  // queries use it from the first request — not only after an in-process
+  // /api/rebuild-embeddings. Best-effort: degrade to full-text if no embedder.
+  try {
+    if (brainInstance.enableVectorSearchFromStore() !== null) {
+      const generator = tryCreateEmbeddingGenerator(resolveLLMConfig(), {
+        logger: { warn: (m) => console.warn('[second-brain] vector channel disabled:', m) },
+      });
+      if (generator) {
+        brainInstance.attachVectorChannel((q) => generator.generateQuery(q));
+      }
+    }
+  } catch (err) {
+    console.warn(
+      '[second-brain] vector channel init skipped:',
+      err instanceof Error ? err.message : err,
+    );
+  }
+
   return brainInstance;
 }
 
@@ -42,7 +64,7 @@ export function closeBrain(): void {
   }
 }
 
-export function getSyncManager(): SyncManager {
+function getSyncManager(): SyncManager {
   if (syncManagerInstance) return syncManagerInstance;
   const brain = getBrain();
   syncManagerInstance = new SyncManager(brain.entities, brain.relations);
@@ -56,7 +78,7 @@ export function closeSyncManager(): void {
   }
 }
 
-export function getPromotionService(): PromotionService {
+function getPromotionService(): PromotionService {
   if (promotionInstance) return promotionInstance;
   const brain = getBrain();
   const extractor = tryCreateLLMExtractor(resolveLLMConfig(), {
@@ -70,7 +92,7 @@ export function getPromotionService(): PromotionService {
   return promotionInstance;
 }
 
-export function getObservationService(): ObservationService {
+function getObservationService(): ObservationService {
   if (observationInstance) return observationInstance;
   const brain = getBrain();
   const promotion = getPromotionService();
@@ -80,31 +102,27 @@ export function getObservationService(): ObservationService {
   return observationInstance;
 }
 
-export function getOwnershipService(): OwnershipService {
+function getOwnershipService(): OwnershipService {
   if (ownershipInstance) return ownershipInstance;
   const brain = getBrain();
   ownershipInstance = new OwnershipService(brain);
   return ownershipInstance;
 }
 
-export function getPersonalityExtractor(): PersonalityExtractor | null {
+function getPersonalityExtractor(): PersonalityExtractor | null {
   if (personalityInstance !== null) return personalityInstance;
 
   const enabled = process.env.PERSONALITY_ENABLED !== 'false';
   if (!enabled) return null;
 
   const brain = getBrain();
-  // LLM wiring deferred — personality streams handle missing LLM gracefully
-  const llm = null;
 
-  personalityInstance = new PersonalityExtractor(brain, { llm });
+  personalityInstance = new PersonalityExtractor(brain);
 
   // Register all personality streams
   personalityInstance.registerStream(new LanguageFingerprintStream());
   personalityInstance.registerStream(new TechFamiliarityStream());
   personalityInstance.registerStream(new ManagementSignalsStream());
-  personalityInstance.registerStream(decisionPatternsStream);
-  personalityInstance.registerStream(communicationStyleStream);
 
   return personalityInstance;
 }

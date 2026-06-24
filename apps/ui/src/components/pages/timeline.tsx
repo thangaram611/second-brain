@@ -1,14 +1,24 @@
-import { useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router';
+import { useQuery } from '@tanstack/react-query';
 import { Calendar } from 'lucide-react';
-import { useTimelineStore } from '../../store/timeline-store.js';
 import { TypeBadge } from '../ui/badge.js';
 import { Card } from '../ui/card.js';
 import { EmptyState } from '../ui/empty-state.js';
 import { LoadingState } from '../ui/loading.js';
+import { ErrorState } from '../ui/error-state.js';
 import { ENTITY_COLORS } from '../../lib/colors.js';
+import { api } from '../../lib/api.js';
+import { queryKeys } from '../../lib/query-keys.js';
 import type { TimelineEntry } from '../../lib/types.js';
 import { ENTITY_TYPES } from '../../lib/types.js';
+
+interface TimelineFilters {
+  from: string;
+  to: string;
+  types?: string;
+  namespace?: string;
+}
 
 function toDateInputValue(iso: string): string {
   return iso.split('T')[0];
@@ -20,6 +30,16 @@ function fromDateInputValue(dateStr: string): string {
 
 function toDateInputValueEnd(dateStr: string): string {
   return `${dateStr}T23:59:59.999Z`;
+}
+
+function defaultFrom(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - 7);
+  return d.toISOString();
+}
+
+function defaultTo(): string {
+  return new Date().toISOString();
 }
 
 function groupByDate(entries: TimelineEntry[]): Map<string, TimelineEntry[]> {
@@ -34,12 +54,26 @@ function groupByDate(entries: TimelineEntry[]): Map<string, TimelineEntry[]> {
 }
 
 export function TimelinePage() {
-  const { entries, loading, error, filters, setFilters, fetch } = useTimelineStore();
+  const [filters, setFilters] = useState<TimelineFilters>({
+    from: defaultFrom(),
+    to: defaultTo(),
+  });
   const navigate = useNavigate();
 
-  useEffect(() => {
-    fetch();
-  }, [fetch]);
+  const timelineQuery = useQuery({
+    queryKey: queryKeys.timeline(filters),
+    queryFn: () =>
+      api.timeline({
+        from: filters.from,
+        to: filters.to,
+        types: filters.types,
+        namespace: filters.namespace,
+        limit: 200,
+      }),
+  });
+  const entries = timelineQuery.data ?? [];
+  const loading = timelineQuery.isFetching;
+  const error = timelineQuery.error instanceof Error ? timelineQuery.error.message : null;
 
   const grouped = groupByDate(entries);
 
@@ -54,10 +88,9 @@ export function TimelinePage() {
           <input
             type="date"
             value={toDateInputValue(filters.from)}
-            onChange={(e) => {
-              setFilters({ from: fromDateInputValue(e.target.value) });
-              fetch();
-            }}
+            onChange={(e) =>
+              setFilters((f) => ({ ...f, from: fromDateInputValue(e.target.value) }))
+            }
             className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-sm text-zinc-200 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
           />
         </div>
@@ -66,10 +99,9 @@ export function TimelinePage() {
           <input
             type="date"
             value={toDateInputValue(filters.to)}
-            onChange={(e) => {
-              setFilters({ to: toDateInputValueEnd(e.target.value) });
-              fetch();
-            }}
+            onChange={(e) =>
+              setFilters((f) => ({ ...f, to: toDateInputValueEnd(e.target.value) }))
+            }
             className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1 text-sm text-zinc-200 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
           />
         </div>
@@ -78,10 +110,7 @@ export function TimelinePage() {
       {/* Type filter chips */}
       <div className="mb-6 flex flex-wrap gap-2">
         <button
-          onClick={() => {
-            setFilters({ types: undefined });
-            fetch();
-          }}
+          onClick={() => setFilters((f) => ({ ...f, types: undefined }))}
           className={`rounded-full px-3 py-1 text-xs transition-colors ${
             !filters.types
               ? 'bg-indigo-600 text-white'
@@ -93,10 +122,7 @@ export function TimelinePage() {
         {ENTITY_TYPES.map((type) => (
           <button
             key={type}
-            onClick={() => {
-              setFilters({ types: type });
-              fetch();
-            }}
+            onClick={() => setFilters((f) => ({ ...f, types: type }))}
             className={`rounded-full px-3 py-1 text-xs transition-colors ${
               filters.types === type
                 ? 'bg-indigo-600 text-white'
@@ -110,7 +136,7 @@ export function TimelinePage() {
 
       {/* Content */}
       {loading && <LoadingState message="Loading timeline..." />}
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <ErrorState message={error} onRetry={() => void timelineQuery.refetch()} />}
 
       {!loading && !error && entries.length === 0 && (
         <EmptyState

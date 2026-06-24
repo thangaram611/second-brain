@@ -41,8 +41,6 @@ export {
   LLMConfigSchema,
   LLM_PROVIDERS,
   EMBEDDING_PROVIDERS,
-  resolveChatModel,
-  resolveEmbeddingModel,
   EmbeddingGenerator,
   EmbedPipeline,
   LLMExtractor,

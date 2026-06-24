@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Second Brain — a developer knowledge graph. pnpm monorepo, Turborepo, Node.js 22+, TypeScript 5.8+ strict, ESM only.
+Second Brain — a developer knowledge graph. pnpm monorepo, Turborepo, Node.js 24+, TypeScript 5.8+ strict, ESM only.
 
 All conventions, monorepo map, data model, architecture decisions, and common tasks are in [AGENTS.md](./AGENTS.md) (auto-loaded alongside this file).
 

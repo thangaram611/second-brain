@@ -6,6 +6,20 @@
  * Auto-reconnection is handled natively by EventSource.
  */
 
+import { z } from 'zod';
+
+/**
+ * Shape of a smee.io channel message. All fields are optional — smee forwards
+ * arbitrary webhook payloads, so we only pin down the keys we consume and
+ * leave `body` as unknown (it's re-serialized verbatim).
+ */
+const SmeePayloadSchema = z.object({
+  body: z.unknown().optional(),
+  headers: z.record(z.string(), z.string()).optional(),
+  query: z.record(z.string(), z.string()).optional(),
+  timestamp: z.number().optional(),
+});
+
 export interface SSERelayOptions {
   /** smee.io channel URL (e.g., https://smee.io/abc123) */
   channelUrl: string;
@@ -99,12 +113,7 @@ export function startSSERelay(options: SSERelayOptions): SSERelayHandle {
   es.addEventListener('message', (evt: MessageEvent) => {
     void (async () => {
       try {
-        const smeePayload = JSON.parse(String(evt.data)) as {
-          body?: unknown;
-          headers?: Record<string, string>;
-          query?: Record<string, string>;
-          timestamp?: number;
-        };
+        const smeePayload = SmeePayloadSchema.parse(JSON.parse(String(evt.data)));
 
         const webhookBody = smeePayload.body ?? {};
         const webhookHeaders = smeePayload.headers ?? {};

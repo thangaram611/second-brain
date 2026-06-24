@@ -618,7 +618,7 @@ Receives forge webhooks (GitLab/GitHub) for merge/pull request lifecycle events.
 Webhook verification secrets are loaded from server env vars:
 `SECOND_BRAIN_WEBHOOK_SECRET_HEX__<provider>__<hexProjectId>` for token
 verification and `SECOND_BRAIN_WEBHOOK_HMAC_HEX__<provider>__<hexProjectId>`
-for HMAC verification. `brain wire --provider ...` prints the exact `export`
+for HMAC verification. `brain provider add ...` prints the exact `export`
 line to add to the server environment.
 
 #### `POST /api/observe/file-change`
@@ -1454,7 +1454,8 @@ brain unwire-assistant <claude|cursor|codex|copilot|all> [-s <scope>]
 
 #### `brain wire`
 
-One-shot wire-up: git hooks + claude hooks + config entry + optional forge provider.
+One-shot wire-up: git hooks + claude hooks + config entry. Forge webhook wiring
+lives in the separate [`brain provider`](#brain-provider) group.
 
 ```bash
 brain wire [options]
@@ -1469,14 +1470,38 @@ brain wire [options]
 | `--require-project` | Fail without project namespace |
 | `--no-claude` | Skip Claude Code hook install |
 | `--skip-if-claude-mem` | Abort if `claude-mem` present |
-| `--provider <name>` | Forge provider (`gitlab` or `github`) |
-| `--gitlab-url <url>` | GitLab base URL |
-| `--gitlab-token <pat>` | GitLab PAT |
-| `--gitlab-project-path <p>` | `group/subgroup/project` |
-| `--github-token <pat>` | GitHub PAT |
-| `--github-base-url <url>` | GitHub API base URL |
-| `--github-owner <owner>` | GitHub owner/org |
-| `--github-repo <repo>` | GitHub repo name |
+
+#### `brain provider`
+
+Manage the forge webhook wiring (`gitlab` or `github`) for the current repo,
+independently of `brain wire`. Webhook registration is idempotent — re-running
+`add`/`refresh` reuses an existing hook by relay URL.
+
+```bash
+brain provider add <gitlab|github> [options]
+brain provider refresh <gitlab|github> [options]
+brain provider remove <gitlab|github> [options]
+```
+
+`add` and `refresh` accept the same flags:
+
+| Flag | Description |
+|------|-------------|
+| `--repo <path>` | Repo root (auto-detected) |
+| `--gitlab-url <url>` | GitLab base URL (auto-detected from origin) |
+| `--gitlab-token <pat>` | GitLab PAT (falls back to `SECOND_BRAIN_GITLAB_TOKEN`) |
+| `--gitlab-project-path <p>` | `group/subgroup/project` (auto-detected) |
+| `--github-token <pat>` | GitHub PAT (falls back to `SECOND_BRAIN_GITHUB_TOKEN`/`GITHUB_TOKEN`) |
+| `--github-base-url <url>` | GitHub API base URL (auto-detected for enterprise) |
+| `--github-owner <owner>` | GitHub owner/org (auto-detected) |
+| `--github-repo <repo>` | GitHub repo name (auto-detected) |
+
+`remove` unregisters the webhook and cleans keychain secrets, leaving git/assistant hooks intact:
+
+| Flag | Description |
+|------|-------------|
+| `--repo <path>` | Repo root |
+| `--force` | Proceed past provider API failures (401, timeout); 404 is always success |
 
 #### `brain unwire`
 
@@ -1536,18 +1561,18 @@ brain ownership <path> [options]
 #### `brain sync join`
 
 ```bash
-brain sync join [--namespace <ns>] [--relay <url>] [--secret <s>]
+brain sync join [--namespace <ns>] [--relay <url>]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--namespace <ns>` | Project namespace. Defaults to `.second-brain/team.json` `namespace` when present. |
 | `--relay <url>` | Relay WebSocket URL (`ws://` or `wss://`). Defaults to `.second-brain/team.json` `server.relayUrl` when present. |
-| `--secret <s>` | Shared relay secret. Defaults to `RELAY_AUTH_SECRET`. |
 
-Run inside a repo with a `.second-brain/team.json` to omit `--namespace` and
-`--relay`; explicit flags override the manifest values. The relay secret is
-never read from the manifest. The `personal` namespace cannot be synced.
+A single authenticated call to your API server, which mints the relay token
+itself — there is no client secret. Run inside a repo with a
+`.second-brain/team.json` to omit `--namespace` and `--relay`; explicit flags
+override the manifest values. The `personal` namespace cannot be synced.
 
 #### `brain sync status`
 

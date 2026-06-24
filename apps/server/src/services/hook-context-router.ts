@@ -2,7 +2,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { z } from 'zod';
 import type { Brain } from '@second-brain/core';
-import { rawRowToEntity } from '@second-brain/core';
+import { parseEntityRowSafe } from '@second-brain/core';
 import type { Entity, SearchResult } from '@second-brain/types';
 import { buildRecallContextBlock } from '@second-brain/mcp-server';
 import { HookContextCache, PER_SESSION_BYTE_CAP } from './hook-context-cache.js';
@@ -101,27 +101,6 @@ const GrepGlobInputSchema = z.object({
 
 const PromptInputSchema = z.object({
   prompt: z.string().optional(),
-});
-
-/** Schema for the partial-row shape we read off `entities` via raw SQL. */
-const EntityLookupRowSchema = z.object({
-  id: z.string(),
-  type: z.string(),
-  name: z.string(),
-  namespace: z.string(),
-  observations: z.string(),
-  properties: z.string(),
-  confidence: z.number(),
-  event_time: z.string(),
-  ingest_time: z.string(),
-  last_accessed_at: z.string().nullable(),
-  access_count: z.number(),
-  source_type: z.string(),
-  source_ref: z.string().nullable(),
-  source_actor: z.string().nullable(),
-  tags: z.string(),
-  created_at: z.string(),
-  updated_at: z.string(),
 });
 
 export class HookContextRouter {
@@ -574,10 +553,10 @@ function looksLikePath(t: string): boolean {
 
 function findEntitiesBySourceRef(brain: Brain, namespace: string, sourceRef: string): Entity[] {
   // The FTS5 virtual table doesn't index `source_ref`, so we use raw SQL backed
-  // by `idx_entities_namespace_source_ref`. Drizzle's typed
-  // builder doesn't know about every column shape we map back via
-  // `rawRowToEntity`, so we go through the prepared statement directly and
-  // validate the row shape with Zod.
+  // by `idx_entities_namespace_source_ref`. Drizzle's typed builder doesn't know
+  // about every column shape, so we go through the prepared statement directly
+  // and parse each row at the boundary with `parseEntityRowSafe` (skipping any
+  // malformed row).
   const stmt = brain.storage.sqlite.prepare(`
     SELECT *
     FROM entities
@@ -587,9 +566,9 @@ function findEntitiesBySourceRef(brain: Brain, namespace: string, sourceRef: str
   const raw = stmt.all(namespace, sourceRef, MAX_ENTITIES_CITED);
   const out: Entity[] = [];
   for (const row of raw) {
-    const parsed = EntityLookupRowSchema.safeParse(row);
-    if (!parsed.success) continue;
-    out.push(rawRowToEntity(parsed.data));
+    const entity = parseEntityRowSafe(row);
+    if (entity === null) continue;
+    out.push(entity);
   }
   return out;
 }

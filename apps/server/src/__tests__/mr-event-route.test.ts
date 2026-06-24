@@ -38,7 +38,7 @@ beforeEach(() => {
   brain = new Brain({ path: ':memory:', wal: false });
   const promotion = new PromotionService(brain, null);
   observations = new ObservationService(brain, promotion);
-  observations.registerWiredProject('gitlab', PROJECT_ID, 'proj');
+  observations.mrEvents.registerWiredProject('gitlab', PROJECT_ID, 'proj');
   const webhookSecrets = new Map<string, WebhookSecret>([
     [PROVIDER_KEY, { kind: 'token', value: SECRET }],
   ]);

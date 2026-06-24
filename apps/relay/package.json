@@ -24,15 +24,12 @@
     "jsonwebtoken": "^9.0.0",
     "ws": "^8.18.0",
     "y-protocols": "^1.0.0",
-    "yjs": "^13.6.0",
-    "zod": "^4.3.6"
+    "yjs": "^13.6.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.2",
     "@types/jsonwebtoken": "^9.0.0",
-    "@types/supertest": "^7.2.0",
     "@types/ws": "^8.18.0",
-    "supertest": "^7.1.0",
     "tsdown": "^0.21.0",
     "tsx": "^4.19.0",
     "typescript": "^6.0.2",

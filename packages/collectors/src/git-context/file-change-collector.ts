@@ -1,9 +1,27 @@
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { createWatcher, type WatcherHandle, type WatchChange } from '../watch/watcher.js';
+import { createWatcher, type WatcherHandle, type WatcherOptions, type WatchChange } from '../watch/watcher.js';
 import { filterNoise, type NoiseFilterOptions } from './noise-filter.js';
-import { createBranchTracker, type BranchTrackerHandle } from './branch-tracker.js';
+import {
+  createBranchTracker,
+  type BranchTrackerHandle,
+  type BranchTrackerOptions,
+} from './branch-tracker.js';
+
+/**
+ * Factory seams for the underlying watcher and branch tracker. Production uses
+ * the real chokidar-backed implementations; tests inject fakes that drive the
+ * batch / branch-change callbacks synchronously, so the collector's wiring
+ * (noise filter, branch stamping, idempotency, POST shape) can be verified
+ * without depending on real-time filesystem events. Each is narrowed to only
+ * the handle members the collector actually consumes, so a fake needs nothing
+ * more — no `FSWatcher` instance to stand up.
+ */
+export type WatcherFactory = (options: WatcherOptions) => Pick<WatcherHandle, 'ready' | 'close'>;
+export type BranchTrackerFactory = (
+  options: BranchTrackerOptions,
+) => Promise<Pick<BranchTrackerHandle, 'current' | 'close'>>;
 
 export interface FileChangeCollectorOptions {
   repoRoot: string;
@@ -22,6 +40,10 @@ export interface FileChangeCollectorOptions {
   stabilityWaitMs?: number;
   /** Override fetch (for tests). */
   fetchFn?: typeof fetch;
+  /** Override the watcher factory (for deterministic tests). */
+  createWatcherImpl?: WatcherFactory;
+  /** Override the branch-tracker factory (for deterministic tests). */
+  createBranchTrackerImpl?: BranchTrackerFactory;
   /** Error surface. */
   onError?: (err: unknown) => void;
 }
@@ -66,6 +88,8 @@ export async function startFileChangeCollector(
 ): Promise<FileChangeCollectorHandle> {
   const onError = options.onError ?? ((err) => console.error('[file-change-collector]', err));
   const fetchImpl = options.fetchFn ?? fetch;
+  const createWatcherImpl = options.createWatcherImpl ?? createWatcher;
+  const createBranchTrackerImpl = options.createBranchTrackerImpl ?? createBranchTracker;
 
   const noiseOpts: NoiseFilterOptions = {
     repoRoot: options.repoRoot,
@@ -125,10 +149,10 @@ export async function startFileChangeCollector(
     await postBatch(branch, filtered).catch(onError);
   };
 
-  let tracker: BranchTrackerHandle | null = null;
-  let watcher: WatcherHandle | null = null;
+  let tracker: Pick<BranchTrackerHandle, 'current' | 'close'> | null = null;
+  let watcher: Pick<WatcherHandle, 'ready' | 'close'> | null = null;
 
-  tracker = await createBranchTracker({
+  tracker = await createBranchTrackerImpl({
     repoRoot: options.repoRoot,
     debounceMs: 200,
     onBranchChange: async ({ from, to, headSha }) => {
@@ -154,7 +178,7 @@ export async function startFileChangeCollector(
     onError,
   });
 
-  watcher = createWatcher({
+  watcher = createWatcherImpl({
     roots: [options.repoRoot],
     debounceMs: options.debounceMs ?? 500,
     onBatch: async (batch) => {

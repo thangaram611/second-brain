@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type { Brain } from '@second-brain/core';
 import type { SyncManager } from '@second-brain/sync';
-import type { EntityType, RelationType } from '@second-brain/types';
+import { isEntityType, isRelationType } from '@second-brain/types';
 import {
   CreateEntitySchema,
   UpdateEntitySchema,
@@ -33,10 +33,11 @@ export function entityRoutes(
 
     let results;
     if (params.type) {
-      results = brain.entities.findByType(
-        params.type as EntityType,
-        params.namespace,
-      );
+      if (!isEntityType(params.type)) {
+        res.status(400).json({ error: `Unknown entity type: ${params.type}` });
+        return;
+      }
+      results = brain.entities.findByType(params.type, params.namespace);
       // Apply limit/offset manually for findByType
       const offset = params.offset ?? 0;
       const limit = params.limit ?? 100;
@@ -77,7 +78,7 @@ export function entityRoutes(
     const targetNs = input.namespace ?? 'default';
     if (!enforceNamespace(req, res, targetNs, users)) return;
     const entity = brain.entities.create({
-      type: input.type as EntityType,
+      type: input.type,
       name: input.name,
       observations: input.observations ?? [],
       tags: input.tags ?? [],
@@ -187,7 +188,7 @@ export function entityRoutes(
 
     const params = NeighborsQuerySchema.parse(req.query);
     const relationTypes = params.relationTypes
-      ? (params.relationTypes.split(',') as RelationType[])
+      ? params.relationTypes.split(',').filter(isRelationType)
       : undefined;
 
     const result = brain.traversal.getNeighbors(

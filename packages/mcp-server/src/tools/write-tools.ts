@@ -2,7 +2,6 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Brain } from '@second-brain/core';
 import { BRANCH_STATUSES, ENTITY_TYPES, RELATION_TYPES } from '@second-brain/types';
-import type { EntityType, RelationType } from '@second-brain/types';
 import { textResponse, errorResponse, notFoundResponse } from './formatters.js';
 
 export function registerWriteTools(mcp: McpServer, brain: Brain): void {
@@ -34,7 +33,7 @@ export function registerWriteTools(mcp: McpServer, brain: Brain): void {
     },
   }, async (args) => {
     const entity = brain.entities.create({
-      type: args.type as EntityType,
+      type: args.type,
       name: args.name,
       observations: args.observations ?? [],
       tags: args.tags ?? [],
@@ -75,7 +74,7 @@ export function registerWriteTools(mcp: McpServer, brain: Brain): void {
     }
 
     const relation = brain.relations.create({
-      type: args.type as RelationType,
+      type: args.type,
       sourceId: args.sourceId,
       targetId: args.targetId,
       namespace: args.namespace,
@@ -418,7 +417,7 @@ export function registerWriteTools(mcp: McpServer, brain: Brain): void {
 
       return textResponse(`Contradiction resolved: "${winner?.name ?? args.winnerId}" supersedes "${loser?.name ?? loserId}".`);
     } catch (err) {
-      return errorResponse(`Error: ${(err as Error).message}`);
+      return errorResponse(`Error: ${err instanceof Error ? err.message : String(err)}`);
     }
   });
 
@@ -435,7 +434,7 @@ export function registerWriteTools(mcp: McpServer, brain: Brain): void {
 
       return textResponse(`Contradiction dismissed (relation ${args.relationId} deleted).`);
     } catch (err) {
-      return errorResponse(`Error: ${(err as Error).message}`);
+      return errorResponse(`Error: ${err instanceof Error ? err.message : String(err)}`);
     }
   });
 
@@ -467,7 +466,7 @@ export function registerWriteTools(mcp: McpServer, brain: Brain): void {
       });
       return textResponse(`Flipped branch "${args.branch}" → ${args.status}. Updated entities=${result.updatedEntities}, relations=${result.updatedRelations}.`);
     } catch (err) {
-      return errorResponse(`Error: ${(err as Error).message}`);
+      return errorResponse(`Error: ${err instanceof Error ? err.message : String(err)}`);
     }
   });
 }

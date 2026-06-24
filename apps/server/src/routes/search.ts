@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import type { Brain } from '@second-brain/core';
-import type { EntityType } from '@second-brain/types';
+import { isEntityType } from '@second-brain/types';
 import { SearchQuerySchema } from '../schemas.js';
 import { resolveScopedNamespace } from '../middleware/auth.js';
 import type { UsersService } from '../services/users.js';
@@ -23,7 +23,7 @@ export function searchRoutes(
     if (ns === null) return;
 
     const types = params.types
-      ? (params.types.split(',') as EntityType[])
+      ? params.types.split(',').filter(isEntityType)
       : undefined;
 
     const results = brain.search.search({

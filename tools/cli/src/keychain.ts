@@ -37,12 +37,13 @@ import {
   fileStoreDelete,
 } from './file-store.js';
 import { probeMacKeychain } from './probe-mac-keychain.js';
+import { isRecord } from './adapters/shared/json-file.js';
 
-export const KEYCHAIN_SERVICE = 'second-brain';
+const KEYCHAIN_SERVICE = 'second-brain';
 
 export type StorageBackend = 'keychain' | 'file';
 
-export type KeychainUnavailableReason = 'module-missing' | 'runtime-error';
+type KeychainUnavailableReason = 'module-missing' | 'runtime-error';
 
 export interface KeychainUnavailable {
   ok: false;
@@ -50,7 +51,7 @@ export interface KeychainUnavailable {
   message: string;
 }
 
-export interface KeychainOk<T> {
+interface KeychainOk<T> {
   ok: true;
   value: T;
   /** Which backend actually serviced the call. */
@@ -67,20 +68,21 @@ interface KeytarLike {
 
 let cached: { keytar: KeytarLike } | KeychainUnavailable | null = null;
 
+function isKeytarLike(v: unknown): v is KeytarLike {
+  return (
+    isRecord(v) &&
+    typeof v.setPassword === 'function' &&
+    typeof v.getPassword === 'function' &&
+    typeof v.deletePassword === 'function'
+  );
+}
+
 export async function loadKeytar(): Promise<{ keytar: KeytarLike } | KeychainUnavailable> {
   if (cached !== null) return cached;
   try {
-    const mod = await import('keytar');
-    const ModuleSchema = (m: unknown): m is { default?: unknown } =>
-      m !== null && typeof m === 'object';
-    const inner: unknown = ModuleSchema(mod)
-      ? ((mod as { default?: unknown }).default ?? mod)
-      : mod;
-    if (
-      inner === null ||
-      typeof inner !== 'object' ||
-      typeof (inner as { setPassword?: unknown }).setPassword !== 'function'
-    ) {
+    const mod: unknown = await import('keytar');
+    const inner: unknown = isRecord(mod) ? (mod.default ?? mod) : mod;
+    if (!isKeytarLike(inner)) {
       cached = {
         ok: false,
         reason: 'module-missing',
@@ -88,7 +90,7 @@ export async function loadKeytar(): Promise<{ keytar: KeytarLike } | KeychainUna
       };
       return cached;
     }
-    cached = { keytar: inner as KeytarLike };
+    cached = { keytar: inner };
     return cached;
   } catch (err) {
     cached = {

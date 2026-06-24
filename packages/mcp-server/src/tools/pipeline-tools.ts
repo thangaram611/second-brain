@@ -17,8 +17,7 @@ import {
 } from '@second-brain/ingestion';
 import { ENTITY_TYPES } from '@second-brain/types';
 import type { EntityType } from '@second-brain/types';
-import { VectorSearchChannel } from '@second-brain/core';
-import { textResponse, errorResponse } from './formatters.js';
+import { textResponse } from './formatters.js';
 
 const EXPORT_FORMATS = ['json', 'json-ld', 'dot'] as const;
 const IMPORT_FORMATS = ['json', 'json-ld'] as const;
@@ -35,7 +34,7 @@ export function registerPipelineTools(mcp: McpServer, brain: Brain): void {
       annotations: { readOnlyHint: false },
     },
     async () => {
-      brain.storage.sqlite.exec("INSERT INTO entities_fts(entities_fts) VALUES('rebuild')");
+      brain.reindex();
       return textResponse('FTS5 index rebuilt successfully.');
     },
   );
@@ -56,9 +55,9 @@ export function registerPipelineTools(mcp: McpServer, brain: Brain): void {
     },
     async (args) => {
       const opts = {
-        format: args.format as ExportFormat,
+        format: args.format,
         namespace: args.namespace,
-        types: args.types as EntityType[] | undefined,
+        types: args.types,
         includeRelations: args.includeRelations,
       };
       const content = exportFor(brain, opts);
@@ -113,7 +112,7 @@ export function registerPipelineTools(mcp: McpServer, brain: Brain): void {
           .min(1)
           .optional()
           .describe(
-            'Embedding vector dimensions for the configured model. Required the first time vector search is enabled (e.g. 768 for nomic-embed-text, 1536 for text-embedding-3-small).',
+            'Override embedding vector dimensions. Optional — defaults to auto-detection from the configured model (probes one embedding to size the vec table).',
           ),
       },
       annotations: { readOnlyHint: false },
@@ -123,10 +122,13 @@ export function registerPipelineTools(mcp: McpServer, brain: Brain): void {
       const generator = new EmbeddingGenerator(cfg);
 
       if (brain.embeddings === null) {
-        if (typeof args.dimensions !== 'number') {
-          return errorResponse('Vector search is not enabled and no `dimensions` argument was supplied. Pass `dimensions` to bootstrap (e.g. 768 for nomic-embed-text).');
-        }
-        brain.enableVectorSearch(args.dimensions);
+        // Size the vec table to the model: honor an explicit override, else
+        // probe the model so callers need not know the dimension up front.
+        const dims =
+          typeof args.dimensions === 'number'
+            ? args.dimensions
+            : await generator.probeDimensions();
+        brain.enableVectorSearch(dims);
       }
 
       const pipeline = new EmbedPipeline(brain, generator, {
@@ -135,12 +137,7 @@ export function registerPipelineTools(mcp: McpServer, brain: Brain): void {
       });
       const summary = await pipeline.run();
       // Wire the vector channel for subsequent searches in this process.
-      if (!brain.search.hasVectorChannel() && brain.embeddings !== null) {
-        const ch = new VectorSearchChannel(brain.embeddings, brain.entities, (q) =>
-          generator.generateOne(q),
-        );
-        brain.search.setVectorChannel(ch);
-      }
+      brain.attachVectorChannel((q) => generator.generateQuery(q));
       return textResponse(`Embedded ${summary.embedded} entities (${summary.skipped} unchanged, ${summary.errors} errors) in ${summary.durationMs}ms using ${cfg.embeddingModel}.`);
     },
   );

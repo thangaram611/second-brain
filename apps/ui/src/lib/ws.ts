@@ -1,19 +1,85 @@
-import type { Entity, Relation, PeerInfo, SyncConflict } from './types.js';
+import { z } from 'zod';
+import { ENTITY_TYPES } from './types.js';
+import type { Entity, Relation, SyncConflict } from './types.js';
 
-export type WsEvent =
-  | { type: 'connected' }
-  | { type: 'entity:created'; entity: Entity }
-  | { type: 'entity:updated'; entity: Entity }
-  | { type: 'entity:deleted'; id: string }
-  | { type: 'relation:created'; relation: Relation }
-  | { type: 'relation:deleted'; id: string }
-  | { type: 'contradiction:resolved'; relationId: string; winnerId: string; loserId: string }
-  | { type: 'contradiction:dismissed'; relationId: string }
-  | { type: 'sync:connected'; namespace: string; peers: number }
-  | { type: 'sync:disconnected'; namespace: string }
-  | { type: 'sync:peer-joined'; namespace: string; peer: PeerInfo }
-  | { type: 'sync:peer-left'; namespace: string; peerId: number }
-  | { type: 'sync:conflict'; namespace: string; conflict: SyncConflict };
+const RELATION_TYPES = [
+  'relates_to', 'depends_on', 'implements', 'supersedes',
+  'contradicts', 'derived_from', 'authored_by', 'decided_in',
+  'uses', 'tests', 'contains', 'co_changes_with', 'preceded_by', 'blocks',
+] as const;
+
+/**
+ * Zod schemas for WebSocket payloads. Entities/relations arrive as JSON over
+ * the socket, so they are parsed at the boundary rather than cast. We keep the
+ * entity/relation schemas loose (passthrough) — the discriminant lives in
+ * `type`, and downstream code already treats these as the typed shapes from
+ * the REST client. We assert the parsed object satisfies the shared interface
+ * via `z.ZodType<Entity>` so the schema and the type stay in lockstep.
+ */
+const EntitySchema: z.ZodType<Entity> = z.looseObject({
+  id: z.string(),
+  type: z.enum(ENTITY_TYPES),
+  name: z.string(),
+  namespace: z.string(),
+  observations: z.array(z.string()),
+  properties: z.record(z.string(), z.unknown()),
+  confidence: z.number(),
+  eventTime: z.string(),
+  ingestTime: z.string(),
+  lastAccessedAt: z.string(),
+  accessCount: z.number(),
+  source: z.looseObject({ type: z.string() }),
+  tags: z.array(z.string()),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+const RelationSchema: z.ZodType<Relation> = z.looseObject({
+  id: z.string(),
+  type: z.enum(RELATION_TYPES),
+  sourceId: z.string(),
+  targetId: z.string(),
+  namespace: z.string(),
+  properties: z.record(z.string(), z.unknown()),
+  confidence: z.number(),
+  weight: z.number(),
+  bidirectional: z.boolean(),
+  source: z.looseObject({ type: z.string() }),
+  eventTime: z.string(),
+  ingestTime: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+const SyncConflictSchema: z.ZodType<SyncConflict> = z.looseObject({
+  entityId: z.string(),
+  entityName: z.string(),
+  field: z.string(),
+  localValue: z.unknown(),
+  remoteValue: z.unknown(),
+  resolvedAt: z.string().nullable(),
+});
+
+export const WsEventSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('connected') }),
+  z.object({ type: z.literal('entity:created'), entity: EntitySchema }),
+  z.object({ type: z.literal('entity:updated'), entity: EntitySchema }),
+  z.object({ type: z.literal('entity:deleted'), id: z.string() }),
+  z.object({ type: z.literal('relation:created'), relation: RelationSchema }),
+  z.object({ type: z.literal('relation:deleted'), id: z.string() }),
+  z.object({
+    type: z.literal('contradiction:resolved'),
+    relationId: z.string(),
+    winnerId: z.string(),
+    loserId: z.string(),
+  }),
+  z.object({ type: z.literal('contradiction:dismissed'), relationId: z.string() }),
+  z.object({ type: z.literal('sync:connected'), namespace: z.string(), peers: z.number() }),
+  z.object({ type: z.literal('sync:disconnected'), namespace: z.string() }),
+  z.object({ type: z.literal('sync:conflict'), namespace: z.string(), conflict: SyncConflictSchema }),
+]);
+
+export type WsEvent = z.infer<typeof WsEventSchema>;
 
 type WsListener = (event: WsEvent) => void;
 
@@ -37,13 +103,16 @@ function connect() {
   };
 
   socket.onmessage = (event) => {
+    let raw: unknown;
     try {
-      const data = JSON.parse(event.data) as WsEvent;
-      for (const listener of listeners) {
-        listener(data);
-      }
+      raw = JSON.parse(event.data);
     } catch {
-      // ignore malformed messages
+      return; // ignore non-JSON frames
+    }
+    const parsed = WsEventSchema.safeParse(raw);
+    if (!parsed.success) return; // ignore malformed / unknown messages
+    for (const listener of listeners) {
+      listener(parsed.data);
     }
   };
 
@@ -73,13 +142,4 @@ export function subscribe(listener: WsListener): () => void {
   return () => {
     listeners.delete(listener);
   };
-}
-
-export function disconnect(): void {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
-  socket?.close();
-  socket = null;
 }

@@ -15,7 +15,7 @@ remains the fastest path.
 | Requirement | Version | Install |
 |-------------|---------|---------|
 | Linux with systemd | any modern distro | — |
-| Node.js | 22+ | [nodesource](https://github.com/nodesource/distributions), `nvm`, or your distro's package manager |
+| Node.js | 24+ | [nodesource](https://github.com/nodesource/distributions), `nvm`, or your distro's package manager |
 | pnpm | 10+ | `corepack enable && corepack prepare pnpm@latest --activate` |
 | git | 2.x | distro package |
 
@@ -168,22 +168,20 @@ relay speaks WebSocket on `RELAY_PORT` (default `7421`). Forward both
 
 ---
 
-## Sync URL + secret distribution
+## Sync onboarding
 
-The relay URL can be committed to the team repo as `server.relayUrl` in
-`.second-brain/team.json`, so clients no longer need to pass `--relay` (or
-`--namespace`). The shared `RELAY_AUTH_SECRET` is still distributed
-out-of-band — it never belongs in the manifest.
+Clients never handle `RELAY_AUTH_SECRET`. The API server holds it (sourced from
+the same `/etc/second-brain/secrets.env` as the relay) and mints the relay token
+itself for an authenticated client. Commit the relay URL to the team repo as
+`server.relayUrl` in `.second-brain/team.json` so clients can omit `--relay` and
+`--namespace` too.
 
 ```bash
-# On the server box — read the secret to share out-of-band:
-sudo grep RELAY_AUTH_SECRET /etc/second-brain/secrets.env
-
 # On each client, inside a repo whose team.json includes server.relayUrl:
-RELAY_AUTH_SECRET=<secret> brain sync join
+brain sync join
 
 # Or pass everything explicitly (explicit flags override the manifest):
-brain sync join --namespace acme --relay ws://server.lan:7421 --secret <secret>
+brain sync join --namespace acme --relay ws://server.lan:7421
 ```
 
 ---
@@ -195,6 +193,7 @@ brain sync join --namespace acme --relay ws://server.lan:7421 --secret <secret>
 | `status=203/EXEC` | Node binary captured at init time is stale; re-run `sudo brain init server --service-user secondbrain --force`. |
 | `EADDRINUSE` on `7430`/`7421` | Another process holds the port — `sudo ss -lntp \| grep 7430`. |
 | `Permission denied` on DB | `secondbrain` cannot write storage; `sudo chown -R secondbrain:secondbrain /var/lib/second-brain`. |
-| Relay rejects clients | `RELAY_AUTH_SECRET` mismatch — clients must use the value from `/etc/second-brain/secrets.env`. |
+| Relay rejects clients | The API server and relay have different `RELAY_AUTH_SECRET` values — both must read the same `/etc/second-brain/secrets.env`. |
+| `brain sync join` returns 503 | The API server has no `RELAY_AUTH_SECRET` in its environment — ensure its unit sources `/etc/second-brain/secrets.env`. |
 | Service flapping | `sudo journalctl -u <name> -n 200` and look for the error before each `Stopped`/`Started`. |
 | `brain doctor` shows ✗ local server config (unreadable) | `~/.second-brain/server.json` is malformed; re-run `sudo brain init server --service-user secondbrain --force`. |

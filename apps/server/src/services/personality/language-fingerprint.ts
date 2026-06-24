@@ -19,7 +19,7 @@ export class LanguageFingerprintStream implements PersonalityStream {
            AND namespace != 'personal'
            AND type IN ('merge_request', 'pull_request')`,
       )
-      .all(actor) as Record<string, unknown>[];
+      .all(actor);
 
     if (rows.length === 0) {
       logger.info(`[language-fingerprint] no MR/PR entities for actor=${actor}`);
@@ -121,5 +121,3 @@ function upsertPersonalityFact(
   });
   return 'created';
 }
-
-export default LanguageFingerprintStream;

@@ -4,6 +4,7 @@ export type {
   EntitySource,
   EntitySourceType,
   CreateEntityInput,
+  UpsertEntityInput,
   UpdateEntityInput,
 } from './entity.js';
 export { ENTITY_TYPES, ENTITY_SOURCE_TYPES, DECAY_RATES, isEntityType, isSourceType } from './entity.js';
@@ -12,6 +13,7 @@ export type {
   RelationType,
   Relation,
   CreateRelationInput,
+  UpsertRelationInput,
   UpdateRelationInput,
 } from './relation.js';
 export { RELATION_TYPES, isRelationType } from './relation.js';
@@ -51,6 +53,7 @@ export type {
   DecayRunResult,
 } from './temporal.js';
 
+export { RELAY_PERMISSIONS, RelayAuthPayloadSchema } from './sync.js';
 export type {
   SyncConfig,
   SyncConnectionState,

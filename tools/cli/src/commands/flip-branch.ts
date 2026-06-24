@@ -24,7 +24,9 @@ export function registerFlipBranchCommand(program: Command): void {
             mergedAt: options.mergedAt ?? null,
           });
         } catch (err) {
-          console.error(`Invalid arguments: ${(err as Error).message}`);
+          console.error(
+            `Invalid arguments: ${err instanceof Error ? err.message : String(err)}`,
+          );
           process.exit(1);
         }
         const brain = openBrain();

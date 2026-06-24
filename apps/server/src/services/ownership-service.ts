@@ -1,9 +1,73 @@
 import { execFile } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as nodePath from 'node:path';
 import { promisify } from 'node:util';
+import { z } from 'zod';
 import type { Brain } from '@second-brain/core';
 import { loadCodeowners } from './codeowners.js';
 
 const execFileAsync = promisify(execFile);
+
+/** A node in the ownership tree returned by {@link OwnershipService.queryTree}. */
+export interface OwnershipNode {
+  path: string;
+  name: string;
+  isDir: boolean;
+  owners?: Array<{ actor: string; score: number }>;
+  children?: OwnershipNode[];
+}
+
+/**
+ * Directories the tree walker never descends into. Without this, a default-depth
+ * request on a repo root recurses into `node_modules` (tens of thousands of
+ * files), issuing one ownership query per file until the request times out.
+ * Mirrors the indexing pipeline's ignore patterns.
+ */
+const OWNERSHIP_TREE_IGNORE_DIRS = new Set([
+  '.git',
+  'node_modules',
+  'dist',
+  '.turbo',
+  'coverage',
+  'build',
+  '.next',
+  '.cache',
+]);
+
+/** Default ceiling on concurrent per-file ownership queries during a tree walk. */
+const DEFAULT_TREE_CONCURRENCY = 12;
+
+/**
+ * Minimal async semaphore. Each {@link OwnershipService.query} spawns several
+ * `git` subprocesses, so the tree walk must cap how many run at once — an
+ * unbounded `Promise.all` over a large repo would fork-bomb git. This bounds
+ * total in-flight queries across the whole (recursive) walk, not per directory.
+ */
+class Semaphore {
+  private active = 0;
+  private readonly waiters: Array<() => void> = [];
+
+  constructor(private readonly max: number) {}
+
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.active >= this.max) {
+      await new Promise<void>((resolve) => this.waiters.push(resolve));
+    }
+    this.active++;
+    try {
+      return await fn();
+    } finally {
+      this.active--;
+      this.waiters.shift()?.();
+    }
+  }
+}
+
+/** Boundary schema for the reviewed_by relation join rows. */
+const ReviewRowSchema = z.object({
+  target_id: z.string(),
+  properties: z.string(),
+});
 
 export interface OwnershipScore {
   actor: string;
@@ -61,6 +125,7 @@ export class OwnershipService {
   private readonly cacheTtlMs: number;
   private readonly repoRoot: string;
   private readonly gitFactory: SimpleGitFactory;
+  private readonly treeConcurrency: number;
   private readonly cache = new Map<string, CacheEntry>();
 
   constructor(
@@ -69,17 +134,108 @@ export class OwnershipService {
       cacheTtlMs?: number;
       repoRoot?: string;
       simpleGit?: SimpleGitFactory;
+      /** Max concurrent per-file git queries during a tree walk. Default 12. */
+      treeConcurrency?: number;
     },
   ) {
     this.brain = brain;
     this.cacheTtlMs = options?.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
     this.repoRoot = options?.repoRoot ?? '.';
     this.gitFactory = options?.simpleGit ?? defaultGitFactory;
+    this.treeConcurrency = options?.treeConcurrency ?? DEFAULT_TREE_CONCURRENCY;
   }
 
   /** Resolved repository root path used for directory walking. */
   get root(): string {
     return this.repoRoot;
+  }
+
+  /**
+   * Walk the directory subtree at `path` (relative to the repo root) and score
+   * ownership for every file, to `depth` levels. Per-file queries run through a
+   * bounded semaphore so a large tree doesn't spawn thousands of concurrent
+   * `git` processes. Directory entries keep their on-disk (readdir) order.
+   * Throws an ENOENT-coded error if the top path does not exist.
+   */
+  async queryTree(opts: {
+    path: string;
+    depth: number;
+    limit: number;
+    namespace: string;
+  }): Promise<OwnershipNode> {
+    const absPath = nodePath.join(this.repoRoot, opts.path);
+    if (!fs.existsSync(absPath)) {
+      throw Object.assign(new Error(`Path not found: ${opts.path}`), { code: 'ENOENT' });
+    }
+    const sem = new Semaphore(this.treeConcurrency);
+    return this.walkTree(absPath, opts.path, opts.depth, opts.limit, opts.namespace, sem);
+  }
+
+  private async ownersFor(
+    relPath: string,
+    limit: number,
+    namespace: string,
+    sem: Semaphore,
+  ): Promise<Array<{ actor: string; score: number }>> {
+    try {
+      const scores = await sem.run(() => this.query({ path: relPath, limit, namespace }));
+      return scores.map((s) => ({ actor: s.actor, score: s.score }));
+    } catch {
+      // file not tracked by git or other query failure — return empty owners
+      return [];
+    }
+  }
+
+  private async walkTree(
+    absPath: string,
+    relPath: string,
+    depth: number,
+    limit: number,
+    namespace: string,
+    sem: Semaphore,
+  ): Promise<OwnershipNode> {
+    const stat = fs.statSync(absPath, { throwIfNoEntry: false });
+    if (!stat) {
+      throw Object.assign(new Error(`Path not found: ${relPath}`), { code: 'ENOENT' });
+    }
+
+    const name = nodePath.basename(relPath) || relPath;
+
+    if (!stat.isDirectory()) {
+      return { path: relPath, name, isDir: false, owners: await this.ownersFor(relPath, limit, namespace, sem) };
+    }
+
+    if (depth <= 0) {
+      return { path: relPath, name, isDir: true, children: [] };
+    }
+
+    const entries = fs.readdirSync(absPath, { withFileTypes: true });
+    // Fan out children concurrently; the semaphore inside ownersFor caps how
+    // many git queries actually run at once. Order is preserved by collecting
+    // the promises in readdir order and awaiting them together.
+    const childPromises: Array<Promise<OwnershipNode>> = [];
+    for (const entry of entries) {
+      if (entry.isDirectory() && OWNERSHIP_TREE_IGNORE_DIRS.has(entry.name)) continue;
+      if (entry.isSymbolicLink()) continue;
+
+      const childRel = relPath === '.' ? entry.name : nodePath.join(relPath, entry.name);
+      const childAbs = nodePath.join(absPath, entry.name);
+
+      if (entry.isDirectory()) {
+        childPromises.push(this.walkTree(childAbs, childRel, depth - 1, limit, namespace, sem));
+      } else if (entry.isFile()) {
+        childPromises.push(
+          this.ownersFor(childRel, limit, namespace, sem).then((owners) => ({
+            path: childRel,
+            name: entry.name,
+            isDir: false,
+            owners,
+          })),
+        );
+      }
+    }
+
+    return { path: relPath, name, isDir: true, children: await Promise.all(childPromises) };
   }
 
   async query(q: OwnershipQuery): Promise<OwnershipScore[]> {
@@ -240,23 +396,26 @@ export class OwnershipService {
     const result = new Map<string, number>();
     try {
       const db = this.brain.storage.sqlite;
-      const rows = db
-        .prepare(
-          `SELECT r.target_id, r.properties
-           FROM relations r
-           JOIN entities e ON e.id = r.source_id
-           WHERE r.type = 'reviewed_by'
-             AND (e.type = 'merge_request' OR e.type = 'pull_request')
-             AND e.namespace = ?
-             AND json_extract(e.properties, '$.touches_file') LIKE ?`,
-        )
-        .all(namespace, `%${path}%`) as Array<{ target_id: string; properties: string }>;
+      const rows = z.array(ReviewRowSchema).parse(
+        db
+          .prepare(
+            `SELECT r.target_id, r.properties
+             FROM relations r
+             JOIN entities e ON e.id = r.source_id
+             WHERE r.type = 'reviewed_by'
+               AND (e.type = 'merge_request' OR e.type = 'pull_request')
+               AND e.namespace = ?
+               AND json_extract(e.properties, '$.touches_file') LIKE ?`,
+          )
+          .all(namespace, `%${path}%`),
+      );
 
       for (const row of rows) {
         // target_id is the reviewer entity — look up its email/name
         const reviewer = this.brain.entities.get(row.target_id);
+        const email = reviewer?.properties.email;
         const actor =
-          (reviewer?.properties as Record<string, unknown> | undefined)?.email as string ??
+          (typeof email === 'string' ? email : undefined) ??
           reviewer?.name ??
           row.target_id;
         result.set(actor, (result.get(actor) ?? 0) + 1);

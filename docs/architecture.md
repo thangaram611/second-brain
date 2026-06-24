@@ -30,7 +30,7 @@ Second Brain is a developer knowledge graph that automatically captures, organiz
 
 The system supports real-time team synchronization via Yjs CRDTs, with namespace isolation between personal and shared knowledge. Search combines SQLite FTS5 full-text search with sqlite-vec vector embeddings, fused via Reciprocal Rank Fusion. A bitemporal model tracks both when events happened and when they were discovered.
 
-Second Brain exposes its graph through multiple interfaces: a 32-tool MCP server for AI assistant integration, a REST API with WebSocket broadcasts, a React-based graph explorer UI, and a CLI with 30+ commands. It runs as a pnpm monorepo with Turborepo orchestration, targeting Node.js 22+ with TypeScript 5.8+ in strict mode, ESM throughout.
+Second Brain exposes its graph through multiple interfaces: a 32-tool MCP server for AI assistant integration, a REST API with WebSocket broadcasts, a React-based graph explorer UI, and a CLI with 30+ commands. It runs as a pnpm monorepo with Turborepo orchestration, targeting Node.js 24+ with TypeScript 5.8+ in strict mode, ESM throughout.
 
 ---
 
@@ -408,11 +408,13 @@ Health check: `GET /health` (no auth required)
 
 - **Hocuspocus** 2.13.0 relay server
 - **Port:** 7421 (configurable via `RELAY_PORT`)
-- **Auth:** JWT tokens (via `jsonwebtoken` 9.0.0)
-  - Endpoint: `POST /auth/token`
-  - Payload: `{ sub: userName, namespace, permissions: ['read', 'write'] }`
+- **Auth:** verifies JWT tokens (via `jsonwebtoken` 9.0.0) on the WebSocket upgrade
+  - Tokens are minted by the API server (`@second-brain/sync` `signRelayToken`),
+    not the relay — the relay only verifies (`verifyRelayToken`). The client never
+    handles the secret.
+  - Payload: `{ sub, namespace, permissions: ['read', 'write'], iat, exp }`
   - Expiry: 86,400 seconds (24 hours)
-  - Secret: `RELAY_AUTH_SECRET` env var (required)
+  - Secret: `RELAY_AUTH_SECRET` env var (required on both the relay and the API server)
 - **Namespace isolation:** separate Yjs documents per namespace
 - **Persistence:** file-based `.ystate` binary files
   - Default directory: `~/.second-brain/relay` (configurable via `RELAY_PERSIST_DIR`)
@@ -448,7 +450,7 @@ Commander.js-based CLI invoked as `brain`.
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| Node.js | ≥ 22.0.0 | Runtime |
+| Node.js | ≥ 24.0.0 | Runtime |
 | pnpm | 10.8.0 | Package manager |
 | Turborepo | ^2.5.0 | Monorepo orchestration |
 | TypeScript | 5.8+ | Type system (strict mode) |

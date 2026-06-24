@@ -5,7 +5,6 @@ export {
   EMBEDDING_PROVIDERS,
 } from './llm-config.js';
 export type { LLMConfig, LLMProvider, EmbeddingProvider } from './llm-config.js';
-export { resolveChatModel, resolveEmbeddingModel } from './model-resolver.js';
 export { EmbeddingGenerator } from './embedding-generator.js';
 export type { EmbedItem, EmbedResult } from './embedding-generator.js';
 export { EmbedPipeline } from './embed-pipeline.js';

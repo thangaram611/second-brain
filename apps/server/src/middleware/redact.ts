@@ -23,7 +23,7 @@ import { stripPrivateBlocks } from '../services/observation-service.js';
  * a sync test in `__tests__/redact.test.ts` that fails if a CLI sample slips
  * past either layer.
  */
-export const BUILTIN_DENYLIST: Array<readonly [RegExp, string]> = [
+const BUILTIN_DENYLIST: Array<readonly [RegExp, string]> = [
   // PEM private keys — block whole bodies (multiline).
   [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[REDACTED:pem]'],
 

@@ -42,7 +42,7 @@ export function writeServerConfig(home: string, cfg: ServerConfig): void {
  * (caller treats the box as a client). Throws on malformed JSON or schema
  * failure — `safeReadServerConfig` below wraps this for non-throwing callers.
  */
-export function readServerConfig(home: string): ServerConfig | null {
+function readServerConfig(home: string): ServerConfig | null {
   const target = serverConfigPath(home);
   if (!fs.existsSync(target)) return null;
   return ServerConfigSchema.parse(JSON.parse(fs.readFileSync(target, 'utf8')));

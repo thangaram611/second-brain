@@ -59,6 +59,14 @@ export interface CreateRelationInput {
   eventTime?: string;
 }
 
+/**
+ * Like {@link CreateRelationInput} but carries an explicit `id`. Used by CRDT
+ * writeback so the local row's id matches the authoritative Y.Doc id.
+ */
+export interface UpsertRelationInput extends CreateRelationInput {
+  id: string;
+}
+
 export interface UpdateRelationInput {
   namespace?: string;
   properties?: Record<string, unknown>;

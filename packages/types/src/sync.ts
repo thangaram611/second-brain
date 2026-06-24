@@ -1,5 +1,7 @@
 // --- Sync types (Phase 6: Team Sync) ---
 
+import { z } from 'zod';
+
 /** Per-namespace sync configuration */
 export interface SyncConfig {
   namespace: string;
@@ -21,8 +23,6 @@ export interface SyncStatus {
   state: SyncConnectionState;
   connectedPeers: number;
   lastSyncedAt: string | null;
-  pendingChanges: number;
-  error: string | null;
 }
 
 /** Connected peer info from awareness protocol */
@@ -43,11 +43,24 @@ export interface SyncConflict {
   resolvedAt: string | null;
 }
 
+/** Permissions granted in a relay JWT */
+export const RELAY_PERMISSIONS = ['read', 'write'] as const;
+
+/**
+ * Canonical Zod schema for the relay JWT payload — the single source of truth
+ * shared by the issuer (the API server, via @second-brain/sync `signRelayToken`)
+ * and the verifier (apps/relay/src/server.ts `verifyRelayToken`).
+ * `iat`/`exp` are injected by jwt.sign; the issuer constructs the
+ * sub/namespace/permissions subset, while the verifier validates the full signed
+ * shape against this schema.
+ */
+export const RelayAuthPayloadSchema = z.object({
+  sub: z.string(),
+  namespace: z.string(),
+  permissions: z.array(z.enum(RELAY_PERMISSIONS)),
+  iat: z.number(),
+  exp: z.number(),
+});
+
 /** JWT payload for relay authentication */
-export interface RelayAuthPayload {
-  sub: string;
-  namespace: string;
-  permissions: ('read' | 'write')[];
-  iat: number;
-  exp: number;
-}
+export type RelayAuthPayload = z.infer<typeof RelayAuthPayloadSchema>;

@@ -3,8 +3,8 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import { Button } from '../ui/button.js';
 import { Input } from '../ui/input.js';
-import { useGraphStore } from '../../store/graph-store.js';
-import { ENTITY_TYPES } from '../../lib/types.js';
+import { useCreateEntity } from '../../hooks/use-graph.js';
+import { ENTITY_TYPES, isEntityType } from '../../lib/types.js';
 
 interface CreateEntityDialogProps {
   open: boolean;
@@ -15,17 +15,25 @@ interface FormState {
   error: string | null;
 }
 
+/** Read a text field from FormData as a string ('' when absent or a File). */
+function formField(formData: FormData, key: string): string {
+  const value = formData.get(key);
+  return typeof value === 'string' ? value : '';
+}
+
 export function CreateEntityDialog({ open, onOpenChange }: CreateEntityDialogProps) {
-  const createEntity = useGraphStore((s) => s.createEntity);
+  const createEntity = useCreateEntity();
 
   const [state, formAction, isPending] = useActionState(
     async (_prev: FormState, formData: FormData): Promise<FormState> => {
-      const name = (formData.get('name') as string | null)?.trim();
+      const name = formField(formData, 'name').trim();
       if (!name) return { error: 'Name is required' };
 
-      const type = formData.get('type') as string;
-      const observationRaw = (formData.get('observation') as string | null)?.trim();
-      const tagsRaw = (formData.get('tags') as string | null) ?? '';
+      const type = formField(formData, 'type');
+      if (!isEntityType(type)) return { error: 'Invalid entity type' };
+
+      const observationRaw = formField(formData, 'observation').trim();
+      const tagsRaw = formField(formData, 'tags');
 
       const observations = observationRaw ? [observationRaw] : [];
       const tags = tagsRaw
@@ -33,7 +41,7 @@ export function CreateEntityDialog({ open, onOpenChange }: CreateEntityDialogPro
         .map((t) => t.trim())
         .filter(Boolean);
 
-      await createEntity({ type, name, observations, tags });
+      await createEntity.mutateAsync({ type, name, observations, tags });
       onOpenChange(false);
       return { error: null };
     },

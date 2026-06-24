@@ -1,7 +1,9 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { HashRouter } from 'react-router';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { App } from './app.js';
+import { queryClient } from './lib/query-client.js';
 import { useAuthStore } from './store/auth-store.js';
 import './app.css';
 
@@ -18,8 +20,10 @@ if (!rootEl) throw new Error('No #root element found');
 
 createRoot(rootEl).render(
   <StrictMode>
-    <HashRouter>
-      <App />
-    </HashRouter>
+    <QueryClientProvider client={queryClient}>
+      <HashRouter>
+        <App />
+      </HashRouter>
+    </QueryClientProvider>
   </StrictMode>,
 );

@@ -1,8 +1,22 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
+import { z } from 'zod';
 import type { Brain } from '@second-brain/core';
 import type { PersonalityExtractor } from './personality-extractor.js';
+
+/** The on-disk user config, narrowed to the fields this scheduler touches. */
+const ConfigFileSchema = z
+  .object({
+    personality: z
+      .object({ lastRunAt: z.string().optional() })
+      .loose()
+      .optional(),
+  })
+  .loose();
+
+/** Distinct source actors discovered for nightly personality extraction. */
+const ActorRowSchema = z.object({ source_actor: z.string() });
 
 export interface PersonalitySchedulerOptions {
   configPath?: string;
@@ -30,11 +44,10 @@ export function startPersonalityScheduler(
   function readLastRunAt(): string | null {
     try {
       if (!existsSync(configPath)) return null;
-      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
-      return (
-        ((config.personality as Record<string, unknown>)?.lastRunAt as string) ??
-        null
+      const config = ConfigFileSchema.parse(
+        JSON.parse(readFileSync(configPath, 'utf-8')),
       );
+      return config.personality?.lastRunAt ?? null;
     } catch {
       return null;
     }
@@ -44,12 +57,10 @@ export function startPersonalityScheduler(
     try {
       const dir = dirname(configPath);
       if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-      let config: Record<string, unknown> = {};
-      if (existsSync(configPath)) {
-        config = JSON.parse(readFileSync(configPath, 'utf-8'));
-      }
-      if (!config.personality) config.personality = {};
-      (config.personality as Record<string, unknown>).lastRunAt = iso;
+      const config = existsSync(configPath)
+        ? ConfigFileSchema.parse(JSON.parse(readFileSync(configPath, 'utf-8')))
+        : ConfigFileSchema.parse({});
+      config.personality = { ...config.personality, lastRunAt: iso };
       writeFileSync(configPath, JSON.stringify(config, null, 2));
     } catch (err) {
       console.warn(
@@ -61,11 +72,13 @@ export function startPersonalityScheduler(
 
   async function runPersonalityExtraction(): Promise<void> {
     try {
-      const actors = brain.storage.sqlite
-        .prepare(
-          `SELECT DISTINCT source_actor FROM entities WHERE source_actor IS NOT NULL LIMIT 20`,
-        )
-        .all() as Array<{ source_actor: string }>;
+      const actors = z.array(ActorRowSchema).parse(
+        brain.storage.sqlite
+          .prepare(
+            `SELECT DISTINCT source_actor FROM entities WHERE source_actor IS NOT NULL LIMIT 20`,
+          )
+          .all(),
+      );
 
       for (const row of actors) {
         await extractor.run(row.source_actor);

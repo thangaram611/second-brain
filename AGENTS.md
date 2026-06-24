@@ -1,6 +1,6 @@
 # Second Brain — Agent Instructions
 
-Developer knowledge graph. pnpm monorepo, Turborepo, Node.js 22+, TypeScript 5.8+ strict, ESM only.
+Developer knowledge graph. pnpm monorepo, Turborepo, Node.js 24+, TypeScript 5.8+ strict, ESM only.
 
 Each package/app has its own AGENTS.md with package-specific instructions.
 

@@ -1,10 +1,11 @@
-import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import lockfile from 'proper-lockfile';
 import { GitLabProvider, GitHubProvider } from '@second-brain/collectors';
 import { ADAPTERS } from './adapters/index.js';
+import { hostFromUrl } from './lib/config.js';
+import { gitRepoRoot } from './lib/repo.js';
 import {
   uninstallGitHooks,
   type UninstallGitHooksResult,
@@ -13,11 +14,15 @@ import {
   computeRepoHash,
   loadWiredRepos,
   saveWiredRepos,
+  type WiredReposEntry,
 } from './git-context-daemon.js';
 import { deleteSecret, resolveSecret } from './keychain.js';
 
 export interface UnwireOptions {
   repo?: string;
+  /** Home directory for `~/.second-brain` config + lock. Defaults to `os.homedir()`.
+      Threaded explicitly so tests avoid mutating `process.env.HOME` (see WireOptions.home). */
+  home?: string;
   /** Also remove Claude session hooks. Default false (other repos may still use them). */
   removeClaudeHooks?: boolean;
   /** Purge project-namespace observations created by this phase's writers (watch/git-hook/gitlab/github). Default false — history preserved. */
@@ -46,19 +51,10 @@ export interface UnwireResult {
   warnings: string[];
 }
 
-function resolveRepoRoot(explicit?: string): string {
-  if (explicit) return path.resolve(explicit);
-  const out = execFileSync('git', ['rev-parse', '--show-toplevel'], {
-    encoding: 'utf8',
-    cwd: process.cwd(),
-    timeout: 2000,
-  }).trim();
-  return path.resolve(out);
-}
-
 export async function runUnwire(options: UnwireOptions = {}): Promise<UnwireResult> {
   // Share the same lock as `brain wire` so the two never interleave (rev #4).
-  const configDir = path.join(os.homedir(), '.second-brain');
+  const home = options.home ?? os.homedir();
+  const configDir = path.join(home, '.second-brain');
   fs.mkdirSync(configDir, { recursive: true });
   const lockPath = path.join(configDir, '.wire.lock');
   if (!fs.existsSync(lockPath)) fs.writeFileSync(lockPath, '', 'utf8');
@@ -74,21 +70,169 @@ export async function runUnwire(options: UnwireOptions = {}): Promise<UnwireResu
   }
 }
 
+export interface ProviderRemoveOptions {
+  repo?: string;
+  /** Home directory for `~/.second-brain`. Defaults to `os.homedir()` (see WireOptions.home). */
+  home?: string;
+  /** Proceed past provider API failures (401, timeout). 404 is always success. */
+  force?: boolean;
+  gitlabProvider?: GitLabProvider;
+  githubProvider?: GitHubProvider;
+  fetchImpl?: typeof fetch;
+}
+
+export interface ProviderRemoveResult {
+  repoRoot: string;
+  providerUnregistered: boolean;
+  keychainCleaned: number;
+  /** Whether the wiredRepos entry's provider metadata was cleared (repo stays wired for hooks). */
+  providerMetadataCleared: boolean;
+  warnings: string[];
+}
+
+/**
+ * Remove only the forge provider wiring for a repo — unregister the webhook,
+ * clean keychain secrets, and strip provider metadata from the wiredRepos entry
+ * while LEAVING the repo wired (git/assistant hooks untouched). Backs
+ * `brain provider remove`; `brain unwire` does the full teardown instead.
+ */
+export async function runProviderRemove(
+  options: ProviderRemoveOptions = {},
+): Promise<ProviderRemoveResult> {
+  const home = options.home ?? os.homedir();
+  const configDir = path.join(home, '.second-brain');
+  fs.mkdirSync(configDir, { recursive: true });
+  const lockPath = path.join(configDir, '.wire.lock');
+  if (!fs.existsSync(lockPath)) fs.writeFileSync(lockPath, '', 'utf8');
+  const release = await lockfile.lock(lockPath, { realpath: false, retries: 0, stale: 60_000 });
+  try {
+    const repoRoot = gitRepoRoot({ explicit: options.repo, throwIfMissing: true });
+    const repoHash = computeRepoHash(repoRoot);
+    const wired = loadWiredRepos(home);
+    const entry = wired.wiredRepos[repoHash];
+
+    const prov = await unregisterProvider(entry, {
+      force: options.force,
+      gitlabProvider: options.gitlabProvider,
+      githubProvider: options.githubProvider,
+      fetchImpl: options.fetchImpl,
+    });
+
+    let providerMetadataCleared = false;
+    if (entry?.providerId) {
+      // Keep the repo wired; drop only provider fields.
+      wired.wiredRepos[repoHash] = {
+        repoHash: entry.repoHash,
+        absPath: entry.absPath,
+        namespace: entry.namespace,
+        installedAt: entry.installedAt,
+      };
+      saveWiredRepos(wired, home);
+      providerMetadataCleared = true;
+    }
+
+    return {
+      repoRoot,
+      providerUnregistered: prov.providerUnregistered,
+      keychainCleaned: prov.keychainCleaned,
+      providerMetadataCleared,
+      warnings: prov.warnings,
+    };
+  } finally {
+    await release();
+  }
+}
+
 async function runUnwireInternal(options: UnwireOptions): Promise<UnwireResult> {
+  const home = options.home ?? os.homedir();
   const warnings: string[] = [];
-  const repoRoot = resolveRepoRoot(options.repo);
+  const repoRoot = gitRepoRoot({ explicit: options.repo, throwIfMissing: true });
   const repoHash = computeRepoHash(repoRoot);
-  const wired = loadWiredRepos();
+  const wired = loadWiredRepos(home);
   const entry = wired.wiredRepos[repoHash];
   // Capture the namespace now — the wiredRepos entry is deleted below, so the
   // caller (`brain unwire --purge`) can't look it up afterwards.
   const namespace = entry?.namespace ?? null;
 
-  // ── Phase 10.3: unregister provider webhook ──────────────────────────
+  // ── Phase 10.3: unregister provider webhook + clean keychain ─────────
+  const prov = await unregisterProvider(entry, options);
+  const { providerUnregistered, keychainCleaned } = prov;
+  warnings.push(...prov.warnings);
+
+  // ── Remove git hooks ─────────────────────────────────────────────────
+  const gitHooks = uninstallGitHooks(repoRoot);
+
+  let claudeRemoved: string[] | null = null;
+  if (options.removeClaudeHooks) {
+    const res = ADAPTERS.claude.uninstall({
+      scope: 'user',
+      home,
+      cwd: repoRoot,
+    });
+    claudeRemoved = res.removed;
+  }
+
+  let configEntryRemoved = false;
+  if (wired.wiredRepos[repoHash]) {
+    delete wired.wiredRepos[repoHash];
+    saveWiredRepos(wired, home);
+    configEntryRemoved = true;
+  }
+
+  // Clean up per-repo sidecar dir if empty.
+  try {
+    const dir = path.join(repoRoot, '.second-brain');
+    if (fs.existsSync(dir) && fs.readdirSync(dir).length === 0) {
+      fs.rmdirSync(dir);
+    }
+  } catch {
+    // ignore
+  }
+
+  // Purge is deferred to the caller with a live Brain instance.
+  const purgeRan = false;
+
+  return {
+    repoRoot,
+    repoHash,
+    namespace,
+    gitHooks,
+    configEntryRemoved,
+    claudeRemoved,
+    purgeRan,
+    providerUnregistered,
+    keychainCleaned,
+    warnings,
+  };
+}
+
+interface UnregisterProviderOptions {
+  /** Proceed past provider API failures (401, timeout). 404 is always success. */
+  force?: boolean;
+  /** Inject provider for tests. */
+  gitlabProvider?: GitLabProvider;
+  /** Inject GitHub provider for tests. */
+  githubProvider?: GitHubProvider;
+  /** Inject fetch for tests. */
+  fetchImpl?: typeof fetch;
+}
+
+/**
+ * Unregister a wired repo's forge webhook and delete its keychain secrets.
+ * Shared by `brain unwire` and `brain provider remove` so the webhook lifecycle
+ * stays in one place. Returns counts plus any non-fatal warnings; throws on a
+ * provider API failure unless `force` is set.
+ */
+async function unregisterProvider(
+  entry: WiredReposEntry | undefined,
+  options: UnregisterProviderOptions = {},
+): Promise<{ providerUnregistered: boolean; keychainCleaned: number; warnings: string[] }> {
+  const warnings: string[] = [];
   let providerUnregistered = false;
+
   if (entry?.providerId === 'gitlab' && entry.projectId && entry.webhookId) {
     const baseUrl = entry.providerBaseUrl ?? 'https://gitlab.com/api/v4';
-    const host = hostOf(baseUrl);
+    const host = hostFromUrl(baseUrl, baseUrl);
     const patRes = await resolveSecret(`gitlab.pat:${host}`, 'SECOND_BRAIN_GITLAB_TOKEN');
     if (patRes.value) {
       const provider =
@@ -147,14 +291,14 @@ async function runUnwireInternal(options: UnwireOptions): Promise<UnwireResult> 
     warnings.push('custom provider: remove the webhook manually on your forge.');
   }
 
-  // ── Phase 10.3: delete keychain entries ──────────────────────────────
+  // ── Delete keychain entries ──────────────────────────────────────────
   let keychainCleaned = 0;
   if (entry?.providerId === 'gitlab' && entry?.projectId) {
     const r = await deleteSecret(`gitlab.webhook-token:${entry.projectId}`);
     if (r.ok && r.value) keychainCleaned++;
   }
   if (entry?.providerId === 'gitlab' && entry?.providerBaseUrl) {
-    const r = await deleteSecret(`gitlab.pat:${hostOf(entry.providerBaseUrl)}`);
+    const r = await deleteSecret(`gitlab.pat:${hostFromUrl(entry.providerBaseUrl, entry.providerBaseUrl)}`);
     if (r.ok && r.value) keychainCleaned++;
   }
   if (entry?.providerId === 'github' && entry.projectId) {
@@ -164,59 +308,7 @@ async function runUnwireInternal(options: UnwireOptions): Promise<UnwireResult> 
     if (r2.ok && r2.value) keychainCleaned++;
   }
 
-  // ── Remove git hooks ─────────────────────────────────────────────────
-  const gitHooks = uninstallGitHooks(repoRoot);
-
-  let claudeRemoved: string[] | null = null;
-  if (options.removeClaudeHooks) {
-    const res = ADAPTERS.claude.uninstall({
-      scope: 'user',
-      home: os.homedir(),
-      cwd: repoRoot,
-    });
-    claudeRemoved = res.removed;
-  }
-
-  let configEntryRemoved = false;
-  if (wired.wiredRepos[repoHash]) {
-    delete wired.wiredRepos[repoHash];
-    saveWiredRepos(wired);
-    configEntryRemoved = true;
-  }
-
-  // Clean up per-repo sidecar dir if empty.
-  try {
-    const dir = path.join(repoRoot, '.second-brain');
-    if (fs.existsSync(dir) && fs.readdirSync(dir).length === 0) {
-      fs.rmdirSync(dir);
-    }
-  } catch {
-    // ignore
-  }
-
-  // Purge is deferred to the caller with a live Brain instance.
-  const purgeRan = false;
-
-  return {
-    repoRoot,
-    repoHash,
-    namespace,
-    gitHooks,
-    configEntryRemoved,
-    claudeRemoved,
-    purgeRan,
-    providerUnregistered,
-    keychainCleaned,
-    warnings,
-  };
-}
-
-function hostOf(baseUrl: string): string {
-  try {
-    return new URL(baseUrl).host;
-  } catch {
-    return baseUrl;
-  }
+  return { providerUnregistered, keychainCleaned, warnings };
 }
 
 function errMsg(err: unknown): string {

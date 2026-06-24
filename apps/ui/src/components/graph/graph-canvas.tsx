@@ -14,6 +14,27 @@ interface GraphCanvasProps {
   layout: LayoutName;
 }
 
+/**
+ * Build cytoscape layout options for one of our supported layouts. cytoscape's
+ * `LayoutOptions` is a union discriminated on a string-LITERAL `name`, so an
+ * object built from a `LayoutName` variable can't match it directly. Switching
+ * on each name narrows it to a single literal per case, which type-checks
+ * without a cast — and the exhaustive switch flags any future LayoutName that
+ * isn't handled here. `animate: false` is deliberate (see the teardown note).
+ */
+function buildLayoutOptions(name: LayoutName, fit: boolean): cytoscape.LayoutOptions {
+  switch (name) {
+    case 'cose':
+      return { name, animate: false, fit, nodeRepulsion: () => 8000, idealEdgeLength: () => 80 };
+    case 'grid':
+      return { name, animate: false, fit };
+    case 'circle':
+      return { name, animate: false, fit };
+    case 'breadthfirst':
+      return { name, animate: false, fit };
+  }
+}
+
 function buildStylesheet(): cytoscape.StylesheetStyle[] {
   return [
     {
@@ -79,6 +100,12 @@ export function GraphCanvas({
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<Core | null>(null);
   const layoutRef = useRef<LayoutName>(layout);
+  // Handle to the currently-running (animated) layout. Animated layouts drive
+  // node positions on requestAnimationFrame; if the instance is destroyed (or a
+  // new layout starts) while frames are still queued, the stale frame calls into
+  // a torn-down core ("Cannot read properties of null (reading 'notify')"). We
+  // stop the previous layout before starting another and before destroy.
+  const runningLayoutRef = useRef<cytoscape.Layouts | null>(null);
 
   // Initialize Cytoscape
   useEffect(() => {
@@ -95,6 +122,10 @@ export function GraphCanvas({
     cyRef.current = cy;
 
     return () => {
+      // Stop any in-flight animated layout so its queued frames don't run
+      // against the destroyed instance.
+      runningLayoutRef.current?.stop();
+      runningLayoutRef.current = null;
       cy.destroy();
       cyRef.current = null;
     };
@@ -179,16 +210,15 @@ export function GraphCanvas({
     if (nodesToAdd.length > 0 || edgesToAdd.length > 0) {
       cy.add([...nodesToAdd, ...edgesToAdd]);
 
-      // Run layout
-      cy.layout({
-        name: layoutRef.current,
-        animate: true,
-        animationDuration: 300,
-        fit: nodesToAdd.length > 5,
-        ...(layoutRef.current === 'cose'
-          ? { nodeRepulsion: () => 8000, idealEdgeLength: () => 80 }
-          : {}),
-      } as cytoscape.LayoutOptions).run();
+      // Run layout. Use synchronous (non-animated) layout: animated layouts
+      // drive positions on requestAnimationFrame, and a queued frame firing
+      // after the component unmounts (or a new layout starts) calls into a
+      // torn-down core → "Cannot read properties of null (reading 'notify')".
+      // Stop any previous layout first as a safety net.
+      runningLayoutRef.current?.stop();
+      const nextLayout = cy.layout(buildLayoutOptions(layoutRef.current, nodesToAdd.length > 5));
+      runningLayoutRef.current = nextLayout;
+      nextLayout.run();
     }
   }, [entities, relations]);
 
@@ -198,15 +228,10 @@ export function GraphCanvas({
     const cy = cyRef.current;
     if (!cy || cy.elements().length === 0) return;
 
-    cy.layout({
-      name: layout,
-      animate: true,
-      animationDuration: 300,
-      fit: true,
-      ...(layout === 'cose'
-        ? { nodeRepulsion: () => 8000, idealEdgeLength: () => 80 }
-        : {}),
-    } as cytoscape.LayoutOptions).run();
+    runningLayoutRef.current?.stop();
+    const nextLayout = cy.layout(buildLayoutOptions(layout, true));
+    runningLayoutRef.current = nextLayout;
+    nextLayout.run();
   }, [layout]);
 
   // Highlight selected

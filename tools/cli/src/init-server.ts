@@ -762,9 +762,11 @@ export async function runInitServer(options: InitServerOptions = {}): Promise<In
     '    export BRAIN_AUTH_TOKEN=' + minted.pat,
     `    brain admin invite --namespace ${options.namespace ?? '<team>'} --role member --ttl 24h`,
     '',
-    '  Note: each client needs the relay URL + RELAY_AUTH_SECRET to join sync.',
-    `    URL:    ws://${publicHostname(publicUrl)}:${relayPort}`,
-    `    Secret: see RELAY_AUTH_SECRET in ${secretsPath} (share out-of-band).`,
+    '  Sync onboarding: clients run `brain sync join` with just their invite PAT.',
+    '  The server mints the relay token itself, so RELAY_AUTH_SECRET never leaves',
+    '  this host — do NOT share it. Clients only need the relay URL (via team.json',
+    '  server.relayUrl, or `brain sync join --relay`):',
+    `    Relay URL: ws://${publicHostname(publicUrl)}:${relayPort}`,
     '',
   );
   stdout.write(lines.join('\n'));

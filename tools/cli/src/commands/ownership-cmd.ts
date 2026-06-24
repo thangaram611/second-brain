@@ -1,8 +1,7 @@
 import type { Command } from 'commander';
-import { execFileSync } from 'node:child_process';
-import * as path from 'node:path';
 import { URL } from 'node:url';
 import { getServerUrl } from '../lib/config.js';
+import { gitRepoRoot } from '../lib/repo.js';
 import { loadTeamManifest } from '../team-manifest.js';
 import { readCredentials } from '../lib/resolve-token.js';
 
@@ -30,7 +29,7 @@ export function resolveOwnershipNamespace(opts: {
   if (opts.explicit && opts.explicit.length > 0) return opts.explicit;
 
   const startDir = opts.cwd ?? process.cwd();
-  const repoRoot = findRepoRoot(startDir);
+  const repoRoot = gitRepoRoot({ cwd: startDir });
   if (repoRoot) {
     const loaded = loadTeamManifest(repoRoot);
     if (loaded.ok) return loaded.manifest.namespace;
@@ -58,21 +57,6 @@ export function resolveOwnershipNamespace(opts: {
   if (creds?.namespace) return creds.namespace;
 
   return 'personal';
-}
-
-function findRepoRoot(cwd: string): string | null {
-  try {
-    const out = execFileSync('git', ['rev-parse', '--show-toplevel'], {
-      cwd,
-      encoding: 'utf8',
-      timeout: 2000,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-    if (!out) return null;
-    return path.resolve(out);
-  } catch {
-    return null;
-  }
 }
 
 export function registerOwnershipCommand(program: Command): void {

@@ -1,10 +1,11 @@
 /**
- * T2 — `brain sync {join,status,leave}` must attach `Authorization: Bearer <pat>`
- * on every server-bound call. The relay `/auth/token` call is intentionally
- * unauthenticated (shared secret pattern) and must stay that way.
+ * `brain sync {join,status,leave}` must attach `Authorization: Bearer <pat>` on
+ * every server-bound call. Join is now a single server call — the server mints
+ * the relay token itself, so the client never contacts the relay or handles the
+ * shared secret.
  *
- * `resolveToken()` memoizes for the lifetime of the process, so each test
- * calls `resetTokenCache()` after mutating env to keep results deterministic.
+ * `resolveToken()` memoizes for the lifetime of the process, so each test calls
+ * `resetTokenCache()` after mutating env to keep results deterministic.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Command } from 'commander';
@@ -74,21 +75,12 @@ async function runSync(args: string[]): Promise<void> {
   await program.parseAsync(['node', 'brain', 'sync', ...args]);
 }
 
-/**
- * Fake-fetch handler for the two-call join flow: mint a relay JWT on
- * `/auth/token`, then echo a sync status from `/api/sync/join`.
- */
+/** Fake-fetch handler for join: echo a sync status from `/api/sync/join`. */
 function joinFetchHandler(
   statusNamespace: string,
 ): (url: string) => Promise<Response> {
-  return async (url: string): Promise<Response> => {
-    if (url.endsWith('/auth/token')) {
-      return new Response(JSON.stringify({ token: 'relay-jwt' }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      });
-    }
-    return new Response(
+  return async (): Promise<Response> =>
+    new Response(
       JSON.stringify({
         namespace: statusNamespace,
         state: 'connecting',
@@ -98,7 +90,6 @@ function joinFetchHandler(
       }),
       { status: 200, headers: { 'content-type': 'application/json' } },
     );
-  };
 }
 
 /** Create a temp git repo containing `.second-brain/team.json` with `raw`. */
@@ -177,60 +168,27 @@ describe('brain sync status', () => {
 });
 
 describe('brain sync join', () => {
-  it('relay /auth/token call is unauthenticated; server /api/sync/join carries the bearer', async () => {
-    fetchMock = makeFakeFetch(async (url) => {
-      if (url.endsWith('/auth/token')) {
-        return new Response(JSON.stringify({ token: 'relay-jwt' }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-      // /api/sync/join
-      return new Response(
-        JSON.stringify({
-          namespace: 'team-x',
-          state: 'connecting',
-          connectedPeers: 0,
-          lastSyncedAt: null,
-          error: null,
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      );
-    });
+  it('makes a single bearer-authenticated /api/sync/join call (no client secret, no relay call)', async () => {
+    fetchMock = makeFakeFetch(joinFetchHandler('team-x'));
     vi.stubGlobal('fetch', fetchMock);
 
-    await runSync([
-      'join',
-      '--namespace',
-      'team-x',
-      '--relay',
-      'ws://relay.test',
-      '--secret',
-      'shared-relay-secret',
-    ]);
+    await runSync(['join', '--namespace', 'team-x', '--relay', 'ws://relay.test']);
 
-    expect(captured).toHaveLength(2);
+    // Exactly one call — the server mints the relay token itself.
+    expect(captured).toHaveLength(1);
+    expect(captured[0].url).toBe('http://server.test/api/sync/join');
+    expect(captured[0].init.method).toBe('POST');
+    expect(getHeader(captured[0].init, 'authorization')).toBe('Bearer pat-test-token');
+    expect(getHeader(captured[0].init, 'content-type')).toBe('application/json');
 
-    // Call 1 — relay token mint: no Authorization header.
-    expect(captured[0].url).toBe('http://relay.test/auth/token');
-    expect(getHeader(captured[0].init, 'authorization')).toBeUndefined();
-    const tokenBody = JSON.parse(
-      typeof captured[0].init.body === 'string' ? captured[0].init.body : '',
-    );
-    expect(tokenBody.namespace).toBe('team-x');
-    expect(tokenBody.secret).toBe('shared-relay-secret');
-
-    // Call 2 — server join: bearer required.
-    expect(captured[1].url).toBe('http://server.test/api/sync/join');
-    expect(captured[1].init.method).toBe('POST');
-    expect(getHeader(captured[1].init, 'authorization')).toBe('Bearer pat-test-token');
-    expect(getHeader(captured[1].init, 'content-type')).toBe('application/json');
     const joinBody = JSON.parse(
-      typeof captured[1].init.body === 'string' ? captured[1].init.body : '',
+      typeof captured[0].init.body === 'string' ? captured[0].init.body : '',
     );
     expect(joinBody.namespace).toBe('team-x');
     expect(joinBody.relayUrl).toBe('ws://relay.test');
-    expect(joinBody.token).toBe('relay-jwt');
+    // No secret / token ever leaves the client.
+    expect(joinBody.token).toBeUndefined();
+    expect(joinBody.secret).toBeUndefined();
   });
 
   it('resolves namespace and relay from team.json when flags are omitted', async () => {
@@ -243,30 +201,19 @@ describe('brain sync join', () => {
     fetchMock = makeFakeFetch(joinFetchHandler('manifest-ns'));
     vi.stubGlobal('fetch', fetchMock);
 
-    await runSync(['join', '--secret', 'shared']);
+    await runSync(['join']);
 
-    expect(captured).toHaveLength(2);
-
-    // Relay token mint uses the manifest namespace + relay, still unauthenticated.
-    expect(captured[0].url).toBe('http://relay.test/auth/token');
-    expect(getHeader(captured[0].init, 'authorization')).toBeUndefined();
-    const tokenBody = JSON.parse(
-      typeof captured[0].init.body === 'string' ? captured[0].init.body : '',
-    );
-    expect(tokenBody.namespace).toBe('manifest-ns');
-    expect(tokenBody.secret).toBe('shared');
-
-    // Server join still carries the bearer and the manifest relay URL.
-    expect(captured[1].url).toBe('http://server.test/api/sync/join');
-    expect(getHeader(captured[1].init, 'authorization')).toBe('Bearer pat-test-token');
+    expect(captured).toHaveLength(1);
+    expect(captured[0].url).toBe('http://server.test/api/sync/join');
+    expect(getHeader(captured[0].init, 'authorization')).toBe('Bearer pat-test-token');
     const joinBody = JSON.parse(
-      typeof captured[1].init.body === 'string' ? captured[1].init.body : '',
+      typeof captured[0].init.body === 'string' ? captured[0].init.body : '',
     );
     expect(joinBody.namespace).toBe('manifest-ns');
     expect(joinBody.relayUrl).toBe('ws://relay.test');
   });
 
-  it('lets explicit flags override the manifest and converts wss to https', async () => {
+  it('lets explicit flags override the manifest', async () => {
     const repo = makeRepoWithManifest({
       version: 1,
       namespace: 'manifest-ns',
@@ -276,33 +223,13 @@ describe('brain sync join', () => {
     fetchMock = makeFakeFetch(joinFetchHandler('override-ns'));
     vi.stubGlobal('fetch', fetchMock);
 
-    await runSync([
-      'join',
-      '--namespace', 'override-ns',
-      '--relay', 'wss://override.test',
-      '--secret', 'shared',
-    ]);
+    await runSync(['join', '--namespace', 'override-ns', '--relay', 'wss://override.test']);
 
-    expect(captured[0].url).toBe('https://override.test/auth/token');
-    const tokenBody = JSON.parse(
-      typeof captured[0].init.body === 'string' ? captured[0].init.body : '',
-    );
-    expect(tokenBody.namespace).toBe('override-ns');
     const joinBody = JSON.parse(
-      typeof captured[1].init.body === 'string' ? captured[1].init.body : '',
+      typeof captured[0].init.body === 'string' ? captured[0].init.body : '',
     );
     expect(joinBody.namespace).toBe('override-ns');
     expect(joinBody.relayUrl).toBe('wss://override.test');
-  });
-
-  it('exits with the secret error when no secret is available', async () => {
-    delete process.env.RELAY_AUTH_SECRET;
-    await expect(
-      runSync(['join', '--namespace', 'team-x', '--relay', 'ws://relay.test']),
-    ).rejects.toThrow('process.exit');
-    expect(errorSpy).toHaveBeenCalledWith(
-      'Error: --secret or RELAY_AUTH_SECRET required',
-    );
   });
 });
 
@@ -335,11 +262,9 @@ describe('resolveSyncJoinConfig', () => {
       namespace: 'manifest-ns',
       server: { url: 'http://server.test', relayUrl: 'ws://relay.test' },
     });
-    const resolved = resolveSyncJoinConfig({ cwd: repo, secret: 'shared', env: {} });
+    const resolved = resolveSyncJoinConfig({ cwd: repo });
     expect(resolved.namespace).toBe('manifest-ns');
     expect(resolved.relay).toBe('ws://relay.test');
-    expect(resolved.relayHttpUrl).toBe('http://relay.test');
-    expect(resolved.secret).toBe('shared');
   });
 
   it('lets explicit flags override manifest values', () => {
@@ -352,12 +277,9 @@ describe('resolveSyncJoinConfig', () => {
       cwd: repo,
       namespace: 'override-ns',
       relay: 'wss://override.test',
-      secret: 'shared',
-      env: {},
     });
     expect(resolved.namespace).toBe('override-ns');
     expect(resolved.relay).toBe('wss://override.test');
-    expect(resolved.relayHttpUrl).toBe('https://override.test');
   });
 
   it('merges a single explicit flag with the manifest for the other value', () => {
@@ -367,14 +289,13 @@ describe('resolveSyncJoinConfig', () => {
       server: { url: 'http://server.test', relayUrl: 'ws://relay.test' },
     });
     // --namespace explicit, --relay filled from the manifest.
-    const a = resolveSyncJoinConfig({ cwd: repo, namespace: 'flag-ns', secret: 's', env: {} });
+    const a = resolveSyncJoinConfig({ cwd: repo, namespace: 'flag-ns' });
     expect(a.namespace).toBe('flag-ns');
     expect(a.relay).toBe('ws://relay.test');
     // --relay explicit, --namespace filled from the manifest.
-    const b = resolveSyncJoinConfig({ cwd: repo, relay: 'wss://flag.test', secret: 's', env: {} });
+    const b = resolveSyncJoinConfig({ cwd: repo, relay: 'wss://flag.test' });
     expect(b.namespace).toBe('manifest-ns');
     expect(b.relay).toBe('wss://flag.test');
-    expect(b.relayHttpUrl).toBe('https://flag.test');
   });
 
   it('ignores a broken manifest when both flags are explicit', () => {
@@ -384,32 +305,15 @@ describe('resolveSyncJoinConfig', () => {
       cwd: repo,
       namespace: 'team-x',
       relay: 'ws://relay.test',
-      secret: 's',
-      env: {},
     });
     expect(resolved.namespace).toBe('team-x');
     expect(resolved.relay).toBe('ws://relay.test');
   });
 
-  it('reads the secret from RELAY_AUTH_SECRET when --secret is omitted', () => {
-    const resolved = resolveSyncJoinConfig({
-      namespace: 'team-x',
-      relay: 'ws://relay.test',
-      env: { RELAY_AUTH_SECRET: 'from-env' },
-    });
-    expect(resolved.secret).toBe('from-env');
-  });
-
-  it('throws the secret error when neither --secret nor RELAY_AUTH_SECRET is set', () => {
-    expect(() =>
-      resolveSyncJoinConfig({ namespace: 'team-x', relay: 'ws://relay.test', env: {} }),
-    ).toThrow('--secret or RELAY_AUTH_SECRET required');
-  });
-
   it('throws a missing-namespace error when no flag and no manifest supplies it', () => {
     const repo = makeEmptyRepo();
     expect(() =>
-      resolveSyncJoinConfig({ cwd: repo, relay: 'ws://relay.test', secret: 's', env: {} }),
+      resolveSyncJoinConfig({ cwd: repo, relay: 'ws://relay.test' }),
     ).toThrow('--namespace is required');
   });
 
@@ -419,33 +323,22 @@ describe('resolveSyncJoinConfig', () => {
       namespace: 'manifest-ns',
       server: { url: 'http://server.test' },
     });
-    expect(() =>
-      resolveSyncJoinConfig({ cwd: repo, secret: 's', env: {} }),
-    ).toThrow('--relay is required');
+    expect(() => resolveSyncJoinConfig({ cwd: repo })).toThrow('--relay is required');
   });
 
   it('refuses a broken (invalid JSON) manifest instead of falling back', () => {
     const repo = makeRepoWithRawManifest('{ not valid json');
-    expect(() =>
-      resolveSyncJoinConfig({ cwd: repo, secret: 's', env: {} }),
-    ).toThrow(/invalid-json/);
+    expect(() => resolveSyncJoinConfig({ cwd: repo })).toThrow(/invalid-json/);
   });
 
   it('refuses a broken (invalid schema) manifest instead of falling back', () => {
     const repo = makeRepoWithManifest({ version: 1, server: { url: 'http://server.test' } });
-    expect(() =>
-      resolveSyncJoinConfig({ cwd: repo, secret: 's', env: {} }),
-    ).toThrow(/invalid-schema/);
+    expect(() => resolveSyncJoinConfig({ cwd: repo })).toThrow(/invalid-schema/);
   });
 
   it('refuses the personal namespace from an explicit flag', () => {
     expect(() =>
-      resolveSyncJoinConfig({
-        namespace: 'personal',
-        relay: 'ws://relay.test',
-        secret: 's',
-        env: {},
-      }),
+      resolveSyncJoinConfig({ namespace: 'personal', relay: 'ws://relay.test' }),
     ).toThrow('Cannot sync the personal namespace');
   });
 
@@ -455,19 +348,6 @@ describe('resolveSyncJoinConfig', () => {
       namespace: 'personal',
       server: { url: 'http://server.test', relayUrl: 'ws://relay.test' },
     });
-    expect(() =>
-      resolveSyncJoinConfig({ cwd: repo, secret: 's', env: {} }),
-    ).toThrow('Cannot sync the personal namespace');
-  });
-
-  it('rejects a relay URL that is not ws:// or wss://', () => {
-    expect(() =>
-      resolveSyncJoinConfig({
-        namespace: 'team-x',
-        relay: 'https://relay.test',
-        secret: 's',
-        env: {},
-      }),
-    ).toThrow(/must start with ws:\/\/ or wss:\/\//);
+    expect(() => resolveSyncJoinConfig({ cwd: repo })).toThrow('Cannot sync the personal namespace');
   });
 });

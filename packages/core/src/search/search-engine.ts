@@ -1,4 +1,5 @@
 import { eq, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import type {
   SearchOptions,
   SearchResult,
@@ -10,6 +11,14 @@ import { rawRowToEntity } from '../temporal/row-mappers.js';
 import { sanitizeFtsQuery } from './fts-utils.js';
 import { reciprocalRankFusion, type RankedResult } from './fusion.js';
 import { fulltextToRanked, type VectorSearchChannel } from './vector-channel.js';
+
+/** FTS5 `bm25()` rank column appended to the `entities` row in fulltext search. */
+const RankRowSchema = z.object({ rank: z.number() });
+
+/** Parse-at-boundary schemas for `getStats` aggregate rows (better-sqlite3 → `unknown`). */
+const CountRowSchema = z.object({ count: z.number() });
+const TypeCountRowSchema = z.object({ type: z.string(), count: z.number() });
+const NamespaceRowSchema = z.object({ namespace: z.string() });
 
 export class SearchEngine {
   /** Optional vector search channel. Set via `setVectorChannel()`. */
@@ -66,13 +75,11 @@ export class SearchEngine {
     sqlQuery += ` ORDER BY rank LIMIT ? OFFSET ?`;
     params.push(limit, offset);
 
-    const rows = this.storage.sqlite.prepare(sqlQuery).all(...params) as Array<
-      Record<string, unknown>
-    >;
+    const rows = this.storage.sqlite.prepare(sqlQuery).all(...params);
 
     return rows.map((row) => ({
       entity: rawRowToEntity(row),
-      score: Math.abs(row.rank as number), // BM25 returns negative scores
+      score: Math.abs(RankRowSchema.parse(row).rank), // BM25 returns negative scores
       matchChannel: 'fulltext' as const,
     }));
   }
@@ -138,7 +145,8 @@ export class SearchEngine {
           .prepare('SELECT count(*) as count FROM relations WHERE namespace = ?')
           .get(namespace)
       : this.storage.sqlite.prepare('SELECT count(*) as count FROM relations').get();
-    const totalRelations = (relResult as { count: number })?.count ?? 0;
+    const relParsed = CountRowSchema.safeParse(relResult);
+    const totalRelations = relParsed.success ? relParsed.data.count : 0;
 
     // Entities by type
     const entityTypeRows = this.storage.sqlite
@@ -147,7 +155,8 @@ export class SearchEngine {
           ? 'SELECT type, count(*) as count FROM entities WHERE namespace = ? GROUP BY type'
           : 'SELECT type, count(*) as count FROM entities GROUP BY type',
       )
-      .all(...(namespace ? [namespace] : [])) as Array<{ type: string; count: number }>;
+      .all(...(namespace ? [namespace] : []))
+      .map((r) => TypeCountRowSchema.parse(r));
     const entitiesByType: Record<string, number> = {};
     for (const row of entityTypeRows) entitiesByType[row.type] = row.count;
 
@@ -158,14 +167,16 @@ export class SearchEngine {
           ? 'SELECT type, count(*) as count FROM relations WHERE namespace = ? GROUP BY type'
           : 'SELECT type, count(*) as count FROM relations GROUP BY type',
       )
-      .all(...(namespace ? [namespace] : [])) as Array<{ type: string; count: number }>;
+      .all(...(namespace ? [namespace] : []))
+      .map((r) => TypeCountRowSchema.parse(r));
     const relationsByType: Record<string, number> = {};
     for (const row of relTypeRows) relationsByType[row.type] = row.count;
 
     // Namespaces
     const nsRows = this.storage.sqlite
       .prepare('SELECT DISTINCT namespace FROM entities')
-      .all() as Array<{ namespace: string }>;
+      .all()
+      .map((r) => NamespaceRowSchema.parse(r));
     const namespaces = nsRows.map((r) => r.namespace);
 
     return { totalEntities, totalRelations, entitiesByType, relationsByType, namespaces };

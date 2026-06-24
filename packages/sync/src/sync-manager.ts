@@ -24,8 +24,6 @@ export interface SyncSession {
 export type SyncWsEvent =
   | { type: 'sync:connected'; namespace: string; peers: number }
   | { type: 'sync:disconnected'; namespace: string }
-  | { type: 'sync:peer-joined'; namespace: string; peer: PeerInfo }
-  | { type: 'sync:peer-left'; namespace: string; peerId: number }
   | { type: 'sync:conflict'; namespace: string; conflict: SyncConflict };
 
 export class SyncManager {
@@ -56,8 +54,6 @@ export class SyncManager {
         state: 'connecting',
         connectedPeers: 0,
         lastSyncedAt: null,
-        pendingChanges: 0,
-        error: null,
       };
 
       hydrateDocFromDatabase(doc, this.entityManager, this.relationManager, config.namespace);

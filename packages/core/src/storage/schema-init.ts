@@ -1,5 +1,15 @@
 import type Database from 'better-sqlite3';
 
+// SINGLE SOURCE OF TRUTH for the physical SQLite schema. Everything the
+// database actually contains is declared here: the four tables (entities,
+// relations, embeddings, entities_fts), all 16 indexes (9 on entities, 7 on
+// relations including the UNIQUE idx_relations_unique_edge), the two VIRTUAL
+// generated branch_context_* columns per table, and the FTS5 virtual table
+// with its sync triggers. The Drizzle model in schema/entities.ts is
+// column-only (for $inferSelect/$inferInsert and the query builder) and must
+// NOT duplicate any index/constraint DDL — Drizzle never emits DDL in this
+// codebase, so a duplicate there would be inert and misleading.
+
 const CREATE_TABLES_SQL = `
   CREATE TABLE IF NOT EXISTS entities (
     id TEXT PRIMARY KEY,

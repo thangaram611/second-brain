@@ -7,9 +7,7 @@ import {
   yMapToEntity,
   relationToYMap,
   yMapToRelation,
-  setObservations,
   getObservations,
-  setTags,
   getTags,
 } from '../crdt/schema.js';
 
@@ -59,7 +57,6 @@ describe('createBrainDoc', () => {
     const doc = createBrainDoc();
     expect(doc.getMap('entities')).toBeDefined();
     expect(doc.getMap('relations')).toBeDefined();
-    expect(doc.getMap('meta').get('version')).toBe(1);
     expect(typeof doc.getMap('meta').get('lastModified')).toBe('string');
     doc.destroy();
   });
@@ -205,8 +202,8 @@ describe('relationToYMap / yMapToRelation round-trip', () => {
   });
 });
 
-describe('setObservations / getObservations', () => {
-  it('sets and gets observations as a set', () => {
+describe('getObservations', () => {
+  it('reads observations seeded by entityToYMap', () => {
     const doc = createBrainDoc();
     const entity = makeEntity();
     entityToYMap(doc, entity);
@@ -217,16 +214,12 @@ describe('setObservations / getObservations', () => {
       expect(obs).toContain('Conflict-free replicated data type');
       expect(obs).toContain('Used in real-time sync');
       expect(obs).toHaveLength(2);
-
-      // Replace observations
-      setObservations(yMap, ['New observation']);
-      expect(getObservations(yMap)).toEqual(['New observation']);
     }
 
     doc.destroy();
   });
 
-  it('handles empty observations', () => {
+  it('returns an empty array when there are no observations', () => {
     const doc = createBrainDoc();
     const entity = makeEntity({ observations: [] });
     entityToYMap(doc, entity);
@@ -234,33 +227,14 @@ describe('setObservations / getObservations', () => {
     const yMap = doc.getMap('entities').get(entity.id);
     if (yMap instanceof Y.Map) {
       expect(getObservations(yMap)).toEqual([]);
-      setObservations(yMap, ['First']);
-      expect(getObservations(yMap)).toEqual(['First']);
-    }
-
-    doc.destroy();
-  });
-
-  it('deduplicates observations naturally via set pattern', () => {
-    const doc = createBrainDoc();
-    const entity = makeEntity();
-    entityToYMap(doc, entity);
-
-    const yMap = doc.getMap('entities').get(entity.id);
-    if (yMap instanceof Y.Map) {
-      setObservations(yMap, ['dup', 'dup', 'unique']);
-      // Y.Map set pattern means 'dup' key is set twice to true — no duplicates in keys
-      expect(getObservations(yMap)).toContain('dup');
-      expect(getObservations(yMap)).toContain('unique');
-      expect(getObservations(yMap)).toHaveLength(2);
     }
 
     doc.destroy();
   });
 });
 
-describe('setTags / getTags', () => {
-  it('sets and gets tags', () => {
+describe('getTags', () => {
+  it('reads tags seeded by entityToYMap', () => {
     const doc = createBrainDoc();
     const entity = makeEntity();
     entityToYMap(doc, entity);
@@ -270,9 +244,7 @@ describe('setTags / getTags', () => {
       const tags = getTags(yMap);
       expect(tags).toContain('sync');
       expect(tags).toContain('distributed');
-
-      setTags(yMap, ['new-tag']);
-      expect(getTags(yMap)).toEqual(['new-tag']);
+      expect(tags).toHaveLength(2);
     }
 
     doc.destroy();

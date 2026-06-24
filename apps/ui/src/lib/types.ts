@@ -5,15 +5,19 @@ export const ENTITY_TYPES = [
 
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
-export const RELATION_TYPES = [
-  'relates_to', 'depends_on', 'implements', 'supersedes',
-  'contradicts', 'derived_from', 'authored_by', 'decided_in',
-  'uses', 'tests', 'contains', 'co_changes_with', 'preceded_by', 'blocks',
-] as const;
+const ENTITY_TYPE_SET = new Set<string>(ENTITY_TYPES);
 
-export type RelationType = (typeof RELATION_TYPES)[number];
+/** Runtime guard: is an arbitrary string one of the known entity types? */
+export function isEntityType(value: string): value is EntityType {
+  return ENTITY_TYPE_SET.has(value);
+}
 
-export interface EntitySource {
+export type RelationType =
+  | 'relates_to' | 'depends_on' | 'implements' | 'supersedes'
+  | 'contradicts' | 'derived_from' | 'authored_by' | 'decided_in'
+  | 'uses' | 'tests' | 'contains' | 'co_changes_with' | 'preceded_by' | 'blocks';
+
+interface EntitySource {
   type: string;
   ref?: string;
   actor?: string;
@@ -111,8 +115,6 @@ export interface SyncStatus {
   state: SyncConnectionState;
   connectedPeers: number;
   lastSyncedAt: string | null;
-  pendingChanges: number;
-  error: string | null;
 }
 
 export interface PeerInfo {
@@ -129,4 +131,14 @@ export interface SyncConflict {
   localValue: unknown;
   remoteValue: unknown;
   resolvedAt: string | null;
+}
+
+// --- Ownership types ---
+
+export interface OwnershipNode {
+  path: string;
+  name: string;
+  isDir: boolean;
+  owners?: Array<{ actor: string; score: number }>;
+  children?: OwnershipNode[];
 }

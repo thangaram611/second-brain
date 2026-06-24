@@ -11,13 +11,17 @@
     "lint": "turbo lint",
     "check-types": "turbo check-types",
     "clean": "turbo clean",
+    "knip": "knip",
+    "depcruise": "depcruise packages apps tools",
     "rebuild-native": "pnpm rebuild -r better-sqlite3 keytar argon2"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^25.6.0",
+    "dependency-cruiser": "^17.4.3",
     "eslint": "^10.5.0",
     "globals": "^17.6.0",
+    "knip": "^6.18.0",
     "tsdown": "^0.21.0",
     "turbo": "^2.5.0",
     "typescript": "^6.0.2",
@@ -25,6 +29,6 @@
   },
   "packageManager": "pnpm@10.8.0",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=24.0.0"
   }
 }

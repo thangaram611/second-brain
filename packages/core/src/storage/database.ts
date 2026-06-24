@@ -1,8 +1,12 @@
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
+import { z } from 'zod';
 import * as schema from '../schema/index.js';
 import { loadSqliteVec, createVecTable, recreateVecTable } from './vec-extension.js';
 import { initializeStorageSchema } from './schema-init.js';
+
+/** Parse-at-boundary shape for the `length(vector)` projection (row is `unknown`). */
+const VectorByteLengthRow = z.object({ bytes: z.number() });
 
 export type DrizzleDB = ReturnType<typeof createDrizzle>;
 
@@ -77,6 +81,26 @@ export class StorageDatabase {
       createVecTable(this.sqlite, dimensions);
     }
     this.vectorDimensions = dimensions;
+  }
+
+  /**
+   * Inspect the `embeddings` table for the dimension of already-stored vectors.
+   * The vector blob is raw little-endian f32, so dimension = byteLength / 4.
+   * Returns null when no embeddings are stored (or the row is not f32-aligned).
+   *
+   * This is the source of truth for an existing brain — callers should prefer
+   * it over a configured default so vector search opens the vec table at the
+   * dimension the data was actually written with.
+   */
+  detectStoredVectorDimensions(): number | null {
+    const raw = this.sqlite
+      .prepare(`SELECT length(vector) AS bytes FROM embeddings WHERE vector IS NOT NULL LIMIT 1`)
+      .get();
+    const parsed = VectorByteLengthRow.safeParse(raw);
+    if (!parsed.success || parsed.data.bytes <= 0 || parsed.data.bytes % 4 !== 0) {
+      return null;
+    }
+    return parsed.data.bytes / 4;
   }
 
   close(): void {

@@ -1,9 +1,6 @@
 import type { Command } from 'commander';
-import { execFileSync } from 'node:child_process';
-import * as os from 'node:os';
-import * as path from 'node:path';
-import { URL } from 'node:url';
 import { getServerUrl, buildAuthHeadersAsync } from '../lib/config.js';
+import { gitRepoRoot } from '../lib/repo.js';
 import { loadTeamManifest } from '../team-manifest.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -40,7 +37,6 @@ interface SyncStatus {
   state: string;
   connectedPeers: number;
   lastSyncedAt: string | null;
-  error: string | null;
 }
 
 function parseSyncStatus(raw: unknown): SyncStatus {
@@ -52,7 +48,6 @@ function parseSyncStatus(raw: unknown): SyncStatus {
     state: getString(raw, 'state'),
     connectedPeers: getNumber(raw, 'connectedPeers'),
     lastSyncedAt: getStringOrNull(raw, 'lastSyncedAt'),
-    error: getStringOrNull(raw, 'error'),
   };
 }
 
@@ -61,62 +56,22 @@ export interface ResolveSyncJoinConfigOptions {
   namespace?: string;
   /** Explicit `--relay` flag, if the user passed one. */
   relay?: string;
-  /** Explicit `--secret` flag, if the user passed one. */
-  secret?: string;
   /** Directory to start the git-root search from (defaults to `process.cwd()`). */
   cwd?: string;
-  /** Environment to read `RELAY_AUTH_SECRET` from (defaults to `process.env`). */
-  env?: NodeJS.ProcessEnv;
 }
 
 export interface ResolvedSyncJoinConfig {
   namespace: string;
   relay: string;
-  relayHttpUrl: string;
-  secret: string;
-}
-
-function findRepoRoot(cwd: string): string | null {
-  try {
-    const out = execFileSync('git', ['rev-parse', '--show-toplevel'], {
-      cwd,
-      encoding: 'utf8',
-      timeout: 2000,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-    if (!out) return null;
-    return path.resolve(out);
-  } catch {
-    return null;
-  }
 }
 
 /**
- * Convert a relay WebSocket URL to the HTTP(S) origin used for the relay
- * `/auth/token` mint request: `ws://` → `http://`, `wss://` → `https://`.
- * Anything else — including an `http(s)://` value passed by mistake — is
- * rejected so a bad relay URL fails loudly instead of silently producing a
- * wrong origin. Uses the WHATWG `URL` parser for validation.
- */
-function relayHttpUrlFromWebSocketUrl(relay: string): string {
-  const url = new URL(relay);
-  if (url.protocol === 'ws:') {
-    url.protocol = 'http:';
-    return url.toString().replace(/\/$/, '');
-  }
-  if (url.protocol === 'wss:') {
-    url.protocol = 'https:';
-    return url.toString().replace(/\/$/, '');
-  }
-  throw new Error(`relay URL must start with ws:// or wss://: ${relay}`);
-}
-
-/**
- * Resolve the namespace, relay URL, and shared secret for `brain sync join`.
+ * Resolve the namespace + relay URL for `brain sync join`.
  *
- * Precedence for namespace + relay: explicit flag, then `.second-brain/team.json`
- * (`namespace` / `server.relayUrl`). The secret is never read from the manifest —
- * only `--secret` or `RELAY_AUTH_SECRET`.
+ * Precedence: explicit flag, then `.second-brain/team.json` (`namespace` /
+ * `server.relayUrl`). There is no client secret — the server mints the relay
+ * token itself (it holds `RELAY_AUTH_SECRET`), so the client only needs to know
+ * which room to join and where the relay is.
  *
  * Mirrors `resolveOwnershipNamespace()`: when the manifest is the only available
  * source for a missing value but is present-and-broken (`unreadable` /
@@ -128,17 +83,11 @@ function relayHttpUrlFromWebSocketUrl(relay: string): string {
 export function resolveSyncJoinConfig(
   options: ResolveSyncJoinConfigOptions,
 ): ResolvedSyncJoinConfig {
-  const env = options.env ?? process.env;
-  const secret = options.secret ?? env.RELAY_AUTH_SECRET;
-  if (!secret) {
-    throw new Error('--secret or RELAY_AUTH_SECRET required');
-  }
-
   let namespace = options.namespace;
   let relay = options.relay;
 
   if (!namespace || !relay) {
-    const repoRoot = findRepoRoot(options.cwd ?? process.cwd());
+    const repoRoot = gitRepoRoot({ cwd: options.cwd ?? process.cwd() });
     if (repoRoot) {
       const loaded = loadTeamManifest(repoRoot);
       if (loaded.ok) {
@@ -169,12 +118,7 @@ export function resolveSyncJoinConfig(
     throw new Error('Cannot sync the personal namespace');
   }
 
-  return {
-    namespace,
-    relay,
-    relayHttpUrl: relayHttpUrlFromWebSocketUrl(relay),
-    secret,
-  };
+  return { namespace, relay };
 }
 
 export function registerSyncCommand(program: Command): void {
@@ -184,7 +128,7 @@ export function registerSyncCommand(program: Command): void {
     .command('sync')
     .description('Team sync management');
 
-  // brain sync join [--namespace <ns>] [--relay <url>] [--secret <secret>]
+  // brain sync join [--namespace <ns>] [--relay <url>]
   syncCmd
     .command('join')
     .description('Join a sync room for a project namespace')
@@ -196,43 +140,16 @@ export function registerSyncCommand(program: Command): void {
       '--relay <url>',
       'Relay server WebSocket URL (default: team.json server.relayUrl)',
     )
-    .option('--secret <secret>', 'Shared secret for relay auth (or set RELAY_AUTH_SECRET)')
-    .action(async (options: { namespace?: string; relay?: string; secret?: string }) => {
+    .action(async (options: { namespace?: string; relay?: string }) => {
       try {
         const resolved = resolveSyncJoinConfig({
           namespace: options.namespace,
           relay: options.relay,
-          secret: options.secret,
         });
 
-        // Step 1: Get auth token from relay
-        const tokenRes = await fetch(`${resolved.relayHttpUrl}/auth/token`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            namespace: resolved.namespace,
-            userName: os.userInfo().username,
-            secret: resolved.secret,
-          }),
-        });
-
-        if (!tokenRes.ok) {
-          const err: unknown = await tokenRes.json().catch(() => ({ error: 'Auth failed' }));
-          const message = isRecord(err) && typeof err.error === 'string'
-            ? err.error
-            : tokenRes.statusText;
-          console.error(`Failed to authenticate with relay: ${message}`);
-          process.exit(1);
-        }
-
-        const tokenBody: unknown = await tokenRes.json();
-        if (!isRecord(tokenBody) || typeof tokenBody.token !== 'string') {
-          console.error('Invalid token response from relay');
-          process.exit(1);
-        }
-        const { token } = tokenBody;
-
-        // Step 2: Tell the server to join sync
+        // Tell the server to join sync. The server mints the relay token itself
+        // (it holds RELAY_AUTH_SECRET), so the client never handles the secret —
+        // it just needs to be authenticated to the server (PAT/session).
         const joinHeaders = {
           ...(await buildAuthHeadersAsync()),
           'Content-Type': 'application/json',
@@ -243,7 +160,6 @@ export function registerSyncCommand(program: Command): void {
           body: JSON.stringify({
             namespace: resolved.namespace,
             relayUrl: resolved.relay,
-            token,
           }),
         });
 
@@ -304,9 +220,6 @@ export function registerSyncCommand(program: Command): void {
           console.log(`    Peers: ${s.connectedPeers}`);
           if (s.lastSyncedAt) {
             console.log(`    Last synced: ${s.lastSyncedAt}`);
-          }
-          if (s.error) {
-            console.log(`    Error: ${s.error}`);
           }
           console.log();
         }

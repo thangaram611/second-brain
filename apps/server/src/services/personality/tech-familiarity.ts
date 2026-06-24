@@ -18,7 +18,7 @@ export class TechFamiliarityStream implements PersonalityStream {
          WHERE type = 'uses'
            AND source_actor = ?`,
       )
-      .all(actor) as Record<string, unknown>[];
+      .all(actor);
 
     if (rows.length === 0) {
       logger.info(`[tech-familiarity] no 'uses' relations for actor=${actor}`);
@@ -120,5 +120,3 @@ function upsertPersonalityFact(
   });
   return { action: 'created', entityId: entity.id };
 }
-
-export default TechFamiliarityStream;

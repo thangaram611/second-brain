@@ -24,12 +24,13 @@
     "@second-brain/core": "workspace:*",
     "yjs": "^13.6.0",
     "y-protocols": "^1.0.0",
-    "lib0": "^0.2.0",
-    "@hocuspocus/provider": "^2.13.0"
+    "@hocuspocus/provider": "^2.13.0",
+    "jsonwebtoken": "^9.0.0"
   },
   "devDependencies": {
     "tsdown": "^0.21.0",
     "typescript": "^6.0.2",
-    "vitest": "^4.1.4"
+    "vitest": "^4.1.4",
+    "@types/jsonwebtoken": "^9.0.0"
   }
 }

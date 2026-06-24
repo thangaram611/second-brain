@@ -289,6 +289,78 @@ describe('RelationManager', () => {
     });
   });
 
+  describe('listAmong', () => {
+    it('returns only edges whose both endpoints are in the set', () => {
+      brain.relations.create({
+        type: 'depends_on',
+        sourceId: entityA.id,
+        targetId: entityB.id,
+        source: { type: 'manual' },
+      });
+      brain.relations.create({
+        type: 'depends_on',
+        sourceId: entityB.id,
+        targetId: entityC.id,
+        source: { type: 'manual' },
+      });
+
+      const subset = brain.relations.listAmong([entityA.id, entityB.id]);
+      expect(subset).toHaveLength(1);
+      expect(subset[0].sourceId).toBe(entityA.id);
+      expect(subset[0].targetId).toBe(entityB.id);
+    });
+
+    it('returns all induced edges when every endpoint is present', () => {
+      brain.relations.create({
+        type: 'depends_on',
+        sourceId: entityA.id,
+        targetId: entityB.id,
+        source: { type: 'manual' },
+      });
+      brain.relations.create({
+        type: 'depends_on',
+        sourceId: entityB.id,
+        targetId: entityC.id,
+        source: { type: 'manual' },
+      });
+
+      expect(brain.relations.listAmong([entityA.id, entityB.id, entityC.id])).toHaveLength(2);
+    });
+
+    it('returns [] for an empty id set', () => {
+      brain.relations.create({
+        type: 'depends_on',
+        sourceId: entityA.id,
+        targetId: entityB.id,
+        source: { type: 'manual' },
+      });
+      expect(brain.relations.listAmong([])).toEqual([]);
+    });
+
+    it('returns [] when no self-contained edge exists for a single id', () => {
+      brain.relations.create({
+        type: 'depends_on',
+        sourceId: entityA.id,
+        targetId: entityB.id,
+        source: { type: 'manual' },
+      });
+      expect(brain.relations.listAmong([entityA.id])).toEqual([]);
+    });
+
+    it('matches by id membership only — namespace-agnostic', () => {
+      brain.relations.create({
+        type: 'depends_on',
+        sourceId: entityA.id,
+        targetId: entityB.id,
+        namespace: 'session:other',
+        source: { type: 'manual' },
+      });
+      const result = brain.relations.listAmong([entityA.id, entityB.id]);
+      expect(result).toHaveLength(1);
+      expect(result[0].namespace).toBe('session:other');
+    });
+  });
+
   describe('cascade delete', () => {
     it('deletes relations when entity is deleted', () => {
       brain.relations.create({

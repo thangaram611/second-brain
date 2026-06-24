@@ -1,19 +1,28 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
+import { useQuery } from '@tanstack/react-query';
 import { Search as SearchIcon } from 'lucide-react';
-import { useSearchStore } from '../../store/search-store.js';
 import { useDebounce } from '../../hooks/use-debounce.js';
 import { Input } from '../ui/input.js';
 import { Card } from '../ui/card.js';
 import { TypeBadge } from '../ui/badge.js';
 import { LoadingState } from '../ui/loading.js';
 import { EmptyState } from '../ui/empty-state.js';
+import { ErrorState } from '../ui/error-state.js';
 import { QueryChatPanel } from '../query-chat-panel.js';
+import { api } from '../../lib/api.js';
+import { queryKeys } from '../../lib/query-keys.js';
 import { ENTITY_TYPES } from '../../lib/types.js';
 
+interface SearchFilters {
+  types?: string;
+  namespace?: string;
+  minConfidence?: number;
+}
+
 export function SearchPage() {
-  const { query, results, loading, filters, setQuery, setFilters, search } =
-    useSearchStore();
+  const [query, setQuery] = useState('');
+  const [filters, setFilters] = useState<SearchFilters>({});
   const debouncedQuery = useDebounce(query, 300);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -24,14 +33,23 @@ export function SearchPage() {
     if (q && !query) {
       setQuery(q);
     }
-  }, [searchParams, query, setQuery]);
+  }, [searchParams, query]);
 
-  // Auto-search on debounced query change
-  useEffect(() => {
-    if (debouncedQuery.trim()) {
-      search();
-    }
-  }, [debouncedQuery, filters, search]);
+  const searchQuery = useQuery({
+    queryKey: queryKeys.search(debouncedQuery, filters),
+    queryFn: () =>
+      api.search({
+        q: debouncedQuery,
+        types: filters.types,
+        namespace: filters.namespace,
+        minConfidence: filters.minConfidence,
+        limit: 50,
+      }),
+    enabled: !!debouncedQuery.trim(),
+  });
+  const results = searchQuery.data ?? [];
+  const loading = searchQuery.isFetching;
+  const error = searchQuery.error instanceof Error ? searchQuery.error.message : null;
 
   return (
     <div className="mx-auto max-w-6xl p-6">
@@ -78,6 +96,8 @@ export function SearchPage() {
 
           {loading ? (
             <LoadingState message="Searching..." />
+          ) : error ? (
+            <ErrorState message={error} onRetry={() => void searchQuery.refetch()} />
           ) : results.length > 0 ? (
             <div className="space-y-3">
               {results.map((result) => (

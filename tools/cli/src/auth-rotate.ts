@@ -32,7 +32,7 @@
  */
 
 import { z } from 'zod';
-import { getServerUrl } from './lib/config.js';
+import { getServerUrl, hostFromUrl } from './lib/config.js';
 import {
   resolveToken,
   resetTokenCache,
@@ -54,7 +54,7 @@ const RotateResponseSchema = z.object({
   expiresAt: z.iso.datetime(),
 });
 
-export type RotateResponse = z.infer<typeof RotateResponseSchema>;
+type RotateResponse = z.infer<typeof RotateResponseSchema>;
 
 const SLOT_VALUES = ['hook', 'default', 'cli'] as const satisfies readonly CredentialsSlot[];
 const SLOT_FIELDS: Record<CredentialsSlot, keyof CredentialsRecord> = {
@@ -98,16 +98,8 @@ export type AuthRotateOutcome =
       exitCode: typeof AUTH_ROTATE_ENV_FALLBACK_EXIT_CODE;
     };
 
-function hostFromUrl(url: string, fallback: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return fallback;
-  }
-}
-
 export function isCredentialsSlot(value: unknown): value is CredentialsSlot {
-  return typeof value === 'string' && (SLOT_VALUES as readonly string[]).includes(value);
+  return typeof value === 'string' && SLOT_VALUES.some((s) => s === value);
 }
 
 async function fetchWithError(

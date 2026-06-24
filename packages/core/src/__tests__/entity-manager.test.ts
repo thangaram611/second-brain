@@ -46,6 +46,43 @@ describe('EntityManager', () => {
     });
   });
 
+  describe('list (recency order)', () => {
+    it('returns newest-first with stable limit/offset pagination', () => {
+      brain.entities.create(makeConcept('First'));
+      brain.entities.create(makeConcept('Second'));
+      brain.entities.create(makeConcept('Third'));
+
+      // Newest-created first. ULIDs are monotonic, so even when several rows
+      // share an `updatedAt` millisecond the `id` tiebreaker keeps the order
+      // deterministic (Third > Second > First).
+      expect(brain.entities.list({ limit: 10 }).map((e) => e.name)).toEqual([
+        'Third',
+        'Second',
+        'First',
+      ]);
+
+      // Pagination is stable and non-overlapping across pages.
+      expect(brain.entities.list({ limit: 2, offset: 0 }).map((e) => e.name)).toEqual([
+        'Third',
+        'Second',
+      ]);
+      expect(brain.entities.list({ limit: 2, offset: 2 }).map((e) => e.name)).toEqual(['First']);
+    });
+
+    it('keeps creation order for a burst minted within one millisecond', () => {
+      // Regression guard for id monotonicity. A tight create loop lands many
+      // rows in the same `updatedAt` millisecond, so the entire ordering rests
+      // on the `id` tiebreaker. Plain (non-monotonic) ULIDs randomize their
+      // suffix per call and would scramble this; the monotonic generator keeps
+      // ids strictly increasing in creation order.
+      const names = Array.from({ length: 25 }, (_, i) => `Node-${String(i).padStart(2, '0')}`);
+      for (const name of names) brain.entities.create(makeConcept(name));
+
+      const listed = brain.entities.list({ limit: names.length }).map((e) => e.name);
+      expect(listed).toEqual([...names].reverse());
+    });
+  });
+
   describe('get', () => {
     it('returns null for nonexistent id', () => {
       expect(brain.entities.get('nonexistent')).toBeNull();

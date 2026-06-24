@@ -1,5 +1,5 @@
 import type { Command } from 'commander';
-import type { EntityType } from '@second-brain/types';
+import { ENTITY_TYPES, isEntityType } from '@second-brain/types';
 import { openBrain } from '../lib/config.js';
 
 export function registerSearchCommand(program: Command): void {
@@ -15,11 +15,20 @@ export function registerSearchCommand(program: Command): void {
         query: string,
         options: { type?: string[]; namespace?: string; limit: string },
       ) => {
+        if (options.type) {
+          const invalid = options.type.filter((t) => !isEntityType(t));
+          if (invalid.length > 0) {
+            console.error(`Invalid entity type(s): ${invalid.join(', ')}`);
+            console.error(`Valid types: ${ENTITY_TYPES.join(', ')}`);
+            process.exit(1);
+          }
+        }
+
         const brain = openBrain();
         try {
           const results = brain.search.search({
             query,
-            types: options.type as EntityType[] | undefined,
+            types: options.type?.filter(isEntityType),
             namespace: options.namespace,
             limit: parseInt(options.limit, 10),
           });

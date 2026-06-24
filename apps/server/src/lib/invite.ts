@@ -9,7 +9,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 
-export const InvitePayloadSchema = z.object({
+const InvitePayloadSchema = z.object({
   jti: z.string().min(8),
   namespace: z.string().min(1),
   role: z.enum(['member', 'admin']),
@@ -17,11 +17,6 @@ export const InvitePayloadSchema = z.object({
   exp: z.number().int().positive(),
 });
 export type InvitePayload = z.infer<typeof InvitePayloadSchema>;
-
-export interface SignedInvite {
-  token: string;
-  payload: InvitePayload;
-}
 
 function base64url(input: Buffer | string): string {
   const buf = typeof input === 'string' ? Buffer.from(input, 'utf8') : input;
@@ -55,17 +50,17 @@ export function signInvite(payload: InvitePayload, signingKey: string): string {
   return `${encodedPayload}.${encodedSig}`;
 }
 
-export type InviteVerifyError =
+type InviteVerifyError =
   | 'malformed'
   | 'bad-signature'
   | 'expired'
   | 'invalid-payload';
 
-export interface InviteVerifyOk {
+interface InviteVerifyOk {
   ok: true;
   payload: InvitePayload;
 }
-export interface InviteVerifyFail {
+interface InviteVerifyFail {
   ok: false;
   error: InviteVerifyError;
 }

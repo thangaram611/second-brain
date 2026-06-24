@@ -14,6 +14,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { upsertSentinelBlock } from '../adapters/shared/sentinel.js';
 
 const CURSOR_RULES_REL = path.join('.cursor', 'rules', 'second-brain-context.mdc');
 const COPILOT_INSTRUCTIONS_REL = path.join('.github', 'copilot-instructions.md');
@@ -41,13 +42,6 @@ function writeFileAtomic(target: string, content: string): void {
   }
 }
 
-const COPILOT_SENTINEL_BEGIN = '<!-- begin:second-brain -->';
-const COPILOT_SENTINEL_END = '<!-- end:second-brain -->';
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 /** Cursor `.mdc` file with a fixed frontmatter block. Body is the live context. */
 function buildCursorRulesFile(contextBlock: string): string {
   const trimmed = contextBlock.trim();
@@ -64,17 +58,6 @@ function buildCursorRulesFile(contextBlock: string): string {
     trimmed.length > 0 ? trimmed : '_(no context yet — start a Cursor session in this repo to populate this file.)_',
     '',
   ].join('\n');
-}
-
-/** Replace (or insert) the sentinel-delimited block in `existing`. */
-export function upsertSentinelBlock(existing: string, blockBody: string): string {
-  const begin = COPILOT_SENTINEL_BEGIN;
-  const end = COPILOT_SENTINEL_END;
-  const re = new RegExp(`${escapeRegExp(begin)}[\\s\\S]*?${escapeRegExp(end)}`, 'm');
-  const replacement = `${begin}\n${blockBody.trim()}\n${end}`;
-  if (re.test(existing)) return existing.replace(re, replacement);
-  if (existing.length === 0) return `${replacement}\n`;
-  return `${existing.replace(/\s+$/, '')}\n\n${replacement}\n`;
 }
 
 export interface RefreshResult {

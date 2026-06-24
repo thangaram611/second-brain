@@ -26,8 +26,11 @@ import type {
   AdapterUninstallResult,
   AdapterDetectResult,
 } from './types.js';
-import { HOOK_SENTINEL } from './types.js';
 import { resolveBrainMcpInvocation } from './mcp-resolve.js';
+import { isRecord, writeJson, escapeRegExp } from './shared/json-file.js';
+import { brainHookCommand as renderHookCommand, type HookVerb, type Phase } from './shared/hook-events.js';
+import { upsertSentinelDedup, removeSentinelEntries, upsertSentinelBlock as renderSentinelBlock } from './shared/sentinel.js';
+import { upsertMcpServersJson } from './shared/mcp-merge.js';
 
 const COPILOT_EVENTS = [
   'sessionStart',
@@ -38,6 +41,16 @@ const COPILOT_EVENTS = [
   'errorOccurred',
 ] as const;
 type CopilotEvent = (typeof COPILOT_EVENTS)[number];
+
+/** Host event → brain verb+phase mapping for GitHub Copilot CLI. */
+const COPILOT_EVENT_MAP: Record<CopilotEvent, { verb: HookVerb; phase?: Phase }> = {
+  sessionStart: { verb: 'session-start' },
+  sessionEnd: { verb: 'session-end' },
+  userPromptSubmitted: { verb: 'prompt-submit' },
+  preToolUse: { verb: 'tool-use', phase: 'pre' },
+  postToolUse: { verb: 'tool-use', phase: 'post' },
+  errorOccurred: { verb: 'stop' },
+};
 
 interface CopilotHookCommand {
   command: string;
@@ -52,22 +65,8 @@ const SENTINEL_BEGIN = '<!-- begin:second-brain -->';
 const SENTINEL_END = '<!-- end:second-brain -->';
 
 function brainHookCommand(event: CopilotEvent, override?: string): string {
-  const bin = override ?? 'brain-hook';
-  const flag = '--adapter copilot';
-  switch (event) {
-    case 'sessionStart':
-      return `${bin} session-start ${flag} ${HOOK_SENTINEL}`;
-    case 'sessionEnd':
-      return `${bin} session-end ${flag} ${HOOK_SENTINEL}`;
-    case 'userPromptSubmitted':
-      return `${bin} prompt-submit ${flag} ${HOOK_SENTINEL}`;
-    case 'preToolUse':
-      return `${bin} tool-use --phase pre ${flag} ${HOOK_SENTINEL}`;
-    case 'postToolUse':
-      return `${bin} tool-use --phase post ${flag} ${HOOK_SENTINEL}`;
-    case 'errorOccurred':
-      return `${bin} stop ${flag} ${HOOK_SENTINEL}`;
-  }
+  const { verb, phase } = COPILOT_EVENT_MAP[event];
+  return renderHookCommand({ verb, phase, adapter: 'copilot', bin: override });
 }
 
 function resolveProjectHooksPath(cwd: string): string {
@@ -84,10 +83,6 @@ function resolveInstructionsPath(cwd: string): string {
 
 function resolveAgentsMdPath(cwd: string): string {
   return path.join(cwd, 'AGENTS.md');
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
 function loadHooksFile(p: string): CopilotHooksFile {
@@ -116,27 +111,13 @@ function loadHooksFile(p: string): CopilotHooksFile {
   }
 }
 
-function writeJson(p: string, value: unknown): void {
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, JSON.stringify(value, null, 2) + '\n', 'utf8');
-}
-
 /**
- * Replace (or insert) a sentinel-delimited block inside `existing`. Content
- * outside the sentinels is preserved verbatim.
+ * Replace (or insert) the second-brain sentinel block inside `existing`.
+ * Re-exported from the shared toolkit so callers of `../copilot.js` keep the
+ * same import path; the default markers match this adapter's sentinels.
  */
 export function upsertSentinelBlock(existing: string, blockBody: string): string {
-  const begin = SENTINEL_BEGIN;
-  const end = SENTINEL_END;
-  const re = new RegExp(`${escapeRegExp(begin)}[\\s\\S]*?${escapeRegExp(end)}`, 'm');
-  const replacement = `${begin}\n${blockBody.trim()}\n${end}`;
-  if (re.test(existing)) return existing.replace(re, replacement);
-  if (existing.length === 0) return `${replacement}\n`;
-  return `${existing.replace(/\s+$/, '')}\n\n${replacement}\n`;
-}
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return renderSentinelBlock(existing, blockBody, { begin: SENTINEL_BEGIN, end: SENTINEL_END });
 }
 
 function defaultInstructionsBlock(): string {
@@ -175,23 +156,8 @@ function installImpl(opts: AdapterInstallOptions): AdapterInstallResult {
   for (const event of COPILOT_EVENTS) {
     const cmd = brainHookCommand(event, opts.hookCommand);
     const list = file.hooks[event] ?? [];
-    let matched = false;
-    let updated = false;
-    for (const item of list) {
-      if (item.command === cmd) {
-        matched = true;
-      } else if (item.command.includes(HOOK_SENTINEL)) {
-        item.command = cmd;
-        matched = true;
-        updated = true;
-      }
-    }
-    if (!matched) {
-      list.push({ command: cmd });
-      added.push(event);
-    } else if (updated) {
-      added.push(event);
-    }
+    const { changed } = upsertSentinelDedup(list, cmd, (command) => ({ command }));
+    if (changed) added.push(event);
     file.hooks[event] = list;
   }
   writeJson(hooksPath, file);
@@ -244,41 +210,11 @@ function installImpl(opts: AdapterInstallOptions): AdapterInstallResult {
 }
 
 function upsertMcp(mcpPath: string, auxFiles: string[], warnings: string[]): void {
-  let mcp: { mcpServers: Record<string, unknown> } = { mcpServers: {} };
-  if (fs.existsSync(mcpPath)) {
-    try {
-      const raw = fs.readFileSync(mcpPath, 'utf8');
-      if (raw.trim()) {
-        const parsed: unknown = JSON.parse(raw);
-        if (isRecord(parsed)) {
-          const servers = parsed.mcpServers;
-          mcp = { mcpServers: isRecord(servers) ? { ...servers } : {} };
-          for (const [k, v] of Object.entries(parsed)) {
-            if (k !== 'mcpServers') {
-              const obj: Record<string, unknown> = mcp;
-              obj[k] = v;
-            }
-          }
-        }
-      }
-    } catch {
-      // fall through to defaults
-    }
-  }
   const resolved = resolveBrainMcpInvocation();
   if (resolved.warning) warnings.push(resolved.warning);
   if (!resolved.invocation) return;
-  const desired: Record<string, unknown> = {
-    command: resolved.invocation.command,
-    args: resolved.invocation.args,
-  };
-  if (resolved.invocation.env) desired.env = resolved.invocation.env;
-  const existingEntry = mcp.mcpServers['second-brain'];
-  if (JSON.stringify(existingEntry) !== JSON.stringify(desired)) {
-    mcp.mcpServers['second-brain'] = desired;
-    writeJson(mcpPath, mcp);
-    auxFiles.push(mcpPath);
-  }
+  const { written } = upsertMcpServersJson(mcpPath, resolved.invocation);
+  if (written) auxFiles.push(mcpPath);
 }
 
 function uninstallImpl(opts: AdapterUninstallOptions): AdapterUninstallResult {
@@ -289,8 +225,8 @@ function uninstallImpl(opts: AdapterUninstallOptions): AdapterUninstallResult {
     const file = loadHooksFile(hooksPath);
     for (const event of Object.keys(file.hooks)) {
       const cmds = file.hooks[event];
-      const filtered = cmds.filter((c) => !c.command.includes(HOOK_SENTINEL));
-      if (filtered.length !== cmds.length) removed.push(event);
+      const { list: filtered, removed: didRemove } = removeSentinelEntries(cmds);
+      if (didRemove) removed.push(event);
       if (filtered.length > 0) file.hooks[event] = filtered;
       else delete file.hooks[event];
     }

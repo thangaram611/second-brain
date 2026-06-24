@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Network,
   Trash2,
@@ -7,11 +8,17 @@ import {
   Eye,
   Shield,
 } from 'lucide-react';
-import { useGraphStore } from '../../store/graph-store.js';
+import { api } from '../../lib/api.js';
+import { queryKeys } from '../../lib/query-keys.js';
+import { graphKey, deleteEntityFromCache } from '../../hooks/use-graph.js';
+import type { Entity } from '../../lib/types.js';
+import type { GraphData } from '../../lib/ws-cache.js';
+import { upsertEntity } from '../../lib/ws-cache.js';
 import { TypeBadge } from '../ui/badge.js';
 import { Button } from '../ui/button.js';
 import { Card } from '../ui/card.js';
 import { LoadingState } from '../ui/loading.js';
+import { ConfirmDialog } from '../ui/confirm-dialog.js';
 import { ObservationList } from './observation-list.js';
 import { RelationList } from './relation-list.js';
 
@@ -21,32 +28,58 @@ interface EntityDetailProps {
 }
 
 export function EntityDetail({ entityId, compact }: EntityDetailProps) {
-  const {
-    selectedEntity,
-    entities,
-    loading,
-    fetchEntity,
-    addObservation,
-    removeObservation,
-    deleteEntity,
-  } = useGraphStore();
+  const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
-  useEffect(() => {
-    fetchEntity(entityId);
-  }, [entityId, fetchEntity]);
+  const detailQuery = useQuery({
+    queryKey: queryKeys.entities.get(entityId),
+    queryFn: () => api.entities.get(entityId),
+  });
+  const data = detailQuery.data;
 
-  if (loading && !selectedEntity) return <LoadingState />;
+  // The graph cache's entity Map resolves relation target/source names.
+  const graphData = queryClient.getQueryData<GraphData>(graphKey);
+  const entities = graphData?.entities ?? new Map<string, Entity>();
 
-  const data = selectedEntity;
+  function patchGraphEntity(entity: Entity) {
+    queryClient.setQueryData<GraphData>(graphKey, (prev) => upsertEntity(prev, entity));
+  }
+
+  const addObservation = useMutation({
+    mutationFn: (observation: string) => api.entities.addObservation(entityId, observation),
+    onSuccess: (entity) => {
+      patchGraphEntity(entity);
+      void detailQuery.refetch();
+    },
+  });
+
+  const removeObservation = useMutation({
+    mutationFn: (observation: string) => api.entities.removeObservation(entityId, observation),
+    onSuccess: (entity) => {
+      patchGraphEntity(entity);
+      void detailQuery.refetch();
+    },
+  });
+
+  const deleteEntity = useMutation({
+    mutationFn: () => api.entities.delete(entityId),
+    onSuccess: () => {
+      queryClient.setQueryData<GraphData>(graphKey, (prev) =>
+        deleteEntityFromCache(prev, entityId),
+      );
+      setConfirmOpen(false);
+      navigate('/');
+    },
+  });
+  const deleteError =
+    deleteEntity.error instanceof Error ? deleteEntity.error.message : null;
+
+  if (detailQuery.isLoading && !data) return <LoadingState />;
+
   if (!data || data.entity.id !== entityId) return null;
 
   const { entity, outbound, inbound } = data;
-
-  async function handleDelete() {
-    await deleteEntity(entityId);
-    navigate('/');
-  }
 
   return (
     <div className={compact ? 'space-y-4' : 'mx-auto max-w-3xl space-y-6 p-6'}>
@@ -93,8 +126,8 @@ export function EntityDetail({ entityId, compact }: EntityDetailProps) {
       <Card>
         <ObservationList
           observations={entity.observations}
-          onAdd={(obs) => addObservation(entityId, obs)}
-          onRemove={(obs) => removeObservation(entityId, obs)}
+          onAdd={(obs) => addObservation.mutate(obs)}
+          onRemove={(obs) => removeObservation.mutate(obs)}
         />
       </Card>
 
@@ -113,11 +146,28 @@ export function EntityDetail({ entityId, compact }: EntityDetailProps) {
           <Network className="mr-1.5 h-3.5 w-3.5" />
           View in Graph
         </Button>
-        <Button variant="danger" size="sm" onClick={handleDelete}>
+        <Button variant="danger" size="sm" onClick={() => setConfirmOpen(true)}>
           <Trash2 className="mr-1.5 h-3.5 w-3.5" />
           Delete
         </Button>
       </div>
+
+      {deleteError && <p className="text-sm text-red-400">{deleteError}</p>}
+
+      <ConfirmDialog
+        open={confirmOpen}
+        danger
+        title="Delete entity?"
+        description={
+          <>
+            This permanently deletes &quot;{entity.name}&quot; and its relations.
+          </>
+        }
+        confirmLabel="Delete"
+        busy={deleteEntity.isPending}
+        onConfirm={() => deleteEntity.mutate()}
+        onCancel={() => setConfirmOpen(false)}
+      />
     </div>
   );
 }

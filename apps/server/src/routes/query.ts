@@ -1,20 +1,20 @@
-import fs from 'node:fs';
-import nodePath from 'node:path';
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import type { Brain } from '@second-brain/core';
-import type { OwnershipService, OwnershipScore } from '../services/ownership-service.js';
+import type { OwnershipService } from '../services/ownership-service.js';
 import { resolveScopedNamespace } from '../middleware/auth.js';
 import type { UsersService } from '../services/users.js';
 
 /**
- * Resolve the namespace for an ownership lookup. Wraps `resolveScopedNamespace`
- * with the extra rule that open mode (no auth wired) MUST receive
- * an explicit `?namespace=` — the underlying SQL filter has no sensible
- * fallback. Returns:
+ * Resolve the namespace for an ownership lookup. Wraps `resolveScopedNamespace`.
+ * In open mode (no auth wired) there is no multi-tenancy, so an omitted
+ * `?namespace=` falls back to `'personal'` — the same default the rest of the
+ * API uses for an unauthenticated, single-user brain (and where solo
+ * `brain index` writes). In auth mode the namespace is still derived/validated
+ * from the token or session by `resolveScopedNamespace`. Returns:
  *   - `string` → the namespace to use
- *   - `null`   → response already sent (400 / 403); caller must `return`
+ *   - `null`   → response already sent (403); caller must `return`
  */
 function resolveOwnershipNamespace(
   req: Request,
@@ -25,13 +25,9 @@ function resolveOwnershipNamespace(
   const ns = resolveScopedNamespace(req, res, requested, users ?? null);
   if (ns === null) return null;
   if (ns === undefined) {
-    // Open mode — no auth gate to require namespace, but the service
-    // still needs one. Reject explicitly rather than silently scanning all.
-    if (!requested) {
-      res.status(400).json({ error: 'namespace-required' });
-      return null;
-    }
-    return requested;
+    // Open mode — no auth gate. Use the requested namespace, else default to
+    // the local single-user namespace.
+    return requested ?? 'personal';
   }
   return ns;
 }
@@ -40,82 +36,6 @@ export interface QueryRouteOptions {
   bearerToken?: string;
   brain?: Brain;
   users?: UsersService | null;
-}
-
-interface OwnershipNode {
-  path: string;
-  name: string;
-  isDir: boolean;
-  owners?: Array<{ actor: string; score: number }>;
-  children?: OwnershipNode[];
-}
-
-async function buildOwnershipTree(
-  ownership: OwnershipService,
-  absPath: string,
-  relPath: string,
-  depth: number,
-  limit: number,
-  namespace: string,
-): Promise<OwnershipNode> {
-  const stat = fs.statSync(absPath, { throwIfNoEntry: false });
-  if (!stat) {
-    throw Object.assign(new Error(`Path not found: ${relPath}`), { code: 'ENOENT' });
-  }
-
-  const name = nodePath.basename(relPath) || relPath;
-
-  if (!stat.isDirectory()) {
-    let owners: Array<{ actor: string; score: number }> = [];
-    try {
-      const scores: OwnershipScore[] = await ownership.query({
-        path: relPath,
-        limit,
-        namespace,
-      });
-      owners = scores.map((s) => ({ actor: s.actor, score: s.score }));
-    } catch {
-      // file not tracked by git or other query failure — return empty owners
-    }
-    return { path: relPath, name, isDir: false, owners };
-  }
-
-  // Directory node
-  if (depth <= 0) {
-    return { path: relPath, name, isDir: true, children: [] };
-  }
-
-  const entries = fs.readdirSync(absPath, { withFileTypes: true });
-  const children: OwnershipNode[] = [];
-
-  for (const entry of entries) {
-    if (entry.name === '.git') continue;
-    if (entry.isSymbolicLink()) continue;
-
-    const childRel = relPath === '.' ? entry.name : nodePath.join(relPath, entry.name);
-    const childAbs = nodePath.join(absPath, entry.name);
-
-    if (entry.isDirectory()) {
-      children.push(
-        await buildOwnershipTree(ownership, childAbs, childRel, depth - 1, limit, namespace),
-      );
-    } else if (entry.isFile()) {
-      let owners: Array<{ actor: string; score: number }> = [];
-      try {
-        const scores: OwnershipScore[] = await ownership.query({
-          path: childRel,
-          limit,
-          namespace,
-        });
-        owners = scores.map((s) => ({ actor: s.actor, score: s.score }));
-      } catch {
-        // not tracked — empty owners
-      }
-      children.push({ path: childRel, name: entry.name, isDir: false, owners });
-    }
-  }
-
-  return { path: relPath, name, isDir: true, children };
 }
 
 export function queryRoutes(ownership: OwnershipService, options: QueryRouteOptions = {}): Router {
@@ -165,27 +85,25 @@ export function queryRoutes(ownership: OwnershipService, options: QueryRouteOpti
   });
 
   router.get('/api/query/ownership-tree', async (req, res, next) => {
+    let requestedPath = '.';
     try {
       const query = OwnershipTreeQuerySchema.parse(req.query);
+      requestedPath = query.path;
       const namespace = resolveOwnershipNamespace(req, res, query.namespace, options.users);
       if (namespace === null) return; // response already sent
-      const absPath = nodePath.join(ownership.root, query.path);
 
-      if (!fs.existsSync(absPath)) {
-        res.status(404).json({ error: 'path-not-found', path: query.path });
-        return;
-      }
-
-      const tree = await buildOwnershipTree(
-        ownership,
-        absPath,
-        query.path,
-        query.depth,
-        query.limit,
+      const tree = await ownership.queryTree({
+        path: query.path,
+        depth: query.depth,
+        limit: query.limit,
         namespace,
-      );
+      });
       res.json(tree);
     } catch (err) {
+      if (err !== null && typeof err === 'object' && 'code' in err && err.code === 'ENOENT') {
+        res.status(404).json({ error: 'path-not-found', path: requestedPath });
+        return;
+      }
       next(err);
     }
   });

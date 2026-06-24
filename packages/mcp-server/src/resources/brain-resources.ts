@@ -1,8 +1,16 @@
 import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Brain } from '@second-brain/core';
-import { ENTITY_TYPES } from '@second-brain/types';
-import type { EntityType } from '@second-brain/types';
+import { ENTITY_TYPES, isEntityType } from '@second-brain/types';
+
+/**
+ * URI-template variables arrive as `string | string[]` (a var can repeat).
+ * Our templates use single `{id}`/`{type}`/`{query}` placeholders, so collapse
+ * to a single string, taking the first element if an array somehow appears.
+ */
+function templateVar(value: string | string[]): string {
+  return Array.isArray(value) ? value[0] ?? '' : value;
+}
 
 export function registerResources(mcp: McpServer, brain: Brain): void {
   // --- brain://entities/{id} ---
@@ -32,7 +40,7 @@ export function registerResources(mcp: McpServer, brain: Brain): void {
       mimeType: 'application/json',
     },
     async (uri, params) => {
-      const id = params.id as string;
+      const id = templateVar(params.id);
       const entity = brain.entities.get(id);
       if (!entity) {
         return { contents: [{ uri: uri.href, text: `Entity not found: ${id}`, mimeType: 'text/plain' }] };
@@ -96,15 +104,15 @@ export function registerResources(mcp: McpServer, brain: Brain): void {
       mimeType: 'application/json',
     },
     async (uri, params) => {
-      const type = params.type as string;
-      if (!ENTITY_TYPES.includes(type as EntityType)) {
+      const type = templateVar(params.type);
+      if (!isEntityType(type)) {
         return {
           contents: [
             { uri: uri.href, text: `Invalid entity type: ${type}`, mimeType: 'text/plain' },
           ],
         };
       }
-      const results = brain.entities.findByType(type as EntityType);
+      const results = brain.entities.findByType(type);
       return {
         contents: [
           {
@@ -128,7 +136,7 @@ export function registerResources(mcp: McpServer, brain: Brain): void {
       mimeType: 'application/json',
     },
     async (uri, params) => {
-      const query = decodeURIComponent(params.query as string);
+      const query = decodeURIComponent(templateVar(params.query));
       const results = brain.search.search({ query, limit: 20 });
       return {
         contents: [

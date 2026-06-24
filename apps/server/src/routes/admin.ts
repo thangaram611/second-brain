@@ -5,7 +5,6 @@ import {
   exportJsonLd,
   exportDot,
   importGraph,
-  VectorSearchChannel,
   type Brain,
   type ExportFormat,
 } from '@second-brain/core';
@@ -36,6 +35,13 @@ export interface AdminAuthOptions {
 }
 
 const ScopeSchema = z.enum(['hook:read', 'read', 'write', 'admin']);
+
+/** Boundary schema for the embeddings-coverage aggregate query rows. */
+const EmbeddingStatusRowSchema = z.object({
+  namespace: z.string(),
+  total: z.number(),
+  embedded: z.number(),
+});
 const CreateInviteSchema = z.object({
   namespace: z.string().min(1),
   role: z.enum(['member', 'admin']).default('member'),
@@ -60,23 +66,25 @@ export function adminRoutes(brain: Brain, authOptions: AdminAuthOptions = {}): R
   const now = authOptions.now ?? Date.now;
 
   router.post('/api/reindex', requireAdmin, (_req, res) => {
-    brain.storage.sqlite.exec("INSERT INTO entities_fts(entities_fts) VALUES('rebuild')");
+    brain.reindex();
     res.json({ ok: true });
   });
 
   router.get('/api/embeddings/status', requireAdmin, (_req, res) => {
-    const rows = brain.storage.sqlite
-      .prepare(
-        `SELECT
-           e.namespace AS namespace,
-           COUNT(*) AS total,
-           SUM(CASE WHEN emb.entity_id IS NOT NULL THEN 1 ELSE 0 END) AS embedded
-         FROM entities e
-         LEFT JOIN embeddings emb ON emb.entity_id = e.id
-         GROUP BY e.namespace
-         ORDER BY e.namespace`,
-      )
-      .all() as Array<{ namespace: string; total: number; embedded: number }>;
+    const rows = z.array(EmbeddingStatusRowSchema).parse(
+      brain.storage.sqlite
+        .prepare(
+          `SELECT
+             e.namespace AS namespace,
+             COUNT(*) AS total,
+             SUM(CASE WHEN emb.entity_id IS NOT NULL THEN 1 ELSE 0 END) AS embedded
+           FROM entities e
+           LEFT JOIN embeddings emb ON emb.entity_id = e.id
+           GROUP BY e.namespace
+           ORDER BY e.namespace`,
+        )
+        .all(),
+    );
     res.json({
       vectorEnabled: brain.embeddings !== null,
       byNamespace: rows.map((r) => ({
@@ -114,16 +122,6 @@ export function adminRoutes(brain: Brain, authOptions: AdminAuthOptions = {}): R
       res.status(400).json({ error: `Invalid LLM config: ${msg}` });
       return;
     }
-    if (brain.embeddings === null) {
-      if (typeof opts.dimensions !== 'number') {
-        res.status(400).json({
-          error:
-            'Vector search not enabled. Pass `dimensions` (e.g. 768) to bootstrap.',
-        });
-        return;
-      }
-      brain.enableVectorSearch(opts.dimensions);
-    }
     const generator = tryCreateEmbeddingGenerator(cfg, { logger: serverLogger });
     if (!generator) {
       res.status(400).json({
@@ -132,19 +130,22 @@ export function adminRoutes(brain: Brain, authOptions: AdminAuthOptions = {}): R
       });
       return;
     }
+    if (brain.embeddings === null) {
+      // Size the vec table to the model: honor an explicit override, else probe
+      // the model so the caller need not know the dimension up front.
+      const dims =
+        typeof opts.dimensions === 'number'
+          ? opts.dimensions
+          : await generator.probeDimensions();
+      brain.enableVectorSearch(dims);
+    }
     const pipeline = new EmbedPipeline(brain, generator, {
       namespace: opts.namespace,
       batchSize: opts.batchSize,
     });
     try {
       const summary = await pipeline.run();
-      if (!brain.search.hasVectorChannel() && brain.embeddings !== null) {
-        brain.search.setVectorChannel(
-          new VectorSearchChannel(brain.embeddings, brain.entities, (q) =>
-            generator.generateOne(q),
-          ),
-        );
-      }
+      brain.attachVectorChannel((q) => generator.generateQuery(q));
       res.json({ ok: true, model: cfg.embeddingModel, ...summary });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

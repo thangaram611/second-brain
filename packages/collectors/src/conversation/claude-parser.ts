@@ -93,8 +93,8 @@ function extractTextContent(content: unknown): string {
       parts.push(block);
       continue;
     }
-    if (block && typeof block === 'object') {
-      const obj = block as Record<string, unknown>;
+    if (isRecord(block)) {
+      const obj = block;
       const blockType = typeof obj.type === 'string' ? obj.type : '';
       if (blockType === 'text' && typeof obj.text === 'string') {
         parts.push(obj.text);
@@ -117,4 +117,8 @@ export function conversationToText(convo: ParsedConversation, maxChars = 24_000)
   }
   const joined = lines.join('\n\n');
   return joined.length > maxChars ? joined.slice(0, maxChars) : joined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

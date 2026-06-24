@@ -1,14 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Database, Server, Cpu, RefreshCw, Users, Key, Copy, Check, LogOut } from 'lucide-react';
-import { useStatsStore } from '../../store/stats-store.js';
-import { useSyncStore, DEFAULT_RELAY_URL } from '../../store/sync-store.js';
 import { useAuthStore } from '../../store/auth-store.js';
 import { api } from '../../lib/api.js';
+import { DEFAULT_RELAY_URL, getEffectiveRelayUrl } from '../../lib/relay.js';
+import { queryKeys } from '../../lib/query-keys.js';
 import { Card } from '../ui/card.js';
 import { Button } from '../ui/button.js';
 import { Input } from '../ui/input.js';
+import { ConfirmDialog } from '../ui/confirm-dialog.js';
 import { EmbeddingStatusPanel } from '../embedding-status-panel.js';
-import type { SyncConnectionState } from '../../lib/types.js';
+import type { SyncConnectionState, SyncStatus } from '../../lib/types.js';
 
 function SyncDot({ state }: { state: SyncConnectionState }) {
   const colors: Record<SyncConnectionState, string> = {
@@ -21,15 +23,57 @@ function SyncDot({ state }: { state: SyncConnectionState }) {
 }
 
 export function SettingsPage() {
-  const { stats, fetchStats } = useStatsStore();
-  const { statuses, loading: syncLoading, error: syncError, fetchStatuses, joinSync, leaveSync } = useSyncStore();
+  const queryClient = useQueryClient();
   const user = useAuthStore((s) => s.user);
   const mode = useAuthStore((s) => s.mode);
   const relayUrl = useAuthStore((s) => s.relayUrl);
   const logout = useAuthStore((s) => s.logout);
 
+  const statsQuery = useQuery({
+    queryKey: queryKeys.stats(),
+    queryFn: () => api.stats(),
+  });
+  const stats = statsQuery.data;
+
+  const syncQuery = useQuery({
+    queryKey: queryKeys.sync.status(),
+    queryFn: () => api.sync.status(),
+  });
+  const statuses = syncQuery.data ?? [];
+
+  const joinMutation = useMutation({
+    mutationFn: (config: { namespace: string; token: string }) =>
+      api.sync.join({ ...config, relayUrl: getEffectiveRelayUrl() }),
+    onSuccess: (status) => {
+      queryClient.setQueryData<SyncStatus[]>(queryKeys.sync.status(), (prev) => [
+        ...(prev ?? []).filter((st) => st.namespace !== status.namespace),
+        status,
+      ]);
+    },
+  });
+
+  const leaveMutation = useMutation({
+    mutationFn: (namespace: string) => api.sync.leave(namespace),
+    onSuccess: (_result, namespace) => {
+      queryClient.setQueryData<SyncStatus[]>(queryKeys.sync.status(), (prev) =>
+        (prev ?? []).filter((st) => st.namespace !== namespace),
+      );
+    },
+  });
+
+  const syncLoading = syncQuery.isFetching || joinMutation.isPending || leaveMutation.isPending;
+  const syncError =
+    joinMutation.error instanceof Error
+      ? joinMutation.error.message
+      : leaveMutation.error instanceof Error
+        ? leaveMutation.error.message
+        : syncQuery.error instanceof Error
+          ? syncQuery.error.message
+          : null;
+
   const [joinNamespace, setJoinNamespace] = useState('');
   const [joinToken, setJoinToken] = useState('');
+  const [leaving, setLeaving] = useState<string | null>(null);
 
   // PAT rotation state — the new PAT is only shown ONCE, then cleared.
   const [rotatedPat, setRotatedPat] = useState<string | null>(null);
@@ -37,19 +81,14 @@ export function SettingsPage() {
   const [rotating, setRotating] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
-    fetchStats();
-    fetchStatuses();
-  }, [fetchStats, fetchStatuses]);
-
   const effectiveRelayUrl = relayUrl ?? DEFAULT_RELAY_URL;
 
   function handleJoin(e: React.FormEvent) {
     e.preventDefault();
     if (!joinNamespace || !joinToken) return;
-    // relayUrl is taken from auth-store / whoami; sync-store falls back
-    // to the default if it's not set yet.
-    joinSync({ namespace: joinNamespace, token: joinToken });
+    // relayUrl is taken from auth-store / whoami via getEffectiveRelayUrl();
+    // falls back to the default if whoami hasn't populated it yet.
+    joinMutation.mutate({ namespace: joinNamespace, token: joinToken });
     setJoinNamespace('');
     setJoinToken('');
   }
@@ -253,7 +292,7 @@ export function SettingsPage() {
             <Users className="h-4 w-4 text-cyan-400" />
             Team Sync
             <button
-              onClick={() => fetchStatuses()}
+              onClick={() => void syncQuery.refetch()}
               className="ml-auto text-zinc-500 hover:text-zinc-300"
               title="Refresh sync status"
             >
@@ -288,7 +327,7 @@ export function SettingsPage() {
                       </span>
                     )}
                     <button
-                      onClick={() => leaveSync(st.namespace)}
+                      onClick={() => setLeaving(st.namespace)}
                       className="rounded bg-zinc-700 px-2 py-0.5 text-xs text-zinc-300 hover:bg-zinc-600"
                     >
                       Leave
@@ -325,6 +364,26 @@ export function SettingsPage() {
           </form>
         </Card>
       </div>
+
+      <ConfirmDialog
+        open={leaving !== null}
+        danger
+        title="Leave sync namespace?"
+        description={
+          <>
+            This stops syncing &quot;{leaving}&quot; with peers. Local data is kept.
+          </>
+        }
+        confirmLabel="Leave"
+        busy={syncLoading}
+        onConfirm={() => {
+          if (leaving) {
+            leaveMutation.mutate(leaving);
+            setLeaving(null);
+          }
+        }}
+        onCancel={() => setLeaving(null)}
+      />
     </div>
   );
 }

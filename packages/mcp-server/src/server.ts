@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Brain } from '@second-brain/core';
+import { resolveLLMConfig, tryCreateEmbeddingGenerator } from '@second-brain/ingestion';
 import { registerReadTools } from './tools/read-tools.js';
 import { registerWriteTools } from './tools/write-tools.js';
 import { registerPipelineTools } from './tools/pipeline-tools.js';
@@ -15,6 +16,25 @@ export function createMcpServer(options: SecondBrainMcpOptions): {
   brain: Brain;
 } {
   const brain = new Brain({ path: options.dbPath, wal: options.wal });
+
+  // If embeddings already exist on disk, wire the vector search channel now so
+  // query_graph uses it from the first call — not only after rebuild_embeddings
+  // runs in this process. Best-effort: degrade to full-text if no embedder.
+  try {
+    if (brain.enableVectorSearchFromStore() !== null) {
+      const generator = tryCreateEmbeddingGenerator(resolveLLMConfig(), {
+        logger: { warn: (m) => console.warn('[second-brain] vector channel disabled:', m) },
+      });
+      if (generator) {
+        brain.attachVectorChannel((q) => generator.generateQuery(q));
+      }
+    }
+  } catch (err) {
+    console.warn(
+      '[second-brain] vector channel init skipped:',
+      err instanceof Error ? err.message : err,
+    );
+  }
 
   const mcp = new McpServer(
     {

@@ -1,14 +1,18 @@
+import { z } from 'zod';
 import type {
   Entity,
   SearchResult,
   TemporalQueryOptions,
   TimelineEntry,
   TimelineOptions,
-  EntityType,
 } from '@second-brain/types';
 import type { StorageDatabase } from '../storage/index.js';
 import { sanitizeFtsQuery } from '../search/fts-utils.js';
 import { rawRowToEntity } from './row-mappers.js';
+import { TimelineRowSchema } from './row-schemas.js';
+
+/** FTS5 `bm25()` rank column appended to the `entities` row in `searchAsOf`. */
+const RankRowSchema = z.object({ rank: z.number() });
 
 /**
  * Bitemporal query engine — supports "as-of" queries and timeline generation.
@@ -50,7 +54,7 @@ export class BitemporalQueries {
     sql += ` ORDER BY event_time DESC LIMIT ? OFFSET ?`;
     params.push(limit, offset);
 
-    const rows = this.storage.sqlite.prepare(sql).all(...params) as Array<Record<string, unknown>>;
+    const rows = this.storage.sqlite.prepare(sql).all(...params);
     return rows.map(rawRowToEntity);
   }
 
@@ -88,17 +92,20 @@ export class BitemporalQueries {
     `;
 
     const params = [from, to, ...filterParams, from, to, ...filterParams, limit, offset];
-    const rows = this.storage.sqlite.prepare(sql).all(...params) as Array<Record<string, unknown>>;
+    const rows = this.storage.sqlite.prepare(sql).all(...params);
 
-    return rows.map((row) => ({
-      entityId: row.id as string,
-      entityName: row.name as string,
-      entityType: row.type as EntityType,
-      changeType: row.change_type as 'created' | 'updated',
-      timestamp: row.ts as string,
-      confidence: row.confidence as number,
-      namespace: row.namespace as string,
-    }));
+    return rows.map((row) => {
+      const parsed = TimelineRowSchema.parse(row);
+      return {
+        entityId: parsed.id,
+        entityName: parsed.name,
+        entityType: parsed.type,
+        changeType: parsed.change_type,
+        timestamp: parsed.ts,
+        confidence: parsed.confidence,
+        namespace: parsed.namespace,
+      };
+    });
   }
 
   /**
@@ -144,11 +151,11 @@ export class BitemporalQueries {
     sql += ` ORDER BY rank LIMIT ? OFFSET ?`;
     params.push(limit, offset);
 
-    const rows = this.storage.sqlite.prepare(sql).all(...params) as Array<Record<string, unknown>>;
+    const rows = this.storage.sqlite.prepare(sql).all(...params);
 
     return rows.map((row) => ({
       entity: rawRowToEntity(row),
-      score: Math.abs(row.rank as number),
+      score: Math.abs(RankRowSchema.parse(row).rank),
       matchChannel: 'fulltext' as const,
     }));
   }

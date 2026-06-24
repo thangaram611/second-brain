@@ -15,7 +15,7 @@ GitLab self-hosted instances are fully supported. The base URL is auto-detected
 from the git remote, or can be set explicitly:
 
 ```bash
-brain wire --provider gitlab --gitlab-url https://gitlab.example.com
+brain provider add gitlab --gitlab-url https://gitlab.example.com
 ```
 
 ### Token Requirements
@@ -27,10 +27,10 @@ brain wire --provider gitlab --gitlab-url https://gitlab.example.com
 Set via flag or environment variable:
 
 ```bash
-brain wire --provider gitlab --gitlab-token glpat-xxx
+brain provider add gitlab --gitlab-token glpat-xxx
 # or
 export SECOND_BRAIN_GITLAB_TOKEN=glpat-xxx
-brain wire --provider gitlab
+brain provider add gitlab
 ```
 
 ### Webhook Events
@@ -88,12 +88,12 @@ The generated variable uses the shell-safe form
 Set via flag or environment variable:
 
 ```bash
-brain wire --provider github --github-token ghp_xxx
+brain provider add github --github-token ghp_xxx
 # or
 export SECOND_BRAIN_GITHUB_TOKEN=ghp_xxx
 # or (fallback)
 export GITHUB_TOKEN=ghp_xxx
-brain wire --provider github
+brain provider add github
 ```
 
 ### Webhook Events
@@ -128,7 +128,7 @@ The generated variable uses the shell-safe form
 For GitHub Enterprise instances, set the base URL:
 
 ```bash
-brain wire --provider github --github-base-url https://github.example.com/api/v3
+brain provider add github --github-base-url https://github.example.com/api/v3
 ```
 
 ### Email Resolution

@@ -20,6 +20,7 @@ import { registerSyncCommand } from './commands/sync.js';
 import { registerTailCommand } from './commands/tail.js';
 import { registerRecallCommand } from './commands/recall.js';
 import { registerWireUnwireCommands } from './commands/wire-unwire.js';
+import { registerProviderCommands } from './commands/provider-cmd.js';
 import { registerWireAssistantCommands } from './commands/wire-assistant.js';
 import { registerFlipBranchCommand } from './commands/flip-branch.js';
 import { registerOwnershipCommand } from './commands/ownership-cmd.js';
@@ -30,7 +31,12 @@ const program = new Command();
 program
   .name('brain')
   .description('Second Brain — developer knowledge graph CLI')
-  .version('0.1.0');
+  .version('0.1.0')
+  // Bind options to the command they follow. Without this, a parent command's
+  // option (e.g. `index --namespace`) greedily consumes the same-named option
+  // on a subcommand (`index git --namespace X`), silently dropping the value.
+  // `brain` has no top-level options, so this only affects parsing precedence.
+  .enablePositionalOptions();
 
 registerInitResetCommands(program);
 registerAdminCommand(program);
@@ -49,6 +55,7 @@ registerSyncCommand(program);
 registerTailCommand(program);
 registerRecallCommand(program);
 registerWireUnwireCommands(program);
+registerProviderCommands(program);
 registerWireAssistantCommands(program);
 registerFlipBranchCommand(program);
 registerOwnershipCommand(program);

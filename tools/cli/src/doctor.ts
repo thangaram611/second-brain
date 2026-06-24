@@ -19,12 +19,14 @@ import {
   serverConfigPath,
   type ServerConfig,
 } from './lib/server-config.js';
+import { patAccount } from './lib/resolve-token.js';
+import { discoverRepoRoot } from './lib/repo.js';
 
 const LocalHealthSchema = z.object({ status: z.literal('ok') }).passthrough();
 
-export type CheckStatus = 'pass' | 'warn' | 'fail';
+type CheckStatus = 'pass' | 'warn' | 'fail';
 
-export interface CheckResult {
+interface CheckResult {
   name: string;
   status: CheckStatus;
   message: string;
@@ -57,10 +59,6 @@ const WhoamiSchema = z.object({
 interface HostContext {
   host: string;
   record: CredentialsRecord;
-}
-
-function patAccount(host: string, tokenId: string): string {
-  return `pat:${host}:${tokenId}`;
 }
 
 async function checkLocalServerReachable(
@@ -556,7 +554,7 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<DoctorResult>
   checks.push(checkAuthTokenEnv());
 
   // Per-repo checks (when cwd is inside a repo).
-  const repoRoot = findRepoRoot(cwd);
+  const repoRoot = discoverRepoRoot(cwd);
   if (repoRoot) {
     const ctx: RepoCheckCtx = { repoRoot, homeDir };
     checks.push(checkManifestDrift(ctx));
@@ -584,19 +582,6 @@ export async function runDoctor(opts: DoctorOptions = {}): Promise<DoctorResult>
   stdout.write(lines.join('\n'));
 
   return { exitCode: fail > 0 ? 1 : 0, checks };
-}
-
-function findRepoRoot(cwd: string): string | null {
-  let dir = path.resolve(cwd);
-  for (let i = 0; i < 32; i++) {
-    if (fs.existsSync(path.join(dir, '.git')) || fs.existsSync(path.join(dir, '.second-brain'))) {
-      return dir;
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
-  return null;
 }
 
 // ── Manifest-snapshot persistence ──────────────────────────────────────────

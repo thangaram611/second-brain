@@ -16,7 +16,7 @@ loop.
 | Requirement | Install |
 |-------------|---------|
 | macOS 13+ | — |
-| Node.js 22+ | `brew install node@22` (then `brew link --overwrite node@22`) |
+| Node.js 24+ | `brew install node@24` (then `brew link --overwrite node@24`) |
 | pnpm 10+ | `corepack enable && corepack prepare pnpm@latest --activate` |
 | git | preinstalled or `brew install git` |
 
@@ -147,22 +147,20 @@ rm -rf ~/.second-brain
 
 ---
 
-## Sync URL + secret distribution
+## Sync onboarding
 
-The relay URL can be committed to the team repo as `server.relayUrl` in
-`.second-brain/team.json`, so clients no longer need to pass `--relay` (or
-`--namespace`). The shared `RELAY_AUTH_SECRET` is still distributed
-out-of-band — it never belongs in the manifest.
+Clients never handle `RELAY_AUTH_SECRET`. The API server holds it (sourced from
+the same `~/.second-brain/secrets.env` as the relay) and mints the relay token
+itself for an authenticated client. Commit the relay URL to the team repo as
+`server.relayUrl` in `.second-brain/team.json` so clients can omit `--relay` and
+`--namespace` too.
 
 ```bash
-# On the server box — read the secret to share out-of-band:
-grep RELAY_AUTH_SECRET ~/.second-brain/secrets.env
-
 # On each client, inside a repo whose team.json includes server.relayUrl:
-RELAY_AUTH_SECRET=<secret> brain sync join
+brain sync join
 
 # Or pass everything explicitly (explicit flags override the manifest):
-brain sync join --namespace acme --relay ws://server.lan:7421 --secret <secret>
+brain sync join --namespace acme --relay ws://server.lan:7421
 ```
 
 ---
@@ -175,6 +173,7 @@ brain sync join --namespace acme --relay ws://server.lan:7421 --secret <secret>
 | Service exits immediately, log says "Cannot find module" | You didn't `pnpm build`, or you `git pull`'d new code without rebuilding. |
 | `EADDRINUSE` | Another process holds the port. `lsof -i :7430` / `lsof -i :7421`. |
 | `brain doctor` shows ✗ local relay reachable | Run `launchctl load ~/Library/LaunchAgents/dev.secondbrain.relay.plist`. |
-| Sync clients are rejected | `RELAY_AUTH_SECRET` mismatch — every `brain sync join` must use the same secret as the server's `secrets.env`. |
+| Sync clients are rejected | The API server and relay have different `RELAY_AUTH_SECRET` values — both must read the same `~/.second-brain/secrets.env`. |
+| `brain sync join` returns 503 | The API server has no `RELAY_AUTH_SECRET` in its environment — ensure its launch agent sources `~/.second-brain/secrets.env`. |
 | Plist edits don't apply | `launchctl unload` then `launchctl load` — `kickstart` won't reread the file. |
 | Service runs once then stops | Check `KeepAlive` in the plist. The default keeps it alive on crash + non-zero exit. |

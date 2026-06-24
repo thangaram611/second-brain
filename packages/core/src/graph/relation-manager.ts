@@ -1,18 +1,29 @@
-import { eq, and, or, sql } from 'drizzle-orm';
-import { ulid } from 'ulidx';
+import { eq, and, or, sql, inArray } from 'drizzle-orm';
+import { newId } from './id.js';
 import type {
   Relation,
   CreateRelationInput,
+  UpsertRelationInput,
   UpdateRelationInput,
   RelationType,
 } from '@second-brain/types';
+import { isRelationType, isSourceType } from '@second-brain/types';
 import { relations } from '../schema/index.js';
 import type { DrizzleDB } from '../storage/index.js';
 
 function rowToRelation(row: typeof relations.$inferSelect): Relation {
+  // The drizzle `text` columns are typed as plain `string`; validate the
+  // enum-constrained columns with the authoritative type guards. A row we
+  // wrote with an out-of-enum type/source is a real bug worth surfacing.
+  if (!isRelationType(row.type)) {
+    throw new Error(`rowToRelation: invalid relation type "${row.type}" for id ${row.id}`);
+  }
+  if (!isSourceType(row.sourceType)) {
+    throw new Error(`rowToRelation: invalid source type "${row.sourceType}" for id ${row.id}`);
+  }
   return {
     id: row.id,
-    type: row.type as RelationType,
+    type: row.type,
     sourceId: row.sourceId,
     targetId: row.targetId,
     namespace: row.namespace,
@@ -21,7 +32,7 @@ function rowToRelation(row: typeof relations.$inferSelect): Relation {
     weight: row.weight,
     bidirectional: row.bidirectional,
     source: {
-      type: row.sourceType as Relation['source']['type'],
+      type: row.sourceType,
       ref: row.sourceRef ?? undefined,
       actor: row.sourceActor ?? undefined,
     },
@@ -35,11 +46,9 @@ function rowToRelation(row: typeof relations.$inferSelect): Relation {
 export class RelationManager {
   constructor(private db: DrizzleDB) {}
 
-  create(input: CreateRelationInput): Relation {
+  private buildRow(id: string, input: CreateRelationInput): typeof relations.$inferSelect {
     const now = new Date().toISOString();
-    const id = ulid();
-
-    const row = {
+    return {
       id,
       type: input.type,
       sourceId: input.sourceId,
@@ -57,7 +66,10 @@ export class RelationManager {
       createdAt: now,
       updatedAt: now,
     };
+  }
 
+  create(input: CreateRelationInput): Relation {
+    const row = this.buildRow(newId(), input);
     this.db.insert(relations).values(row).run();
     return rowToRelation(row);
   }
@@ -207,6 +219,73 @@ export class RelationManager {
 
       return this.create(input);
     });
+  }
+
+  /**
+   * Upsert keyed strictly on `input.id` (the authoritative CRDT id). On hit,
+   * updates weight/confidence/properties like {@link batchUpsert}. On miss,
+   * the (sourceId, targetId, type) edge may already be owned by a row with a
+   * DIFFERENT id (e.g. a prior batchUpsert minted a divergent ULID); since
+   * `idx_relations_unique_edge` would otherwise raise `UNIQUE constraint
+   * failed`, that divergent row is deleted first (clean break — no migration
+   * shim) and a new row keyed to `input.id` is inserted so local id == CRDT id.
+   */
+  upsertById(input: UpsertRelationInput): Relation {
+    const existing = this.db.select().from(relations).where(eq(relations.id, input.id)).get();
+
+    if (existing) {
+      const now = new Date().toISOString();
+      this.db
+        .update(relations)
+        .set({
+          confidence: input.confidence ?? existing.confidence,
+          weight: input.weight ?? existing.weight,
+          properties: { ...(existing.properties ?? {}), ...(input.properties ?? {}) },
+          updatedAt: now,
+        })
+        .where(eq(relations.id, existing.id))
+        .run();
+      const updated = this.db.select().from(relations).where(eq(relations.id, existing.id)).get();
+      return rowToRelation(updated!);
+    }
+
+    const divergent = this.db
+      .select()
+      .from(relations)
+      .where(
+        and(
+          eq(relations.sourceId, input.sourceId),
+          eq(relations.targetId, input.targetId),
+          eq(relations.type, input.type),
+        ),
+      )
+      .get();
+    if (divergent) this.delete(divergent.id);
+
+    const row = this.buildRow(input.id, input);
+    this.db.insert(relations).values(row).run();
+    return rowToRelation(row);
+  }
+
+  /**
+   * Return the relations induced by a set of entity ids — edges whose BOTH
+   * endpoints are in `entityIds`. Mirrors the GraphCanvas edge filter so the
+   * UI receives exactly the edges it will render. Namespace-agnostic: matches
+   * purely by id membership (the caller's id set is already authz-scoped).
+   *
+   * NOTE: SQLite has a ~999 bound-variable limit; this issues two `inArray`
+   * clauses (2 vars per id), so callers passing >~490 ids must chunk.
+   */
+  listAmong(entityIds: string[]): Relation[] {
+    if (entityIds.length === 0) return [];
+    return this.db
+      .select()
+      .from(relations)
+      .where(
+        and(inArray(relations.sourceId, entityIds), inArray(relations.targetId, entityIds)),
+      )
+      .all()
+      .map(rowToRelation);
   }
 
   count(namespace?: string): number {

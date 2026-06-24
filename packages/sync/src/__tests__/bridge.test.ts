@@ -332,6 +332,132 @@ describe('SyncBridge', () => {
       expect(nameConflict?.localValue).toBe('OriginalName');
       expect(nameConflict?.remoteValue).toBe('RenamedByRemote');
 
+      // Writeback must reconcile by id: no orphan duplicate, stable id, new name.
+      const reconciled = brain.entities.get(entity.id);
+      expect(reconciled).not.toBeNull();
+      expect(reconciled?.name).toBe('RenamedByRemote');
+      expect(brain.entities.count('team-a')).toBe(1);
+
+      bridge.stopObserving();
+      doc.destroy();
+    });
+  });
+
+  describe('id stability on remote writeback', () => {
+    it('keeps a single row with a stable id on remote rename', () => {
+      const doc = createBrainDoc();
+      const bridge = new SyncBridge({
+        doc,
+        entityManager: brain.entities,
+        relationManager: brain.relations,
+        namespace: 'team-a',
+      });
+
+      const entity = brain.entities.create(makeEntityInput('BeforeRename'));
+      bridge.pushEntityToDoc(entity);
+      bridge.startObserving();
+
+      doc.transact(() => {
+        const yMap = doc.getMap('entities').get(entity.id);
+        if (yMap instanceof Y.Map) {
+          yMap.set('name', 'AfterRename');
+        }
+      }, 'remote-peer');
+
+      expect(brain.entities.count('team-a')).toBe(1);
+      const reconciled = brain.entities.get(entity.id);
+      expect(reconciled?.id).toBe(entity.id);
+      expect(reconciled?.name).toBe('AfterRename');
+
+      bridge.stopObserving();
+      doc.destroy();
+    });
+
+    it('makes remote delete hit the row after a remote create (no no-op divergence)', () => {
+      const doc = createBrainDoc();
+      const bridge = new SyncBridge({
+        doc,
+        entityManager: brain.entities,
+        relationManager: brain.relations,
+        namespace: 'team-a',
+      });
+
+      bridge.startObserving();
+
+      // Remote create with a fixed CRDT id.
+      doc.transact(() => {
+        const entitiesMap = doc.getMap('entities');
+        const entityMap = new Y.Map<unknown>();
+        entityMap.set('id', 'remote-xyz');
+        entityMap.set('type', 'concept');
+        entityMap.set('name', 'RemoteCreated');
+        entityMap.set('namespace', 'team-a');
+        entityMap.set('observations', new Y.Map<unknown>());
+        entityMap.set('properties', new Y.Map<unknown>());
+        entityMap.set('confidence', 1.0);
+        entityMap.set('eventTime', '2025-04-01T00:00:00.000Z');
+        entityMap.set('ingestTime', '2025-04-01T00:00:00.000Z');
+        entityMap.set('lastAccessedAt', '2025-04-01T00:00:00.000Z');
+        entityMap.set('accessCount', 0);
+        entityMap.set('sourceType', 'manual');
+        entityMap.set('createdAt', '2025-04-01T00:00:00.000Z');
+        entityMap.set('updatedAt', '2025-04-01T00:00:00.000Z');
+        entityMap.set('tags', new Y.Map<unknown>());
+        entitiesMap.set('remote-xyz', entityMap);
+      }, 'remote-peer');
+
+      // Local row id equals the CRDT id.
+      expect(brain.entities.get('remote-xyz')).not.toBeNull();
+
+      // Remote delete keyed on the CRDT id must now hit the row.
+      doc.transact(() => {
+        doc.getMap('entities').delete('remote-xyz');
+      }, 'remote-peer');
+
+      expect(brain.entities.get('remote-xyz')).toBeNull();
+
+      bridge.stopObserving();
+      doc.destroy();
+    });
+
+    it('keeps relation id stable on remote create', () => {
+      const doc = createBrainDoc();
+      const bridge = new SyncBridge({
+        doc,
+        entityManager: brain.entities,
+        relationManager: brain.relations,
+        namespace: 'team-a',
+      });
+
+      const e1 = brain.entities.create(makeEntityInput('RelSrc'));
+      const e2 = brain.entities.create(makeEntityInput('RelTgt'));
+      bridge.pushEntityToDoc(e1);
+      bridge.pushEntityToDoc(e2);
+      bridge.startObserving();
+
+      doc.transact(() => {
+        const relationsMap = doc.getMap('relations');
+        const relMap = new Y.Map<unknown>();
+        relMap.set('id', 'remote-rel-1');
+        relMap.set('type', 'relates_to');
+        relMap.set('sourceId', e1.id);
+        relMap.set('targetId', e2.id);
+        relMap.set('namespace', 'team-a');
+        relMap.set('properties', new Y.Map<unknown>());
+        relMap.set('confidence', 1.0);
+        relMap.set('weight', 1.0);
+        relMap.set('bidirectional', false);
+        relMap.set('sourceType', 'manual');
+        relMap.set('eventTime', '2025-04-01T00:00:00.000Z');
+        relMap.set('ingestTime', '2025-04-01T00:00:00.000Z');
+        relMap.set('createdAt', '2025-04-01T00:00:00.000Z');
+        relMap.set('updatedAt', '2025-04-01T00:00:00.000Z');
+        relationsMap.set('remote-rel-1', relMap);
+      }, 'remote-peer');
+
+      expect(brain.relations.get('remote-rel-1')).not.toBeNull();
+      expect(brain.relations.count('team-a')).toBe(1);
+
       bridge.stopObserving();
       doc.destroy();
     });

@@ -28,7 +28,7 @@ export const LLMConfigSchema = z
   .superRefine((cfg, ctx) => {
     const embProvider = cfg.embeddingProvider ?? cfg.provider;
     // Runtime guard — the goal is to reject 'anthropic' as an embedding provider with a clear error.
-    if ((EMBEDDING_PROVIDERS as readonly string[]).indexOf(embProvider) === -1) {
+    if (!isEmbeddingProvider(embProvider)) {
       ctx.addIssue({
         code: 'custom',
         path: ['embeddingProvider'],
@@ -40,6 +40,11 @@ export const LLMConfigSchema = z
 export type LLMProvider = (typeof LLM_PROVIDERS)[number];
 export type EmbeddingProvider = (typeof EMBEDDING_PROVIDERS)[number];
 export type LLMConfig = z.infer<typeof LLMConfigSchema>;
+
+/** Type guard: true when `provider` is one of the providers that serves embeddings. */
+export function isEmbeddingProvider(provider: string): provider is EmbeddingProvider {
+  return EMBEDDING_PROVIDERS.some((p) => p === provider);
+}
 
 /**
  * Resolve LLM config from explicit options, falling back to environment variables,

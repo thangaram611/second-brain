@@ -30,7 +30,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22.21.1
+          node-version: 24.18.0
           cache: pnpm
 
       - name: Install dependencies
@@ -41,6 +41,17 @@ jobs:
 
       - name: Type-check
         run: pnpm check-types
+
+      # knip's tsdown plugin and depcruise's exports resolution both prefer
+      # built output, so build before the analyzers run.
+      - name: Build
+        run: pnpm build
+
+      - name: Dead code (knip)
+        run: pnpm knip
+
+      - name: Architecture boundaries (depcruise)
+        run: pnpm depcruise
 
       - name: Test
         run: pnpm test

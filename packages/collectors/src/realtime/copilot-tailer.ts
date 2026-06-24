@@ -72,7 +72,7 @@ export function createCopilotTailer(options: CopilotTailerOptions = {}): Copilot
           await client.post('/api/observe/session-start', {
             sessionId: obs.sessionId,
             tool: 'copilot',
-            cwd: obs.payload.cwd as string | undefined,
+            cwd: typeof obs.payload.cwd === 'string' ? obs.payload.cwd : undefined,
           });
           break;
         case 'prompt':

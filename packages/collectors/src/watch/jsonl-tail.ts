@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { z } from 'zod';
 
 export interface JsonlTailOptions {
   /** File to tail. Does not need to exist at startup. */
@@ -25,14 +26,16 @@ export interface JsonlTailHandle {
   offset(): number;
 }
 
-interface OffsetMap {
-  [filePath: string]: { offset: number; mtimeMs: number; ino: number };
-}
+const OffsetMapSchema = z.record(
+  z.string(),
+  z.object({ offset: z.number(), mtimeMs: z.number(), ino: z.number() }),
+);
+type OffsetMap = z.infer<typeof OffsetMapSchema>;
 
 function loadOffsets(p: string): OffsetMap {
   try {
     const raw = fs.readFileSync(p, 'utf8');
-    return JSON.parse(raw) as OffsetMap;
+    return OffsetMapSchema.parse(JSON.parse(raw));
   } catch {
     return {};
   }
@@ -45,6 +48,13 @@ function saveOffsets(p: string, map: OffsetMap): void {
   } catch {
     // Ignore persistence errors — next tick will try again.
   }
+}
+
+const ErrnoSchema = z.object({ code: z.string() }).partial();
+
+/** Extract a Node `ErrnoException.code` from an unknown thrown value. */
+function errnoCode(err: unknown): string | undefined {
+  return ErrnoSchema.safeParse(err).data?.code;
 }
 
 /**
@@ -135,8 +145,7 @@ export function createJsonlTail(options: JsonlTailOptions): JsonlTailHandle {
         persist();
       }
     } catch (err) {
-      const e = err as NodeJS.ErrnoException;
-      if (e.code !== 'ENOENT') onError(err);
+      if (errnoCode(err) !== 'ENOENT') onError(err);
       // Otherwise: file doesn't exist yet — retry on next tick.
     }
   };

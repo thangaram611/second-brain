@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import Database from 'better-sqlite3';
+import { z } from 'zod';
 
 export interface SqlitePollerOptions<Row> {
   /** Absolute path to the foreign SQLite DB. */
@@ -36,9 +37,11 @@ export interface SqlitePollerHandle {
   watermark(): string | number;
 }
 
-interface WatermarkMap {
-  [key: string]: string | number;
-}
+const WatermarkMapSchema = z.record(z.string(), z.union([z.string(), z.number()]));
+type WatermarkMap = z.infer<typeof WatermarkMapSchema>;
+
+/** Foreign-DB rows are intentionally loose — validate only that each is an object. */
+const ForeignRowsSchema = z.array(z.record(z.string(), z.unknown()));
 
 function watermarkKey(dbPath: string, query: string): string {
   return `${dbPath}::${query}`;
@@ -46,7 +49,7 @@ function watermarkKey(dbPath: string, query: string): string {
 
 function loadWatermarks(p: string): WatermarkMap {
   try {
-    return JSON.parse(fs.readFileSync(p, 'utf8')) as WatermarkMap;
+    return WatermarkMapSchema.parse(JSON.parse(fs.readFileSync(p, 'utf8')));
   } catch {
     return {};
   }
@@ -61,9 +64,10 @@ function saveWatermarks(p: string, map: WatermarkMap): void {
   }
 }
 
+const ErrnoSchema = z.object({ code: z.string() }).partial();
+
 function isBusyError(err: unknown): boolean {
-  if (!err || typeof err !== 'object') return false;
-  const code = (err as { code?: string }).code;
+  const code = ErrnoSchema.safeParse(err).data?.code;
   return code === 'SQLITE_BUSY' || code === 'SQLITE_LOCKED';
 }
 
@@ -109,16 +113,21 @@ export function createSqlitePoller<Row = Record<string, unknown>>(
         db = new Database(dbPath, { readonly: true, fileMustExist: true });
         // Extra guard: reject any statement that would write.
         db.pragma('query_only = ON');
-        const rows = db.prepare(query).all(watermark) as Row[];
+        // Foreign-DB boundary: rows come from a caller-supplied query against an
+        // arbitrary external schema. `Row` is a caller-chosen generic with no
+        // runtime schema available here, so we validate only the loose record
+        // shape and hand it to `onRows` under the caller's declared type.
+        const records = ForeignRowsSchema.parse(db.prepare(query).all(watermark));
+        const rows: Row[] = records as Row[];
         if (rows.length > 0) {
           await onRows(rows);
-          for (const row of rows) {
-            const v = (row as Record<string, unknown>)[sinceColumn];
+          for (const row of records) {
+            const v = row[sinceColumn];
             if (typeof v === 'string' || typeof v === 'number') {
               if (typeof watermark === 'number') {
                 watermark = typeof v === 'number' ? Math.max(watermark, v) : watermark;
               } else {
-                watermark = typeof v === 'string' && v > (watermark as string) ? v : watermark;
+                watermark = typeof v === 'string' && v > watermark ? v : watermark;
               }
             }
           }

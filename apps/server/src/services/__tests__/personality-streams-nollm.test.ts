@@ -19,7 +19,7 @@ function makeBrain(): Brain {
 }
 
 function makeCtx(brain: Brain): PersonalityContext {
-  return { brain, actor: ACTOR, llm: null, logger: silentLogger, now: NOW };
+  return { brain, actor: ACTOR, logger: silentLogger, now: NOW };
 }
 
 /** Insert an entity via raw SQL so we can set source_actor directly. */

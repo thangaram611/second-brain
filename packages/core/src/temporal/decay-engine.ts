@@ -7,7 +7,7 @@ import type {
 } from '@second-brain/types';
 import { DECAY_RATES } from '@second-brain/types';
 import type { StorageDatabase } from '../storage/index.js';
-import { rawRowToEntity } from './row-mappers.js';
+import { parseEntityRowSafe } from './row-schemas.js';
 
 const MS_PER_DAY = 86_400_000;
 const DEFAULT_INTERVAL_MS = 3_600_000; // 1 hour
@@ -64,15 +64,18 @@ export class DecayEngine {
       params.push(...types);
     }
 
-    const rows = this.storage.sqlite.prepare(sql).all(...params) as Array<Record<string, unknown>>;
+    const rows = this.storage.sqlite.prepare(sql).all(...params);
 
-    // Compute effective confidence in JS and filter
+    // Compute effective confidence in JS and filter. A malformed row should not
+    // abort the whole decay pass, so skip rows that fail to parse.
     const stale = rows
       .map((row) => {
-        const entity = rawRowToEntity(row);
+        const entity = parseEntityRowSafe(row);
+        if (entity === null) return null;
         const effectiveConfidence = this.computeDecayedConfidence(entity);
         return { ...entity, effectiveConfidence };
       })
+      .filter((e) => e !== null)
       .filter((e) => e.effectiveConfidence < threshold)
       .sort((a, b) => a.effectiveConfidence - b.effectiveConfidence);
 
@@ -85,7 +88,10 @@ export class DecayEngine {
    */
   runOnce(): DecayRunResult {
     const start = Date.now();
-    const stale = this.getStaleEntities({ threshold: DEFAULT_THRESHOLD, limit: 0 });
+    const stale = this.getStaleEntities({
+      threshold: DEFAULT_THRESHOLD,
+      limit: Number.MAX_SAFE_INTEGER,
+    });
     return {
       staleCount: stale.length,
       runDurationMs: Date.now() - start,

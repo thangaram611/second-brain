@@ -36,7 +36,9 @@ function isSyncManager(value: unknown): value is SyncManager {
   return (
     typeof value === 'object' &&
     value !== null &&
-    typeof (value as { isSynced?: unknown }).isSynced === 'function' &&
-    typeof (value as { onLocalEntityChange?: unknown }).onLocalEntityChange === 'function'
+    'isSynced' in value &&
+    typeof value.isSynced === 'function' &&
+    'onLocalEntityChange' in value &&
+    typeof value.onLocalEntityChange === 'function'
   );
 }

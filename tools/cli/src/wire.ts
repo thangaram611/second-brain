@@ -25,7 +25,8 @@ import {
   type TeamManifest,
   loadTeamManifest,
 } from './team-manifest.js';
-import { getServerUrl } from './lib/config.js';
+import { getServerUrl, hostFromUrl } from './lib/config.js';
+import { gitRepoRoot } from './lib/repo.js';
 
 export interface WireOptions {
   /** Repo root. Defaults to `git rev-parse --show-toplevel` from cwd. */
@@ -44,6 +45,11 @@ export interface WireOptions {
   skipIfClaudeMem?: boolean;
   /** Override `brain-hook` binary name. */
   hookCommand?: string;
+  /** Home directory for `~/.second-brain` config + lock. Defaults to `os.homedir()`.
+      Threaded explicitly so tests (and any non-default install) avoid mutating
+      `process.env.HOME`, which Node + vitest workers don't reliably propagate to
+      `os.homedir()`. */
+  home?: string;
 
   // ── Phase 10.3 — provider setup ────────────────────────────────────────
   /** Forge provider to wire. If omitted, provider setup is skipped. */
@@ -74,7 +80,7 @@ export interface WireOptions {
   githubProvider?: GitHubProvider;
 }
 
-export interface ProviderWireResult {
+interface ProviderWireResult {
   provider: 'gitlab' | 'github';
   projectId: string;
   webhookId: number;
@@ -101,28 +107,13 @@ export interface WireResult {
   providerResult?: ProviderWireResult;
 }
 
-export interface ClaudeHookInstallSummary {
+interface ClaudeHookInstallSummary {
   settingsPath: string;
   sidecarPath: string;
   addedHooks: string[];
   coexistedWithClaudeMem: boolean;
   skipped?: string;
   backupPath?: string;
-}
-
-function resolveRepoRoot(explicit?: string): string {
-  if (explicit) return path.resolve(explicit);
-  try {
-    const out = execFileSync('git', ['rev-parse', '--show-toplevel'], {
-      encoding: 'utf8',
-      cwd: process.cwd(),
-      timeout: 2000,
-    }).trim();
-    if (!out) throw new Error('empty git rev-parse output');
-    return path.resolve(out);
-  } catch {
-    throw new Error(`not inside a git repository (cwd=${process.cwd()})`);
-  }
 }
 
 function resolveAuthorSync(cwd: string): { email: string | null; name: string | null } {
@@ -145,6 +136,93 @@ function resolveAuthorSync(cwd: string): { email: string | null; name: string | 
   };
 }
 
+/**
+ * Install assistant adapters into the given scope/home, collecting installed +
+ * skipped lists and the Claude-specific hook summary. Per-adapter failures are
+ * pushed onto `warnings` and never abort the loop. Returns a superset object so
+ * both `runWireInternal` (which needs `claudeHooks`) and `runWireFromManifest`
+ * (which needs installed/skipped) can share one implementation.
+ */
+function installAssistantsInto(params: {
+  assistants: AdapterName[];
+  scope: 'user' | 'project';
+  home: string;
+  cwd: string;
+  hookCommand?: string;
+  skipIfClaudeMem?: boolean;
+  warnings: string[];
+}): {
+  installed: AdapterName[];
+  skipped: Array<{ name: AdapterName; reason: string }>;
+  claudeHooks?: ClaudeHookInstallSummary;
+} {
+  const installed: AdapterName[] = [];
+  const skipped: Array<{ name: AdapterName; reason: string }> = [];
+  let claudeHooks: ClaudeHookInstallSummary | undefined;
+
+  for (const name of params.assistants) {
+    const adapter = ADAPTERS[name];
+    try {
+      const result = adapter.install({
+        scope: params.scope,
+        home: params.home,
+        cwd: params.cwd,
+        hookCommand: params.hookCommand,
+        skipIfClaudeMem: params.skipIfClaudeMem,
+      });
+      if (name === 'claude') {
+        const sidecar = result.auxFiles.find((p) => p.endsWith('settings.brain-hooks.json')) ?? '';
+        claudeHooks = {
+          settingsPath: result.configPath,
+          sidecarPath: sidecar,
+          addedHooks: result.addedEvents,
+          coexistedWithClaudeMem: result.warnings.some((w) => w.toLowerCase().includes('claude-mem')),
+          skipped: result.skipped,
+          backupPath: result.backupPath,
+        };
+      }
+      if (result.skipped) {
+        skipped.push({ name, reason: result.skipped });
+      } else {
+        installed.push(name);
+      }
+      for (const w of result.warnings) {
+        params.warnings.push(`${name}: ${w}`);
+      }
+    } catch (err) {
+      // Per-adapter failure is a warning, never aborts wire.
+      params.warnings.push(`${name}: install failed — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return { installed, skipped, claudeHooks };
+}
+
+/**
+ * Load the wiredRepos config, upsert one repo entry (base fields plus any
+ * provider `extra`), persist, and return the written entry. Re-loads on every
+ * call so successive provider-metadata writes layer onto the freshest snapshot.
+ */
+function recordWiredRepo(params: {
+  repoHash: string;
+  repoRoot: string;
+  namespace: string;
+  home?: string;
+  extra?: Partial<WiredReposEntry>;
+}): WiredReposEntry {
+  const wired = loadWiredRepos(params.home);
+  const entry: WiredReposEntry = {
+    repoHash: params.repoHash,
+    absPath: params.repoRoot,
+    namespace: params.namespace,
+    installedAt: new Date().toISOString(),
+    ...params.extra,
+  };
+  wired.wiredRepos[params.repoHash] = entry;
+  saveWiredRepos(wired, params.home);
+  return entry;
+}
+
 function resolveProjectNamespace(repoRoot: string): string | null {
   const configPath = path.join(repoRoot, '.second-brain', 'config.json');
   if (!fs.existsSync(configPath)) return null;
@@ -161,7 +239,8 @@ function resolveProjectNamespace(repoRoot: string): string | null {
 
 export async function runWire(options: WireOptions = {}): Promise<WireResult> {
   // ── Concurrent-wire guard (plan revision #4) ────────────────────────────
-  const configDir = path.join(os.homedir(), '.second-brain');
+  const home = options.home ?? os.homedir();
+  const configDir = path.join(home, '.second-brain');
   fs.mkdirSync(configDir, { recursive: true });
   const lockPath = path.join(configDir, '.wire.lock');
   // Ensure the lock file exists so `proper-lockfile` can acquire an
@@ -189,7 +268,8 @@ export async function runWire(options: WireOptions = {}): Promise<WireResult> {
 }
 
 async function runWireInternal(options: WireOptions): Promise<WireResult> {
-  const repoRoot = resolveRepoRoot(options.repo);
+  const home = options.home ?? os.homedir();
+  const repoRoot = gitRepoRoot({ explicit: options.repo, throwIfMissing: true });
   const warnings: string[] = [];
 
   if (!fs.existsSync(path.join(repoRoot, '.git'))) {
@@ -229,49 +309,18 @@ async function runWireInternal(options: WireOptions): Promise<WireResult> {
     namespace,
   });
 
-  let claudeHooks: ClaudeHookInstallSummary | undefined;
-  const assistants = options.installAssistants ?? ['claude'];
-
-  for (const name of assistants) {
-    const adapter = ADAPTERS[name];
-    try {
-      const result = adapter.install({
-        scope: 'user',
-        home: os.homedir(),
-        cwd: repoRoot,
-        hookCommand: options.hookCommand,
-        skipIfClaudeMem: options.skipIfClaudeMem,
-      });
-      if (name === 'claude') {
-        const sidecar = result.auxFiles.find((p) => p.endsWith('settings.brain-hooks.json')) ?? '';
-        claudeHooks = {
-          settingsPath: result.configPath,
-          sidecarPath: sidecar,
-          addedHooks: result.addedEvents,
-          coexistedWithClaudeMem: result.warnings.some((w) => w.toLowerCase().includes('claude-mem')),
-          skipped: result.skipped,
-          backupPath: result.backupPath,
-        };
-      }
-      for (const w of result.warnings) {
-        warnings.push(`${name}: ${w}`);
-      }
-    } catch (err) {
-      // Per-adapter failure is a warning, never aborts wire.
-      warnings.push(`${name}: install failed — ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
+  const { claudeHooks } = installAssistantsInto({
+    assistants: options.installAssistants ?? ['claude'],
+    scope: 'user',
+    home,
+    cwd: repoRoot,
+    hookCommand: options.hookCommand,
+    skipIfClaudeMem: options.skipIfClaudeMem,
+    warnings,
+  });
 
   const repoHash = computeRepoHash(repoRoot);
-  const wired = loadWiredRepos();
-  const baseEntry: WiredReposEntry = {
-    repoHash,
-    absPath: repoRoot,
-    namespace,
-    installedAt: new Date().toISOString(),
-  };
-  wired.wiredRepos[repoHash] = baseEntry;
-  saveWiredRepos(wired);
+  recordWiredRepo({ repoHash, repoRoot, namespace, home });
 
   // ── Phase 10.3 — provider wiring (optional) ──────────────────────────
   let providerResult: ProviderWireResult | undefined;
@@ -279,16 +328,19 @@ async function runWireInternal(options: WireOptions): Promise<WireResult> {
     try {
       providerResult = await wireGitLabProvider(repoRoot, options, warnings);
       if (providerResult) {
-        const updated: WiredReposEntry = {
-          ...baseEntry,
-          providerId: 'gitlab',
-          projectId: providerResult.projectId,
-          providerBaseUrl: providerResult.baseUrl,
-          webhookId: providerResult.webhookId,
-          relayUrl: providerResult.relayUrl,
-        };
-        wired.wiredRepos[repoHash] = updated;
-        saveWiredRepos(wired);
+        recordWiredRepo({
+          repoHash,
+          repoRoot,
+          namespace,
+          home,
+          extra: {
+            providerId: 'gitlab',
+            projectId: providerResult.projectId,
+            providerBaseUrl: providerResult.baseUrl,
+            webhookId: providerResult.webhookId,
+            relayUrl: providerResult.relayUrl,
+          },
+        });
       }
     } catch (err) {
       warnings.push(
@@ -299,27 +351,30 @@ async function runWireInternal(options: WireOptions): Promise<WireResult> {
     try {
       providerResult = await wireGitHubProvider(repoRoot, options, warnings);
       if (providerResult) {
-        const updated: WiredReposEntry = {
-          ...baseEntry,
-          providerId: 'github',
-          projectId: providerResult.projectId,
-          providerBaseUrl: providerResult.baseUrl,
-          githubOwner: providerResult.projectId.split('/')[0],
-          githubRepo: providerResult.projectId.split('/')[1],
-          webhookId: providerResult.webhookId,
-          relayUrl: providerResult.relayUrl,
-        };
-        wired.wiredRepos[repoHash] = updated;
-        saveWiredRepos(wired);
+        recordWiredRepo({
+          repoHash,
+          repoRoot,
+          namespace,
+          home,
+          extra: {
+            providerId: 'github',
+            projectId: providerResult.projectId,
+            providerBaseUrl: providerResult.baseUrl,
+            githubOwner: providerResult.projectId.split('/')[0],
+            githubRepo: providerResult.projectId.split('/')[1],
+            webhookId: providerResult.webhookId,
+            relayUrl: providerResult.relayUrl,
+          },
+        });
       }
     } catch (err) {
       warnings.push(
-        `GitHub provider wiring failed: ${err instanceof Error ? err.message : String(err)}`,
+        `GitHub provider wiring failed: ${err instanceof Error ? err.message : String(err)}. Claude/git hooks are installed; you can retry with \`brain provider refresh github\`.`,
       );
     }
   }
 
-  const configPath = path.join(os.homedir(), '.second-brain', 'config.json');
+  const configPath = path.join(home, '.second-brain', 'config.json');
   const watchCommand = `brain watch --repo ${JSON.stringify(repoRoot)}`;
 
   return {
@@ -367,7 +422,7 @@ function webhookSecretEnvName(
  *   SSH  — git@host:group/subgroup/project.git → {host, path: 'group/subgroup/project'}
  *   HTTPS — https://host/group/subgroup/project.git → same
  */
-export function parseGitRemote(remote: string): { host: string; projectPath: string } | null {
+function parseGitRemote(remote: string): { host: string; projectPath: string } | null {
   const sshMatch = remote.match(/^[^@]+@([^:]+):(.+?)(?:\.git)?$/);
   if (sshMatch) {
     return { host: sshMatch[1], projectPath: sshMatch[2] };
@@ -423,7 +478,7 @@ async function wireGitLabProvider(
   // we need to clean up, the caller can still find the key in storage.
   // The dispatcher always succeeds via the 0600 file fallback.
   await storeSecret(`gitlab.webhook-token:${projectId}`, secretValue);
-  await storeSecret(`gitlab.pat:${hostOf(baseUrl)}`, pat);
+  await storeSecret(`gitlab.pat:${hostFromUrl(baseUrl, baseUrl)}`, pat);
 
   const registration = await provider.registerWebhook({
     provider: 'gitlab',
@@ -492,7 +547,7 @@ async function wireGitHubProvider(
   // get their own slot (`github.pat:ghe.example.com`) instead of colliding
   // with the github.com slot.
   await storeSecret(`github.webhook-secret:${projectId}`, secretKey);
-  await storeSecret(`github.pat:${hostOf(baseUrl)}`, pat);
+  await storeSecret(`github.pat:${hostFromUrl(baseUrl, baseUrl)}`, pat);
 
   const registration = await provider.registerWebhook({
     provider: 'github',
@@ -598,41 +653,18 @@ export async function runWireFromManifest(
   }
 
   // 2. Adapter hooks.
-  const installedAssistants: AdapterName[] = [];
-  const skippedAssistants: Array<{ name: AdapterName; reason: string }> = [];
-  for (const name of manifest.hooks?.assistants ?? []) {
-    const adapter = ADAPTERS[name];
-    try {
-      const result = adapter.install({
-        scope,
-        home,
-        cwd: repoRoot,
-        hookCommand: options.hookCommand,
-      });
-      if (result.skipped) {
-        skippedAssistants.push({ name, reason: result.skipped });
-      } else {
-        installedAssistants.push(name);
-      }
-      for (const w of result.warnings) {
-        warnings.push(`${name}: ${w}`);
-      }
-    } catch (err) {
-      // Per-adapter failure → warning, never abort.
-      warnings.push(`${name}: install failed — ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
+  const { installed: installedAssistants, skipped: skippedAssistants } = installAssistantsInto({
+    assistants: manifest.hooks?.assistants ?? [],
+    scope,
+    home,
+    cwd: repoRoot,
+    hookCommand: options.hookCommand,
+    warnings,
+  });
 
   // 3. Wired-repos snapshot for `brain doctor` drift detection.
   const repoHash = computeRepoHash(repoRoot);
-  const wired = loadWiredRepos(home);
-  wired.wiredRepos[repoHash] = {
-    repoHash,
-    absPath: repoRoot,
-    namespace,
-    installedAt: new Date().toISOString(),
-  };
-  saveWiredRepos(wired, home);
+  recordWiredRepo({ repoHash, repoRoot, namespace, home });
 
   // 4. Provider webhook — admin-managed surfaces are NEVER touched here.
   let providerSkipped: WireFromManifestResult['providerSkipped'] = null;
@@ -642,7 +674,7 @@ export async function runWireFromManifest(
     } else if (manifest.providers?.gitlab?.webhookManagedBy === 'admin') {
       providerSkipped = { provider: 'gitlab', reason: 'admin-managed' };
     }
-    // `self`-managed provider webhooks: members run `brain wire --provider github
+    // `self`-managed provider webhooks: members run `brain provider add github
     // --github-token <pat>` explicitly. We deliberately don't auto-register here
     // because credentials aren't in scope of the manifest, and prompting from a
     // manifest-driven flow would be surprising.
@@ -670,12 +702,4 @@ export async function runWireFromManifest(
 function normalizeGitLabBaseUrl(url: string): string {
   const trimmed = url.replace(/\/+$/, '');
   return trimmed.endsWith('/api/v4') ? trimmed : `${trimmed}/api/v4`;
-}
-
-function hostOf(baseUrl: string): string {
-  try {
-    return new URL(baseUrl).host;
-  } catch {
-    return baseUrl;
-  }
 }

@@ -1,6 +1,6 @@
 import type { Command } from 'commander';
-import type { EntityType, CreateEntityInput } from '@second-brain/types';
-import { ENTITY_TYPES } from '@second-brain/types';
+import type { CreateEntityInput } from '@second-brain/types';
+import { ENTITY_TYPES, isEntityType } from '@second-brain/types';
 import { openBrain } from '../lib/config.js';
 
 export function registerAddCommand(program: Command): void {
@@ -18,7 +18,7 @@ export function registerAddCommand(program: Command): void {
         name: string,
         options: { obs?: string[]; tags?: string[]; namespace: string },
       ) => {
-        if (!ENTITY_TYPES.includes(type as EntityType)) {
+        if (!isEntityType(type)) {
           console.error(`Invalid entity type: ${type}`);
           console.error(`Valid types: ${ENTITY_TYPES.join(', ')}`);
           process.exit(1);
@@ -27,7 +27,7 @@ export function registerAddCommand(program: Command): void {
         const brain = openBrain();
         try {
           const input: CreateEntityInput = {
-            type: type as EntityType,
+            type,
             name,
             namespace: options.namespace,
             observations: options.obs ?? [],

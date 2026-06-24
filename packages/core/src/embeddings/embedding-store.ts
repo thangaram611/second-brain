@@ -1,5 +1,25 @@
+import { z } from 'zod';
 import type { EntityType } from '@second-brain/types';
 import type { StorageDatabase } from '../storage/index.js';
+
+/** Parse-at-boundary schemas for better-sqlite3 rows (typed `unknown`). */
+const MetaRowSchema = z.object({
+  model: z.string(),
+  contentHash: z.string().nullable(),
+  createdAt: z.string(),
+});
+
+const StaleRowSchema = z.object({
+  entityId: z.string(),
+  contentHash: z.string().nullable(),
+});
+
+const KnnCandidateSchema = z.object({
+  entityId: z.string(),
+  distance: z.number(),
+});
+
+const EntityIdRowSchema = z.object({ id: z.string() });
 
 export interface EmbeddingMeta {
   model: string;
@@ -94,7 +114,7 @@ export class EmbeddingStore {
       )
       .get(entityId);
     if (!row) return null;
-    const r = row as { model: string; contentHash: string | null; createdAt: string };
+    const r = MetaRowSchema.parse(row);
     if (r.contentHash === null) return null;
     return { model: r.model, contentHash: r.contentHash, createdAt: r.createdAt };
   }
@@ -122,8 +142,9 @@ export class EmbeddingStore {
           `SELECT entity_id AS entityId, content_hash AS contentHash
            FROM embeddings WHERE entity_id IN (${placeholders})`,
         )
-        .all(...slice) as Array<{ entityId: string; contentHash: string | null }>;
-      for (const row of rows) {
+        .all(...slice);
+      for (const raw of rows) {
+        const row = StaleRowSchema.parse(raw);
         if (row.contentHash !== null && expected.get(row.entityId) === row.contentHash) {
           stale.delete(row.entityId);
         }
@@ -171,7 +192,8 @@ export class EmbeddingStore {
          WHERE embedding MATCH ? AND k = ?
          ORDER BY distance`,
       )
-      .all(buf, fetchK) as Array<{ entityId: string; distance: number }>;
+      .all(buf, fetchK)
+      .map((r) => KnnCandidateSchema.parse(r));
 
     if (candidates.length === 0) return [];
     if (!options.namespace && !options.types && !options.minConfidence) {
@@ -199,7 +221,8 @@ export class EmbeddingStore {
 
     const allowedRows = this.storage.sqlite
       .prepare(`SELECT id FROM entities WHERE id IN (${placeholders})${whereExtra}`)
-      .all(...params) as Array<{ id: string }>;
+      .all(...params)
+      .map((r) => EntityIdRowSchema.parse(r));
     const allowed = new Set(allowedRows.map((r) => r.id));
 
     const filtered: KnnHit[] = [];

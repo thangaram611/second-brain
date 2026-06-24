@@ -1,4 +1,5 @@
 import type { LLMConfig, LLMProvider, EmbeddingProvider } from './llm-config.js';
+import { isEmbeddingProvider } from './llm-config.js';
 import { LLMExtractor, type LLMExtractorOptions } from './llm-extractor.js';
 import { EmbeddingGenerator } from './embedding-generator.js';
 
@@ -45,7 +46,7 @@ export function tryCreateEmbeddingGenerator(
   options: { logger?: DegradationLogger } = {},
 ): EmbeddingGenerator | null {
   const effective: EmbeddingProvider =
-    config.embeddingProvider ?? (config.provider === 'anthropic' ? 'ollama' : (config.provider as EmbeddingProvider));
+    config.embeddingProvider ?? (isEmbeddingProvider(config.provider) ? config.provider : 'ollama');
   const keyInUse = config.embeddingApiKey ?? config.apiKey;
   if (embeddingProviderRequiresKey(effective) && !keyInUse) {
     options.logger?.warn(

@@ -28,7 +28,6 @@ const WiredReposSchema = z.object({
   wiredRepos: z.record(z.string(), WiredReposEntrySchema),
 });
 
-export type WiredReposEntryServer = z.infer<typeof WiredReposEntrySchema>;
 export type WiredReposServer = z.infer<typeof WiredReposSchema>;
 
 const CONFIG_PATH = path.join(os.homedir(), '.second-brain', 'config.json');

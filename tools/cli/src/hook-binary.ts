@@ -31,24 +31,15 @@ import { appendFileSync } from 'node:fs';
 import { z } from 'zod';
 import { redactRequestBody, isEnvFilePath } from './lib/redact.js';
 import { refreshCursorRules, refreshCopilotInstructions } from './lib/rules-refresh.js';
-
-type HookName =
-  | 'session-start'
-  | 'prompt-submit'
-  | 'tool-use'
-  | 'stop'
-  | 'session-end';
-
-type AdapterName = 'claude' | 'cursor' | 'codex' | 'copilot';
-type Phase = 'pre' | 'post' | 'post-inject';
-
-const ENDPOINT: Record<HookName, string> = {
-  'session-start': '/api/observe/session-start',
-  'prompt-submit': '/api/observe/prompt-submit',
-  'tool-use': '/api/observe/tool-use',
-  stop: '/api/observe/stop',
-  'session-end': '/api/observe/session-end',
-};
+import {
+  ENDPOINT,
+  isHookVerb,
+  parsePhase,
+  parseAdapter,
+  type HookVerb as HookName,
+  type Phase,
+  type AdapterName,
+} from './adapters/shared/hook-events.js';
 
 function logFilePath(): string {
   const dir = process.env.BRAIN_HOOK_LOG_DIR ?? path.join(os.homedir(), '.second-brain');
@@ -74,16 +65,6 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-function parseAdapter(s: string | undefined): AdapterName {
-  if (s === 'cursor' || s === 'codex' || s === 'copilot' || s === 'claude') return s;
-  return 'claude';
-}
-
-function parsePhase(s: string | undefined): Phase | undefined {
-  if (s === 'pre' || s === 'post' || s === 'post-inject') return s;
-  return undefined;
-}
-
 interface ParsedArgs {
   hook: HookName;
   phase?: Phase;
@@ -92,13 +73,10 @@ interface ParsedArgs {
 
 function parseArgs(argv: string[]): ParsedArgs {
   const hookRaw = argv[2];
-  if (!hookRaw || !(hookRaw in ENDPOINT)) {
+  if (!isHookVerb(hookRaw)) {
     throw new Error(`unknown hook: ${hookRaw}`);
   }
-  // Narrow to HookName via the index check above.
-  const hookValid: HookName | null = hookRaw === 'session-start' || hookRaw === 'prompt-submit'
-    || hookRaw === 'tool-use' || hookRaw === 'stop' || hookRaw === 'session-end' ? hookRaw : null;
-  if (!hookValid) throw new Error(`unknown hook: ${hookRaw}`);
+  const hookValid: HookName = hookRaw;
 
   let phase: Phase | undefined;
   let adapter: AdapterName = 'claude';

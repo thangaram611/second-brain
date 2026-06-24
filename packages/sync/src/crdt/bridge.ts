@@ -1,5 +1,5 @@
 import * as Y from 'yjs';
-import type { Entity, Relation, SyncConflict, CreateEntityInput, CreateRelationInput } from '@second-brain/types';
+import type { Entity, Relation, SyncConflict, UpsertEntityInput, UpsertRelationInput } from '@second-brain/types';
 import type { EntityManager, RelationManager } from '@second-brain/core';
 import { entityToYMap, relationToYMap, yMapToEntity, yMapToRelation } from './schema.js';
 
@@ -108,7 +108,8 @@ export class SyncBridge {
           }
         }
 
-        const input: CreateEntityInput = {
+        const input: UpsertEntityInput = {
+          id,
           type: remoteEntity.type,
           name: remoteEntity.name,
           namespace: remoteEntity.namespace,
@@ -119,13 +120,13 @@ export class SyncBridge {
           source: remoteEntity.source,
           tags: remoteEntity.tags,
         };
-        this.entityManager.batchUpsert([input]);
+        this.entityManager.upsertById(input);
       },
     });
 
     this.relationDeepObserver = createDeepObserver(relationsMap, {
       onDelete: (id) => this.relationManager.delete(id),
-      onUpsert: (_id, yMap) => {
+      onUpsert: (id, yMap) => {
         let remoteRelation: Relation;
         try {
           remoteRelation = yMapToRelation(yMap);
@@ -133,7 +134,8 @@ export class SyncBridge {
           return;
         }
 
-        const input: CreateRelationInput = {
+        const input: UpsertRelationInput = {
+          id,
           type: remoteRelation.type,
           sourceId: remoteRelation.sourceId,
           targetId: remoteRelation.targetId,
@@ -145,7 +147,7 @@ export class SyncBridge {
           source: remoteRelation.source,
           eventTime: remoteRelation.eventTime,
         };
-        this.relationManager.batchUpsert([input]);
+        this.relationManager.upsertById(input);
       },
     });
 

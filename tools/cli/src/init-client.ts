@@ -19,13 +19,14 @@
  *      need it for an env-var export.
  */
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import { z } from 'zod';
 import { storeSecret } from './keychain.js';
 import { writeCredentials, readCredentials } from './credentials.js';
 import { loadTeamManifest } from './team-manifest.js';
 import { runWireFromManifest } from './wire.js';
+import { patAccount } from './lib/resolve-token.js';
+import { hostFromUrl } from './lib/config.js';
+import { discoverRepoRoot } from './lib/repo.js';
 
 const RedeemResponseSchema = z.object({
   pat: z.string().min(8),
@@ -132,34 +133,12 @@ function decodeInvite(token: string): DecodedInvite {
   };
 }
 
-function patAccount(host: string, tokenId: string): string {
-  return `pat:${host}:${tokenId}`;
-}
-
-function hostFromUrl(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return 'localhost';
-  }
-}
-
-function findRepoRoot(cwd: string): string | null {
-  // Walk up from cwd looking for a `.git` directory or a `.second-brain` directory.
-  let dir = path.resolve(cwd);
-  for (let i = 0; i < 32; i++) {
-    if (fs.existsSync(path.join(dir, '.git')) || fs.existsSync(path.join(dir, '.second-brain'))) {
-      return dir;
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
-  return null;
-}
-
 async function resolveServerUrl(opts: InitClientOptions): Promise<string> {
   if (opts.serverUrl) return opts.serverUrl;
+  // Intentionally diverges from `getServerUrl()` (lib/config.ts): that helper
+  // always falls back to a localhost default, but `init client` MUST hard-fail
+  // when no server URL is given so the operator is forced to pass --server or
+  // export BRAIN_API_URL.
   const env =
     process.env.BRAIN_API_URL ??
     process.env.BRAIN_SERVER_URL ??
@@ -186,7 +165,7 @@ export async function runInitClient(opts: InitClientOptions): Promise<InitClient
   }
 
   const serverUrl = await resolveServerUrl(opts);
-  const host = hostFromUrl(serverUrl);
+  const host = hostFromUrl(serverUrl, 'localhost');
 
   // 2. Block re-redemption unless --refresh.
   if (!opts.refresh) {
@@ -262,7 +241,7 @@ export async function runInitClient(opts: InitClientOptions): Promise<InitClient
   let wiredRepoRoot: string | null = null;
   const wantWire = opts.wire !== false;
   if (wantWire) {
-    const repoRoot = findRepoRoot(cwd);
+    const repoRoot = discoverRepoRoot(cwd);
     if (repoRoot) {
       const loaded = loadTeamManifest(repoRoot);
       if (loaded.ok) {
@@ -314,9 +293,4 @@ export async function runInitClient(opts: InitClientOptions): Promise<InitClient
     credentialsPath,
     wiredRepoRoot,
   };
-}
-
-/** Helper to form the keychain account string used by `brain init client`. */
-export function buildPatAccount(host: string, tokenId: string): string {
-  return patAccount(host, tokenId);
 }

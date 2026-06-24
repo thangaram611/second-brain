@@ -18,8 +18,9 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
+import { isRecord } from './adapters/shared/json-file.js';
 
-export const CredentialsRecordSchema = z.object({
+const CredentialsRecordSchema = z.object({
   serverUrl: z.url({ protocol: /^https?$/ }),
   namespace: z.string().min(1),
   userId: z.string().min(1),
@@ -163,12 +164,12 @@ export function patchCredentials(
       { cause: err },
     );
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+  if (!isRecord(parsed)) {
     throw new Error(`credentials file for host ${host} is not a JSON object.`);
   }
   // Object-merge into the raw record so unknown keys survive verbatim. The
   // patch overrides any colliding schema-known keys.
-  const merged: Record<string, unknown> = { ...(parsed as Record<string, unknown>), ...patch };
+  const merged: Record<string, unknown> = { ...parsed, ...patch };
   // Validate the merged result. We don't use `.parse()` directly because it
   // throws a generic ZodError; safeParse + a tailored error gives operators a
   // clearer failure message (and is consistent with the rest of credentials.ts).

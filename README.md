@@ -148,7 +148,7 @@ Second Brain provides context files for major AI coding assistants:
 
 | Layer | Technology |
 |-------|-----------|
-| Runtime | Node.js 22+ |
+| Runtime | Node.js 24+ |
 | Language | TypeScript 5.8+ (strict mode, ESM) |
 | Build | Turborepo, tsdown |
 | Database | SQLite via better-sqlite3 |

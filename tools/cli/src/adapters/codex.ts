@@ -20,8 +20,10 @@ import type {
   AdapterUninstallResult,
   AdapterDetectResult,
 } from './types.js';
-import { HOOK_SENTINEL } from './types.js';
 import { resolveBrainMcpInvocation, type BrainMcpInvocation } from './mcp-resolve.js';
+import { isRecord, writeJson } from './shared/json-file.js';
+import { brainHookCommand as renderHookCommand, type HookVerb, type Phase } from './shared/hook-events.js';
+import { upsertSentinelDedup, removeSentinelEntries } from './shared/sentinel.js';
 
 const CODEX_EVENTS = [
   'SessionStart',
@@ -31,6 +33,15 @@ const CODEX_EVENTS = [
   'Stop',
 ] as const;
 type CodexEvent = (typeof CODEX_EVENTS)[number];
+
+/** Host event → brain verb+phase mapping for Codex CLI. */
+const CODEX_EVENT_MAP: Record<CodexEvent, { verb: HookVerb; phase?: Phase }> = {
+  SessionStart: { verb: 'session-start' },
+  UserPromptSubmit: { verb: 'prompt-submit' },
+  PreToolUse: { verb: 'tool-use', phase: 'pre' },
+  PostToolUse: { verb: 'tool-use', phase: 'post' },
+  Stop: { verb: 'stop' },
+};
 
 interface CodexHookCommand {
   type: 'command';
@@ -48,20 +59,8 @@ interface CodexHooksFile {
 }
 
 function brainHookCommand(event: CodexEvent, override?: string): string {
-  const bin = override ?? 'brain-hook';
-  const flag = '--adapter codex';
-  switch (event) {
-    case 'SessionStart':
-      return `${bin} session-start ${flag} ${HOOK_SENTINEL}`;
-    case 'UserPromptSubmit':
-      return `${bin} prompt-submit ${flag} ${HOOK_SENTINEL}`;
-    case 'PreToolUse':
-      return `${bin} tool-use --phase pre ${flag} ${HOOK_SENTINEL}`;
-    case 'PostToolUse':
-      return `${bin} tool-use --phase post ${flag} ${HOOK_SENTINEL}`;
-    case 'Stop':
-      return `${bin} stop ${flag} ${HOOK_SENTINEL}`;
-  }
+  const { verb, phase } = CODEX_EVENT_MAP[event];
+  return renderHookCommand({ verb, phase, adapter: 'codex', bin: override });
 }
 
 function resolveHooksPath(scope: 'user' | 'project', home: string, cwd: string): string {
@@ -71,10 +70,6 @@ function resolveHooksPath(scope: 'user' | 'project', home: string, cwd: string):
 
 function resolveConfigTomlPath(home: string): string {
   return path.join(home, '.codex', 'config.toml');
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
 function isCodexEvent(s: string): s is CodexEvent {
@@ -122,11 +117,6 @@ function loadHooksFile(p: string): CodexHooksFile {
   }
 }
 
-function writeJson(p: string, value: unknown): void {
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, JSON.stringify(value, null, 2) + '\n', 'utf8');
-}
-
 interface UpsertSpec {
   event: CodexEvent;
   command: string;
@@ -135,27 +125,24 @@ interface UpsertSpec {
 
 function upsert(file: CodexHooksFile, spec: UpsertSpec): boolean {
   const groups: CodexHookGroup[] = file.hooks[spec.event] ?? [];
-  let matched = false;
-  let updated = false;
-  for (const g of groups) {
-    for (const h of g.hooks) {
-      if (h.command === spec.command) {
-        matched = true;
-      } else if (h.command.includes(HOOK_SENTINEL)) {
-        h.command = spec.command;
-        matched = true;
-        updated = true;
-      }
-    }
-    if (matched) break;
-  }
-  if (!matched) {
+  // Sentinel dedup over the flattened group hooks. The command objects are
+  // shared references, so an in-place sentinel rewrite propagates back to the
+  // groups; the helper's append (onto the flat copy) is discarded and a fresh
+  // matcher-bearing group is pushed instead.
+  const flat = groups.flatMap((g) => g.hooks);
+  const before = flat.length;
+  const { changed } = upsertSentinelDedup(
+    flat,
+    spec.command,
+    (cmd) => ({ type: 'command', command: cmd }),
+  );
+  if (flat.length > before) {
     groups.push(spec.matcher
       ? { matcher: spec.matcher, hooks: [{ type: 'command', command: spec.command }] }
       : { hooks: [{ type: 'command', command: spec.command }] });
   }
   file.hooks[spec.event] = groups;
-  return !matched || updated;
+  return changed;
 }
 
 // ─── config.toml editing ────────────────────────────────────────────────────
@@ -393,10 +380,8 @@ function uninstallImpl(opts: AdapterUninstallOptions): AdapterUninstallResult {
     if (!groups) continue;
     const cleaned: CodexHookGroup[] = [];
     for (const g of groups) {
-      const keep = g.hooks.filter((h) => !h.command.includes(HOOK_SENTINEL));
-      if (keep.length !== g.hooks.length) {
-        if (!removed.includes(eventStr)) removed.push(eventStr);
-      }
+      const { list: keep, removed: didRemove } = removeSentinelEntries(g.hooks);
+      if (didRemove && !removed.includes(eventStr)) removed.push(eventStr);
       if (keep.length > 0) cleaned.push({ ...g, hooks: keep });
     }
     if (cleaned.length > 0) file.hooks[eventStr] = cleaned;

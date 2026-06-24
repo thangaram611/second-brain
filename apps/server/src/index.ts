@@ -15,6 +15,7 @@ import {
 import { startPersonalityScheduler } from './services/personality-scheduler.js';
 import { loadSigningKeys, requireSigningKeys } from './lib/signing-keys.js';
 import { loadWebhookSecretsFromEnv } from './lib/webhook-secrets.js';
+import { loadCustomProvider } from './lib/custom-providers-loader.js';
 import { UsersService } from './services/users.js';
 import type { AuthMode } from './middleware/auth.js';
 
@@ -38,7 +39,7 @@ const { brain, syncManager, observations, ownership, personality: personalityExt
 // mr-event deliveries can derive namespace server-side (rev #3).
 const wiredConfig = loadWiredReposForServer();
 for (const entry of buildProviderNamespaceEntries(wiredConfig)) {
-  observations.registerWiredProject(entry.provider, entry.projectId, entry.namespace);
+  observations.mrEvents.registerWiredProject(entry.provider, entry.projectId, entry.namespace);
 }
 
 // Build webhook-secret map from env (keychain is a CLI-side concern).
@@ -48,6 +49,13 @@ const webhookSecrets = loadWebhookSecretsFromEnv();
 const providerRegistry = new Map<string, import('@second-brain/collectors').GitProvider>();
 providerRegistry.set('gitlab', new GitLabProvider());
 providerRegistry.set('github', new GitHubProvider());
+// Register a custom provider only when a mapping file exists under
+// ~/.second-brain/providers/. Absent a mapping the 'custom' key stays
+// unregistered and a provider:custom webhook 400s.
+const customProvider = loadCustomProvider();
+if (customProvider) {
+  providerRegistry.set('custom', customProvider);
+}
 
 // Wire sync events to WS broadcast
 syncManager.onSyncEvent = (event) => {

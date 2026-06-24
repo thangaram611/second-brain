@@ -1,11 +1,18 @@
-import { useEffect } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Users, FolderOpen, FileText, ChevronRight, RefreshCw } from 'lucide-react';
-import { useOwnershipStore } from '../../store/ownership-store.js';
-import type { OwnershipNode } from '../../store/ownership-store.js';
+import { api } from '../../lib/api.js';
+import { queryKeys } from '../../lib/query-keys.js';
+import type { OwnershipNode } from '../../lib/types.js';
 import { Card } from '../ui/card.js';
 import { EmptyState } from '../ui/empty-state.js';
 import { LoadingState } from '../ui/loading.js';
+import { ErrorState } from '../ui/error-state.js';
 import { Button } from '../ui/button.js';
+
+function breadcrumbsFor(path: string): string[] {
+  return path === '.' ? ['.'] : ['.', ...path.split('/')];
+}
 
 function ScoreBar({ score }: { score: number }) {
   const color = score > 0.7 ? 'bg-emerald-500' : score > 0.3 ? 'bg-amber-500' : 'bg-red-500';
@@ -54,11 +61,18 @@ function NodeRow({ node, onNavigate }: { node: OwnershipNode; onNavigate: (path:
 }
 
 export function OwnershipPage() {
-  const { tree, loading, error, breadcrumbs, fetchTree, navigateTo } = useOwnershipStore();
+  const [selectedPath, setSelectedPath] = useState('.');
+  const breadcrumbs = breadcrumbsFor(selectedPath);
 
-  useEffect(() => {
-    fetchTree();
-  }, [fetchTree]);
+  const treeQuery = useQuery({
+    queryKey: queryKeys.ownershipTree(selectedPath),
+    queryFn: () => api.ownership.tree(selectedPath),
+  });
+  const tree = treeQuery.data;
+  const loading = treeQuery.isFetching;
+  const error = treeQuery.error instanceof Error ? treeQuery.error.message : null;
+
+  const navigateTo = (path: string) => setSelectedPath(path);
 
   return (
     <div className="mx-auto max-w-5xl p-6">
@@ -66,7 +80,7 @@ export function OwnershipPage() {
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-bold text-zinc-100">Ownership</h1>
         </div>
-        <Button variant="ghost" size="sm" onClick={() => fetchTree(useOwnershipStore.getState().selectedPath)}>
+        <Button variant="ghost" size="sm" onClick={() => void treeQuery.refetch()}>
           <RefreshCw className="mr-1 h-3 w-3" /> Refresh
         </Button>
       </div>
@@ -95,7 +109,7 @@ export function OwnershipPage() {
       </nav>
 
       {loading && <LoadingState message="Loading ownership data..." />}
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      {error && <ErrorState message={error} onRetry={() => void treeQuery.refetch()} />}
 
       {!loading && !error && (!tree || (tree.children && tree.children.length === 0)) && (
         <EmptyState

@@ -18,7 +18,7 @@
  *     `{ kind: 'hmac' }` (GitHub HMAC-SHA256 via `X-Hub-Signature-256`)
  *     so the same call site works for both.
  *   — `mapEvent` is pure — no DB, no network. All mutation happens
- *     in `ObservationService.handleMREvent` against `MappedObservation[]`.
+ *     in `MrEventService.handleMREvent` against `MappedObservation[]`.
  */
 
 import type { CreateEntityInput, Author, BranchStatusPatch } from '@second-brain/types';
@@ -108,7 +108,7 @@ export interface TouchesFilePath {
 }
 
 /**
- * The provider-agnostic output of `mapEvent`. `ObservationService.
+ * The provider-agnostic output of `mapEvent`. `MrEventService.
  * handleMREvent` dispatches on `kind` and applies each observation idem-
  * potently. The `upsert-mr` variant carries an optional `flip` field so
  * merge/close events collapse into one observation (plan revision #7).

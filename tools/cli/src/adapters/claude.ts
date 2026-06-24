@@ -23,6 +23,8 @@ import type {
   AdapterDetectResult,
 } from './types.js';
 import { HOOK_SENTINEL } from './types.js';
+import { isRecord, loadJsonObject, writeJson } from './shared/json-file.js';
+import { brainHookCommand as renderHookCommand, type HookVerb, type Phase } from './shared/hook-events.js';
 
 const CLAUDE_HOOK_EVENTS = [
   'SessionStart',
@@ -33,6 +35,16 @@ const CLAUDE_HOOK_EVENTS = [
   'SessionEnd',
 ] as const;
 type ClaudeHookEvent = (typeof CLAUDE_HOOK_EVENTS)[number];
+
+/** Host event → brain verb+phase mapping for Claude Code. */
+const CLAUDE_EVENT_MAP: Record<ClaudeHookEvent, { verb: HookVerb; phase?: Phase }> = {
+  SessionStart: { verb: 'session-start' },
+  UserPromptSubmit: { verb: 'prompt-submit' },
+  PreToolUse: { verb: 'tool-use', phase: 'pre' },
+  PostToolUse: { verb: 'tool-use', phase: 'post' },
+  Stop: { verb: 'stop' },
+  SessionEnd: { verb: 'session-end' },
+};
 
 /**
  * Tool matcher used for `PreToolUse` heavy-retrieval. The remaining tools
@@ -63,24 +75,8 @@ interface Sidecar {
 }
 
 function brainHookCommand(event: ClaudeHookEvent, override?: string): string {
-  const bin = override ?? 'brain-hook';
-  // The sentinel is a comment suffix — POSIX shell ignores it but our
-  // dedup logic uses it as a stable "ours" marker.
-  const flag = '--adapter claude';
-  switch (event) {
-    case 'SessionStart':
-      return `${bin} session-start ${flag} ${HOOK_SENTINEL}`;
-    case 'UserPromptSubmit':
-      return `${bin} prompt-submit ${flag} ${HOOK_SENTINEL}`;
-    case 'PreToolUse':
-      return `${bin} tool-use --phase pre ${flag} ${HOOK_SENTINEL}`;
-    case 'PostToolUse':
-      return `${bin} tool-use --phase post ${flag} ${HOOK_SENTINEL}`;
-    case 'Stop':
-      return `${bin} stop ${flag} ${HOOK_SENTINEL}`;
-    case 'SessionEnd':
-      return `${bin} session-end ${flag} ${HOOK_SENTINEL}`;
-  }
+  const { verb, phase } = CLAUDE_EVENT_MAP[event];
+  return renderHookCommand({ verb, phase, adapter: 'claude', bin: override });
 }
 
 function resolveSettingsPath(scope: 'user' | 'project', home: string, cwd: string): string {
@@ -92,34 +88,9 @@ function resolveSidecarPath(settingsPath: string): string {
   return path.join(path.dirname(settingsPath), 'settings.brain-hooks.json');
 }
 
-/**
- * Best-effort JSON load. Returns the parsed value when it's a non-null
- * object; otherwise returns the fallback. The caller is responsible for
- * validating the structural shape (we keep this thin and pure).
- */
-function loadJsonObject(p: string): Record<string, unknown> | null {
-  try {
-    const raw = fs.readFileSync(p, 'utf8');
-    if (!raw.trim()) return null;
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      const obj: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(parsed)) obj[k] = v;
-      return obj;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 function isClaudeHookEvent(s: string): s is ClaudeHookEvent {
   for (const e of CLAUDE_HOOK_EVENTS) if (e === s) return true;
   return false;
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
 function loadHookGroups(raw: Record<string, unknown> | null): {
@@ -186,11 +157,6 @@ function loadSidecar(p: string): Sidecar | null {
     }
   }
   return { version: 1, installedAt, entries };
-}
-
-function writeJson(p: string, value: unknown): void {
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, JSON.stringify(value, null, 2) + '\n', 'utf8');
 }
 
 function isClaudeMemCommand(cmd: string): boolean {

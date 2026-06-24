@@ -8,7 +8,6 @@ export interface PersonalityStream {
 export interface PersonalityContext {
   brain: Brain;
   actor: string;
-  llm: LLMHandle | null;
   logger: {
     info: (msg: string) => void;
     warn: (msg: string) => void;
@@ -17,12 +16,7 @@ export interface PersonalityContext {
   now: Date;
 }
 
-export interface LLMHandle {
-  generate(prompt: string, systemPrompt?: string): Promise<string>;
-}
-
 export interface PersonalityExtractorOptions {
-  llm?: LLMHandle | null;
   logger?: PersonalityContext['logger'];
   now?: Date;
 }
@@ -58,7 +52,6 @@ export class PersonalityExtractor {
     const ctx: PersonalityContext = {
       brain: this.brain,
       actor,
-      llm: this.options.llm ?? null,
       logger,
       now: this.options.now ?? new Date(),
     };
